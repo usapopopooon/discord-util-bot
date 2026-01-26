@@ -61,6 +61,7 @@ class VoiceCog(commands.Cog):
                 return  # Not a lobby channel
 
             guild = member.guild
+            print(f"Guild: {guild.name}")
 
             # Determine category
             category = None
@@ -70,17 +71,21 @@ class VoiceCog(commands.Cog):
                     category = channel.category
             else:
                 category = channel.category
+            print(f"Category: {category}")
 
             # Create voice channel
             channel_name = "new-channel"
+            print(f"Creating voice channel: {channel_name}")
             new_channel = await guild.create_voice_channel(
                 name=channel_name,
                 category=category,
                 user_limit=lobby.default_user_limit,
                 rtc_region=DEFAULT_RTC_REGION,
             )
+            print(f"Created channel: {new_channel.name} (ID: {new_channel.id})")
 
             # Create database record
+            print("Creating database record...")
             voice_session = await create_voice_session(
                 session,
                 lobby_id=lobby.id,
@@ -89,6 +94,7 @@ class VoiceCog(commands.Cog):
                 name=channel_name,
                 user_limit=lobby.default_user_limit,
             )
+            print(f"Database record created: {voice_session}")
 
             # Set text chat permissions: only owner can read messages
             await new_channel.set_permissions(
