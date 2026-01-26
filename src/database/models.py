@@ -54,7 +54,7 @@ class VoiceSession(Base):
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     is_hidden: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(UTC), nullable=False
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
 
     lobby: Mapped["Lobby"] = relationship("Lobby", back_populates="sessions")
