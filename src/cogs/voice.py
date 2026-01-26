@@ -98,8 +98,10 @@ class VoiceCog(commands.Cog):
             # Move member to new channel
             try:
                 await member.move_to(new_channel)
-            except discord.HTTPException:
+                print(f"Moved {member} to {new_channel.name}")
+            except discord.HTTPException as e:
                 # Failed to move, clean up
+                print(f"Failed to move {member}: {e}")
                 await new_channel.delete()
                 await delete_voice_session(session, str(new_channel.id))
                 return
