@@ -1,5 +1,7 @@
 """Control panel UI components for voice channels."""
 
+from typing import Any
+
 import discord
 
 from src.core.permissions import is_owner
@@ -36,7 +38,7 @@ def create_control_panel_embed(
 class RenameModal(discord.ui.Modal, title="Rename Channel"):
     """Modal for renaming the voice channel."""
 
-    name = discord.ui.TextInput(
+    name: discord.ui.TextInput[Any] = discord.ui.TextInput(
         label="New Channel Name",
         placeholder="Enter new channel name...",
         min_length=1,
@@ -87,7 +89,7 @@ class RenameModal(discord.ui.Modal, title="Rename Channel"):
 class UserLimitModal(discord.ui.Modal, title="Change User Limit"):
     """Modal for changing the user limit."""
 
-    limit = discord.ui.TextInput(
+    limit: discord.ui.TextInput[Any] = discord.ui.TextInput(
         label="User Limit (0-99, 0 = unlimited)",
         placeholder="Enter a number between 0 and 99...",
         min_length=1,
@@ -155,13 +157,16 @@ class TransferSelectView(discord.ui.View):
 
     @discord.ui.select(cls=discord.ui.UserSelect, placeholder="Select new owner...")
     async def select_user(
-        self, interaction: discord.Interaction, select: discord.ui.UserSelect
+        self, interaction: discord.Interaction, select: discord.ui.UserSelect[Any]
     ) -> None:
         """Handle user selection."""
         new_owner = select.values[0]
         channel = interaction.channel
 
         if not isinstance(channel, discord.VoiceChannel):
+            return
+
+        if not isinstance(new_owner, discord.Member):
             return
 
         async with async_session() as db_session:
@@ -175,9 +180,10 @@ class TransferSelectView(discord.ui.View):
                 return
 
             # Update text chat permissions
-            await channel.set_permissions(
-                interaction.user, read_message_history=None
-            )
+            if isinstance(interaction.user, discord.Member):
+                await channel.set_permissions(
+                    interaction.user, read_message_history=None
+                )
             await channel.set_permissions(new_owner, read_message_history=True)
 
             await update_voice_session(
@@ -197,7 +203,7 @@ class KickSelectView(discord.ui.View):
 
     @discord.ui.select(cls=discord.ui.UserSelect, placeholder="Select user to kick...")
     async def select_user(
-        self, interaction: discord.Interaction, select: discord.ui.UserSelect
+        self, interaction: discord.Interaction, select: discord.ui.UserSelect[Any]
     ) -> None:
         """Handle user selection."""
         user_to_kick = select.values[0]
@@ -232,13 +238,16 @@ class BlockSelectView(discord.ui.View):
         cls=discord.ui.UserSelect, placeholder="Select user to block..."
     )
     async def select_user(
-        self, interaction: discord.Interaction, select: discord.ui.UserSelect
+        self, interaction: discord.Interaction, select: discord.ui.UserSelect[Any]
     ) -> None:
         """Handle user selection."""
         user_to_block = select.values[0]
         channel = interaction.channel
 
         if not isinstance(channel, discord.VoiceChannel):
+            return
+
+        if not isinstance(user_to_block, discord.Member):
             return
 
         await channel.set_permissions(user_to_block, connect=False)
@@ -265,13 +274,16 @@ class AllowSelectView(discord.ui.View):
         cls=discord.ui.UserSelect, placeholder="Select user to allow..."
     )
     async def select_user(
-        self, interaction: discord.Interaction, select: discord.ui.UserSelect
+        self, interaction: discord.Interaction, select: discord.ui.UserSelect[Any]
     ) -> None:
         """Handle user selection."""
         user_to_allow = select.values[0]
         channel = interaction.channel
 
         if not isinstance(channel, discord.VoiceChannel):
+            return
+
+        if not isinstance(user_to_allow, discord.Member):
             return
 
         await channel.set_permissions(user_to_allow, connect=True)
@@ -309,7 +321,7 @@ class RegionSelectView(discord.ui.View):
         self.add_item(RegionSelectMenu(options))
 
 
-class RegionSelectMenu(discord.ui.Select):
+class RegionSelectMenu(discord.ui.Select[Any]):
     """Region select menu."""
 
     def __init__(self, options: list[discord.SelectOption]) -> None:
@@ -382,7 +394,7 @@ class ControlPanelView(discord.ui.View):
         row=0,
     )
     async def rename_button(
-        self, interaction: discord.Interaction, _button: discord.ui.Button
+        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
     ) -> None:
         """Handle rename button click."""
         await interaction.response.send_modal(RenameModal(self.session_id))
@@ -395,7 +407,7 @@ class ControlPanelView(discord.ui.View):
         row=0,
     )
     async def limit_button(
-        self, interaction: discord.Interaction, _button: discord.ui.Button
+        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
     ) -> None:
         """Handle limit button click."""
         await interaction.response.send_modal(UserLimitModal(self.session_id))
@@ -409,7 +421,7 @@ class ControlPanelView(discord.ui.View):
         row=1,
     )
     async def lock_button(
-        self, interaction: discord.Interaction, button: discord.ui.Button
+        self, interaction: discord.Interaction, button: discord.ui.Button[Any]
     ) -> None:
         """Handle lock/unlock button click."""
         channel = interaction.channel
@@ -429,15 +441,16 @@ class ControlPanelView(discord.ui.View):
                 await channel.set_permissions(
                     interaction.guild.default_role, connect=False
                 )
-                await channel.set_permissions(
-                    interaction.user,
-                    connect=True,
-                    speak=True,
-                    stream=True,
-                    move_members=True,
-                    mute_members=True,
-                    deafen_members=True,
-                )
+                if isinstance(interaction.user, discord.Member):
+                    await channel.set_permissions(
+                        interaction.user,
+                        connect=True,
+                        speak=True,
+                        stream=True,
+                        move_members=True,
+                        mute_members=True,
+                        deafen_members=True,
+                    )
                 button.label = "Unlock"
                 button.emoji = "🔓"
             else:
@@ -465,7 +478,7 @@ class ControlPanelView(discord.ui.View):
         row=1,
     )
     async def region_button(
-        self, interaction: discord.Interaction, _button: discord.ui.Button
+        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
     ) -> None:
         """Handle region button click."""
         await interaction.response.send_message(
@@ -480,7 +493,7 @@ class ControlPanelView(discord.ui.View):
         row=1,
     )
     async def hide_button(
-        self, interaction: discord.Interaction, button: discord.ui.Button
+        self, interaction: discord.Interaction, button: discord.ui.Button[Any]
     ) -> None:
         """Handle hide/unhide button click."""
         channel = interaction.channel
@@ -533,7 +546,7 @@ class ControlPanelView(discord.ui.View):
         row=2,
     )
     async def transfer_button(
-        self, interaction: discord.Interaction, _button: discord.ui.Button
+        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
     ) -> None:
         """Handle transfer button click."""
         await interaction.response.send_message(
@@ -548,7 +561,7 @@ class ControlPanelView(discord.ui.View):
         row=2,
     )
     async def kick_button(
-        self, interaction: discord.Interaction, _button: discord.ui.Button
+        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
     ) -> None:
         """Handle kick button click."""
         await interaction.response.send_message(
@@ -564,7 +577,7 @@ class ControlPanelView(discord.ui.View):
         row=3,
     )
     async def block_button(
-        self, interaction: discord.Interaction, _button: discord.ui.Button
+        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
     ) -> None:
         """Handle block button click."""
         await interaction.response.send_message(
@@ -579,7 +592,7 @@ class ControlPanelView(discord.ui.View):
         row=3,
     )
     async def allow_button(
-        self, interaction: discord.Interaction, _button: discord.ui.Button
+        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
     ) -> None:
         """Handle allow button click."""
         await interaction.response.send_message(

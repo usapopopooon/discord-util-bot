@@ -26,4 +26,4 @@ class Settings(BaseSettings):
         return url
 
 
-settings = Settings()
+settings = Settings()  # type: ignore[call-arg]
