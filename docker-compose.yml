@@ -1,8 +1,27 @@
 services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ephemeral_vc
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
   bot:
     build: .
     restart: unless-stopped
+    depends_on:
+      - db
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://user:password@db:5432/ephemeral_vc
     volumes:
       - ./data:/app/data
+
+volumes:
+  pgdata:
