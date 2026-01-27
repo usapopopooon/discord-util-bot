@@ -181,6 +181,48 @@ class TestVoiceSessionOperations:
         assert updated.is_hidden is True
         assert updated.owner_id == "222"
 
+    async def test_update_voice_session_name_only(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test updating only the name leaves other fields unchanged."""
+        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
+        session = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id="789",
+            owner_id="111",
+            name="Original",
+            user_limit=5,
+        )
+
+        updated = await update_voice_session(db_session, session, name="Renamed")
+
+        assert updated.name == "Renamed"
+        assert updated.user_limit == 5
+        assert updated.is_locked is False
+        assert updated.is_hidden is False
+        assert updated.owner_id == "111"
+
+    async def test_update_voice_session_no_params(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test updating with no parameters changes nothing."""
+        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
+        session = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id="789",
+            owner_id="111",
+            name="Unchanged",
+        )
+
+        updated = await update_voice_session(db_session, session)
+
+        assert updated.name == "Unchanged"
+        assert updated.owner_id == "111"
+        assert updated.is_locked is False
+        assert updated.is_hidden is False
+
     async def test_delete_voice_session(self, db_session: AsyncSession) -> None:
         """Test deleting a voice session."""
         lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")

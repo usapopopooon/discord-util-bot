@@ -1,6 +1,12 @@
 """Tests for configuration settings."""
 
+from __future__ import annotations
+
 import os
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pytest
 
 # Set dummy token before importing Settings to avoid module-level error
 os.environ.setdefault("DISCORD_TOKEN", "test-token")
@@ -49,7 +55,8 @@ class TestAsyncDatabaseUrl:
             "postgresql+asyncpg://user:pass@host:5432/db"
         )
 
-    def test_default_database_url(self) -> None:
+    def test_default_database_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test the default database URL."""
-        s = Settings(discord_token="test")
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        s = Settings(discord_token="test", _env_file=None)  # type: ignore[call-arg]
         assert s.database_url == "sqlite+aiosqlite:///data/ephemeral_vc.db"
