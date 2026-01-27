@@ -483,7 +483,7 @@ class ControlPanelView(discord.ui.View):
 
         return True
 
-    # Row 0
+    # Row 0: チャンネル設定
     @discord.ui.button(
         label="名前変更",
         emoji="🏷️",
@@ -527,7 +527,22 @@ class ControlPanelView(discord.ui.View):
             ephemeral=True,
         )
 
-    # Row 1
+    @discord.ui.button(
+        label="リージョン",
+        emoji="🌏",
+        style=discord.ButtonStyle.secondary,
+        custom_id="region_button",
+        row=0,
+    )
+    async def region_button(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
+    ) -> None:
+        """Handle region button click."""
+        await interaction.response.send_message(
+            "リージョンを選択:", view=RegionSelectView(), ephemeral=True
+        )
+
+    # Row 1: 状態トグル
     @discord.ui.button(
         label="ロック",
         emoji="🔒",
@@ -586,21 +601,6 @@ class ControlPanelView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="リージョン",
-        emoji="🌏",
-        style=discord.ButtonStyle.secondary,
-        custom_id="region_button",
-        row=1,
-    )
-    async def region_button(
-        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
-    ) -> None:
-        """Handle region button click."""
-        await interaction.response.send_message(
-            "リージョンを選択:", view=RegionSelectView(), ephemeral=True
-        )
-
-    @discord.ui.button(
         label="非表示",
         emoji="🙈",
         style=discord.ButtonStyle.secondary,
@@ -652,7 +652,37 @@ class ControlPanelView(discord.ui.View):
             f"チャンネルを **{status}** にしました。", ephemeral=True
         )
 
-    # Row 2
+    @discord.ui.button(
+        label="年齢制限",
+        emoji="🔞",
+        style=discord.ButtonStyle.secondary,
+        custom_id="nsfw_button",
+        row=1,
+    )
+    async def nsfw_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button[Any]
+    ) -> None:
+        """Handle NSFW toggle button click."""
+        channel = interaction.channel
+        if not isinstance(channel, discord.VoiceChannel):
+            return
+
+        new_nsfw = not channel.nsfw
+
+        await channel.edit(nsfw=new_nsfw)
+
+        if new_nsfw:
+            button.label = "制限解除"
+        else:
+            button.label = "年齢制限"
+
+        await interaction.response.edit_message(view=self)
+        status = "年齢制限を設定" if new_nsfw else "年齢制限を解除"
+        await interaction.followup.send(
+            f"チャンネルの **{status}** しました。", ephemeral=True
+        )
+
+    # Row 2: メンバー管理
     @discord.ui.button(
         label="譲渡",
         emoji="👑",
@@ -696,42 +726,11 @@ class ControlPanelView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="年齢制限",
-        emoji="🔞",
-        style=discord.ButtonStyle.secondary,
-        custom_id="nsfw_button",
-        row=2,
-    )
-    async def nsfw_button(
-        self, interaction: discord.Interaction, button: discord.ui.Button[Any]
-    ) -> None:
-        """Handle NSFW toggle button click."""
-        channel = interaction.channel
-        if not isinstance(channel, discord.VoiceChannel):
-            return
-
-        new_nsfw = not channel.nsfw
-
-        await channel.edit(nsfw=new_nsfw)
-
-        if new_nsfw:
-            button.label = "制限解除"
-        else:
-            button.label = "年齢制限"
-
-        await interaction.response.edit_message(view=self)
-        status = "年齢制限を設定" if new_nsfw else "年齢制限を解除"
-        await interaction.followup.send(
-            f"チャンネルの **{status}** しました。", ephemeral=True
-        )
-
-    # Row 3
-    @discord.ui.button(
         label="ブロック",
         emoji="🚫",
-        style=discord.ButtonStyle.danger,
+        style=discord.ButtonStyle.secondary,
         custom_id="block_button",
-        row=3,
+        row=2,
     )
     async def block_button(
         self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
@@ -746,7 +745,7 @@ class ControlPanelView(discord.ui.View):
         emoji="✅",
         style=discord.ButtonStyle.success,
         custom_id="allow_button",
-        row=3,
+        row=2,
     )
     async def allow_button(
         self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
