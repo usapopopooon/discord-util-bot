@@ -1,5 +1,8 @@
 # Ephemeral VC
 
+[![CI](https://github.com/usapopopooon/ephemeral-vc/actions/workflows/ci.yml/badge.svg)](https://github.com/usapopopooon/ephemeral-vc/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/usapopopooon/ephemeral-vc/graph/badge.svg)](https://codecov.io/gh/usapopopooon/ephemeral-vc)
+
 Discord dynamic voice channel management bot. When users join a lobby voice channel, a personal voice channel is automatically created. The channel is deleted when everyone leaves.
 
 ## Features

@@ -323,6 +323,60 @@ class AllowSelectView(discord.ui.View):
         )
 
 
+class BitrateSelectView(discord.ui.View):
+    """Ephemeral view with bitrate select."""
+
+    BITRATES = [
+        ("8 kbps", "8000"),
+        ("16 kbps", "16000"),
+        ("32 kbps", "32000"),
+        ("64 kbps", "64000"),
+        ("96 kbps", "96000"),
+        ("128 kbps", "128000"),
+        ("256 kbps", "256000"),
+        ("384 kbps", "384000"),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__(timeout=60)
+        options = [
+            discord.SelectOption(label=label, value=value)
+            for label, value in self.BITRATES
+        ]
+        self.add_item(BitrateSelectMenu(options))
+
+
+class BitrateSelectMenu(discord.ui.Select[Any]):
+    """Bitrate select menu."""
+
+    def __init__(self, options: list[discord.SelectOption]) -> None:
+        super().__init__(
+            placeholder="Select bitrate...", options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        """Handle selection."""
+        bitrate = int(self.values[0])
+        channel = interaction.channel
+
+        if isinstance(channel, discord.VoiceChannel):
+            try:
+                await channel.edit(bitrate=bitrate)
+            except discord.HTTPException:
+                await interaction.response.edit_message(
+                    content="This bitrate is not available "
+                    "for this server's boost level.",
+                    view=None,
+                )
+                return
+
+        label = f"{bitrate // 1000} kbps"
+        await interaction.response.edit_message(
+            content=f"Bitrate changed to **{label}**.",
+            view=None,
+        )
+
+
 class RegionSelectView(discord.ui.View):
     """Ephemeral view with region select."""
 
@@ -442,6 +496,23 @@ class ControlPanelView(discord.ui.View):
     ) -> None:
         """Handle limit button click."""
         await interaction.response.send_modal(UserLimitModal(self.session_id))
+
+    @discord.ui.button(
+        label="Bitrate",
+        emoji="🎵",
+        style=discord.ButtonStyle.secondary,
+        custom_id="bitrate_button",
+        row=0,
+    )
+    async def bitrate_button(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
+    ) -> None:
+        """Handle bitrate button click."""
+        await interaction.response.send_message(
+            "Select bitrate:",
+            view=BitrateSelectView(),
+            ephemeral=True,
+        )
 
     # Row 1
     @discord.ui.button(
