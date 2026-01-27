@@ -212,19 +212,16 @@ class TestOnGuildChannelDelete:
         cog._record_join(100, 1)
         channel = _make_channel(100)
 
+        mock_factory, mock_session = _mock_async_session()
         with patch(
             "src.cogs.voice.delete_voice_session", new_callable=AsyncMock
         ) as mock_delete, patch(
-            "src.cogs.voice.async_session"
-        ) as mock_session_factory:
-            mock_session = AsyncMock()
-            mock_session_factory.return_value.__aenter__ = AsyncMock(
-                return_value=mock_session
-            )
-            mock_session_factory.return_value.__aexit__ = AsyncMock(
-                return_value=False
-            )
-
+            "src.cogs.voice.async_session", mock_factory
+        ), patch(
+            "src.cogs.voice.get_lobby_by_channel_id",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
             await cog.on_guild_channel_delete(channel)
 
             mock_delete.assert_awaited_once_with(mock_session, "100")
@@ -248,22 +245,66 @@ class TestOnGuildChannelDelete:
         cog = _make_cog()
         channel = _make_channel(300)
 
+        mock_factory, mock_session = _mock_async_session()
         with patch(
             "src.cogs.voice.delete_voice_session", new_callable=AsyncMock
         ) as mock_delete, patch(
-            "src.cogs.voice.async_session"
-        ) as mock_session_factory:
-            mock_session = AsyncMock()
-            mock_session_factory.return_value.__aenter__ = AsyncMock(
-                return_value=mock_session
-            )
-            mock_session_factory.return_value.__aexit__ = AsyncMock(
-                return_value=False
-            )
-
+            "src.cogs.voice.async_session", mock_factory
+        ), patch(
+            "src.cogs.voice.get_lobby_by_channel_id",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
             # Should not raise even if no session exists
             await cog.on_guild_channel_delete(channel)
             mock_delete.assert_awaited_once_with(mock_session, "300")
+
+    async def test_deletes_lobby_record_on_channel_delete(self) -> None:
+        """ロビー VC を削除すると DB の lobby レコードも削除される。"""
+        cog = _make_cog()
+        channel = _make_channel(100)
+
+        lobby = MagicMock()
+        lobby.id = 42
+
+        mock_factory, mock_session = _mock_async_session()
+        with patch(
+            "src.cogs.voice.delete_voice_session", new_callable=AsyncMock
+        ), patch(
+            "src.cogs.voice.async_session", mock_factory
+        ), patch(
+            "src.cogs.voice.get_lobby_by_channel_id",
+            new_callable=AsyncMock,
+            return_value=lobby,
+        ), patch(
+            "src.cogs.voice.delete_lobby",
+            new_callable=AsyncMock,
+        ) as mock_delete_lobby:
+            await cog.on_guild_channel_delete(channel)
+
+            mock_delete_lobby.assert_awaited_once_with(mock_session, 42)
+
+    async def test_no_lobby_delete_when_not_lobby(self) -> None:
+        """ロビーでないチャンネル削除時は lobby レコード削除が呼ばれない。"""
+        cog = _make_cog()
+        channel = _make_channel(100)
+
+        mock_factory, mock_session = _mock_async_session()
+        with patch(
+            "src.cogs.voice.delete_voice_session", new_callable=AsyncMock
+        ), patch(
+            "src.cogs.voice.async_session", mock_factory
+        ), patch(
+            "src.cogs.voice.get_lobby_by_channel_id",
+            new_callable=AsyncMock,
+            return_value=None,
+        ), patch(
+            "src.cogs.voice.delete_lobby",
+            new_callable=AsyncMock,
+        ) as mock_delete_lobby:
+            await cog.on_guild_channel_delete(channel)
+
+            mock_delete_lobby.assert_not_awaited()
 
 
 # ===========================================================================

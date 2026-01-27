@@ -27,6 +27,7 @@ from src.database.engine import async_session
 from src.database.models import VoiceSession
 from src.services.db_service import (
     create_voice_session,
+    delete_lobby,
     delete_voice_session,
     get_lobby_by_channel_id,
     get_voice_session,
@@ -120,9 +121,13 @@ class VoiceCog(commands.Cog):
             return
         # メモリ上の参加記録を削除
         self._cleanup_channel(channel.id)
-        # DB の voice_session レコードを削除 (存在しなくても安全)
+        # DB のレコードをクリーンアップ (存在しなくても安全)
         async with async_session() as session:
             await delete_voice_session(session, str(channel.id))
+            # ロビーとして登録されていた場合、そのレコードも削除
+            lobby = await get_lobby_by_channel_id(session, str(channel.id))
+            if lobby:
+                await delete_lobby(session, lobby.id)
 
     # ==========================================================================
     # 参加時刻の追跡ヘルパー
