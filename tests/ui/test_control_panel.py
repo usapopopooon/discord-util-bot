@@ -629,6 +629,11 @@ class TestTransferSelectMenu:
             mock_update.assert_awaited_once()
             assert mock_update.call_args[1]["owner_id"] == "2"
             interaction.response.edit_message.assert_awaited_once()
+            # チャンネルに譲渡メッセージが送信される
+            interaction.channel.send.assert_awaited_once()
+            msg = interaction.channel.send.call_args[0][0]
+            assert "<@2>" in msg
+            assert "譲渡" in msg
 
     async def test_member_not_found(self) -> None:
         """メンバーが見つからない場合。"""

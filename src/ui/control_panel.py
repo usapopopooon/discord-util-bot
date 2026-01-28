@@ -294,6 +294,13 @@ class TransferSelectMenu(discord.ui.Select[Any]):
             view=None,
         )
 
+        # チャンネル全体に譲渡メッセージを送信
+        old = interaction.user.mention
+        new = new_owner.mention
+        await channel.send(
+            f"👑 {old} → {new} にオーナーが譲渡されました。"
+        )
+
 
 class KickSelectView(discord.ui.View):
     """キック対象を選択するユーザーセレクト。
