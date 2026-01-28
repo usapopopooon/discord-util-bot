@@ -26,9 +26,11 @@ from src.database.engine import async_session
 from src.database.models import VoiceSession
 from src.services.db_service import (
     add_voice_session_member,
+    create_lobby,
     create_voice_session,
     delete_lobby,
     delete_voice_session,
+    get_lobbies_by_guild,
     get_lobby_by_channel_id,
     get_voice_session,
     get_voice_session_members_ordered,
@@ -458,15 +460,75 @@ class VoiceCog(commands.Cog):
 
 
     # ==========================================================================
-    # スラッシュコマンド
+    # スラッシュコマンド (/vc グループ)
     # ==========================================================================
 
-    @app_commands.command(
-        name="panel",
-        description="コントロールパネルを再投稿します",
+    vc_group = app_commands.Group(
+        name="vc",
+        description="一時 VC の管理コマンド",
     )
+
+    @vc_group.command(name="lobby", description="ロビーVCを作成します")
+    @app_commands.default_permissions(administrator=True)
+    async def vc_lobby(self, interaction: discord.Interaction) -> None:
+        """ロビー VC を作成するスラッシュコマンド。
+
+        処理の流れ:
+          1. サーバー内でのみ実行可能かチェック
+          2. 「参加して作成」という名前の VC を新規作成
+          3. DB にロビーとして登録
+          4. 管理者に完了メッセージを表示
+        """
+        # DM (ダイレクトメッセージ) からの実行を拒否
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "このコマンドはサーバー内でのみ使用できます。", ephemeral=True
+            )
+            return
+
+        # --- 重複チェック ---
+        # 1サーバーにつきロビーは1つまで
+        async with async_session() as session:
+            existing = await get_lobbies_by_guild(
+                session, str(interaction.guild_id)
+            )
+            if existing:
+                await interaction.response.send_message(
+                    "このサーバーには既にロビーが存在します。",
+                    ephemeral=True,
+                )
+                return
+
+        # --- VC の作成 ---
+        try:
+            lobby_channel = await interaction.guild.create_voice_channel(
+                name="参加して作成",
+            )
+        except discord.HTTPException as e:
+            await interaction.response.send_message(
+                f"VCの作成に失敗しました: {e}", ephemeral=True
+            )
+            return
+
+        # --- DB にロビーとして登録 ---
+        async with async_session() as session:
+            await create_lobby(
+                session,
+                guild_id=str(interaction.guild_id),
+                lobby_channel_id=str(lobby_channel.id),
+                category_id=None,
+                default_user_limit=0,
+            )
+
+        await interaction.response.send_message(
+            f"ロビー **{lobby_channel.name}** を作成しました！\n"
+            f"お好みのカテゴリに手動で移動してください。",
+            ephemeral=True,
+        )
+
+    @vc_group.command(name="panel", description="コントロールパネルを再投稿します")
     @app_commands.checks.cooldown(1, 30)
-    async def panel(self, interaction: discord.Interaction) -> None:
+    async def vc_panel(self, interaction: discord.Interaction) -> None:
         """コントロールパネルの Embed + ボタンを再投稿するスラッシュコマンド。
 
         旧パネルメッセージを削除し、新しいパネルを送信する。

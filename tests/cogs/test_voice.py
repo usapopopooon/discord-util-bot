@@ -985,13 +985,16 @@ class TestOnVoiceStateUpdate:
 
 
 # ===========================================================================
-# /panel コマンドテスト
+# スラッシュコマンドテスト (/vc グループ)
 # ===========================================================================
 
 
 def _make_interaction(
     user_id: int,
     channel: MagicMock | None = None,
+    *,
+    guild: MagicMock | None = "default",
+    guild_id: int = 1000,
 ) -> MagicMock:
     """Create a mock discord.Interaction for slash commands."""
     interaction = MagicMock(spec=discord.Interaction)
@@ -1000,11 +1003,255 @@ def _make_interaction(
     interaction.channel_id = channel.id if channel else None
     interaction.response = MagicMock()
     interaction.response.send_message = AsyncMock()
+
+    if guild == "default":
+        g = MagicMock(spec=discord.Guild)
+        g.create_voice_channel = AsyncMock()
+        interaction.guild = g
+    else:
+        interaction.guild = guild
+
+    interaction.guild_id = guild_id
     return interaction
 
 
-class TestPanelCommand:
-    """Tests for /panel slash command."""
+# ===========================================================================
+# /vc lobby コマンドテスト
+# ===========================================================================
+
+
+class TestVcLobbyCommand:
+    """Tests for /vc lobby slash command."""
+
+    async def test_creates_lobby_successfully(self) -> None:
+        """正常系: VC を作成し DB に登録して完了メッセージを返す。"""
+        cog = _make_cog()
+        interaction = _make_interaction(1)
+
+        lobby_channel = MagicMock(spec=discord.VoiceChannel)
+        lobby_channel.id = 500
+        lobby_channel.name = "参加して作成"
+        interaction.guild.create_voice_channel = AsyncMock(
+            return_value=lobby_channel
+        )
+
+        mock_factory, mock_session = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_lobbies_by_guild",
+            new_callable=AsyncMock,
+            return_value=[],
+        ), patch(
+            "src.cogs.voice.create_lobby", new_callable=AsyncMock
+        ) as mock_create:
+            await cog.vc_lobby.callback(cog, interaction)
+
+            # VC が作成される
+            interaction.guild.create_voice_channel.assert_awaited_once_with(
+                name="参加して作成"
+            )
+            # DB にロビーとして登録される
+            mock_create.assert_awaited_once_with(
+                mock_session,
+                guild_id=str(interaction.guild_id),
+                lobby_channel_id="500",
+                category_id=None,
+                default_user_limit=0,
+            )
+            # 完了メッセージ
+            interaction.response.send_message.assert_awaited_once()
+            msg = interaction.response.send_message.call_args[0][0]
+            assert "参加して作成" in msg
+            assert interaction.response.send_message.call_args[1]["ephemeral"] is True
+
+    async def test_rejects_dm(self) -> None:
+        """DM からの実行は拒否される。"""
+        cog = _make_cog()
+        interaction = _make_interaction(1, guild=None)
+
+        await cog.vc_lobby.callback(cog, interaction)
+
+        interaction.response.send_message.assert_awaited_once()
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "サーバー内" in msg
+        assert interaction.response.send_message.call_args[1]["ephemeral"] is True
+
+    async def test_handles_http_exception(self) -> None:
+        """Discord API エラー時にエラーメッセージを返す。"""
+        cog = _make_cog()
+        interaction = _make_interaction(1)
+        interaction.guild.create_voice_channel = AsyncMock(
+            side_effect=discord.HTTPException(
+                MagicMock(status=403), "Missing Permissions"
+            )
+        )
+
+        mock_factory, _mock_session = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_lobbies_by_guild",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            await cog.vc_lobby.callback(cog, interaction)
+
+        interaction.response.send_message.assert_awaited_once()
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "失敗" in msg
+        assert interaction.response.send_message.call_args[1]["ephemeral"] is True
+
+    async def test_rejects_duplicate_lobby(self) -> None:
+        """既にロビーが存在するサーバーでは作成を拒否する。"""
+        cog = _make_cog()
+        interaction = _make_interaction(1)
+
+        existing_lobby = MagicMock()
+        existing_lobby.id = 1
+
+        mock_factory, _mock_session = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_lobbies_by_guild",
+            new_callable=AsyncMock,
+            return_value=[existing_lobby],
+        ), patch(
+            "src.cogs.voice.create_lobby", new_callable=AsyncMock
+        ) as mock_create:
+            await cog.vc_lobby.callback(cog, interaction)
+
+            # VC は作成されない
+            interaction.guild.create_voice_channel.assert_not_awaited()
+            # DB 登録も呼ばれない
+            mock_create.assert_not_awaited()
+            # エラーメッセージ
+            interaction.response.send_message.assert_awaited_once()
+            msg = interaction.response.send_message.call_args[0][0]
+            assert "既に" in msg
+            assert interaction.response.send_message.call_args[1]["ephemeral"] is True
+
+    async def test_no_db_call_on_vc_creation_failure(self) -> None:
+        """VC 作成失敗時は DB 登録が呼ばれない。"""
+        cog = _make_cog()
+        interaction = _make_interaction(1)
+        interaction.guild.create_voice_channel = AsyncMock(
+            side_effect=discord.HTTPException(
+                MagicMock(status=500), "Internal Error"
+            )
+        )
+
+        mock_factory, _mock_session = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_lobbies_by_guild",
+            new_callable=AsyncMock,
+            return_value=[],
+        ), patch(
+            "src.cogs.voice.create_lobby", new_callable=AsyncMock
+        ) as mock_create:
+            await cog.vc_lobby.callback(cog, interaction)
+            mock_create.assert_not_awaited()
+
+    async def test_lobby_channel_has_correct_name(self) -> None:
+        """作成される VC の名前が「参加して作成」。"""
+        cog = _make_cog()
+        interaction = _make_interaction(1)
+
+        lobby_channel = MagicMock(spec=discord.VoiceChannel)
+        lobby_channel.id = 500
+        lobby_channel.name = "参加して作成"
+        interaction.guild.create_voice_channel = AsyncMock(
+            return_value=lobby_channel
+        )
+
+        mock_factory, mock_session = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_lobbies_by_guild",
+            new_callable=AsyncMock,
+            return_value=[],
+        ), patch(
+            "src.cogs.voice.create_lobby", new_callable=AsyncMock
+        ):
+            await cog.vc_lobby.callback(cog, interaction)
+
+            call_kwargs = interaction.guild.create_voice_channel.call_args[1]
+            assert call_kwargs["name"] == "参加して作成"
+
+    async def test_db_registers_correct_guild_id(self) -> None:
+        """DB に正しい guild_id が登録される。"""
+        cog = _make_cog()
+        interaction = _make_interaction(1, guild_id=7777)
+
+        lobby_channel = MagicMock(spec=discord.VoiceChannel)
+        lobby_channel.id = 500
+        lobby_channel.name = "参加して作成"
+        interaction.guild.create_voice_channel = AsyncMock(
+            return_value=lobby_channel
+        )
+
+        mock_factory, mock_session = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_lobbies_by_guild",
+            new_callable=AsyncMock,
+            return_value=[],
+        ), patch(
+            "src.cogs.voice.create_lobby", new_callable=AsyncMock
+        ) as mock_create:
+            await cog.vc_lobby.callback(cog, interaction)
+
+            mock_create.assert_awaited_once()
+            assert mock_create.call_args[1]["guild_id"] == "7777"
+
+    async def test_success_message_contains_channel_name(self) -> None:
+        """成功メッセージにチャンネル名が含まれる。"""
+        cog = _make_cog()
+        interaction = _make_interaction(1)
+
+        lobby_channel = MagicMock(spec=discord.VoiceChannel)
+        lobby_channel.id = 500
+        lobby_channel.name = "参加して作成"
+        interaction.guild.create_voice_channel = AsyncMock(
+            return_value=lobby_channel
+        )
+
+        mock_factory, mock_session = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_lobbies_by_guild",
+            new_callable=AsyncMock,
+            return_value=[],
+        ), patch(
+            "src.cogs.voice.create_lobby", new_callable=AsyncMock
+        ):
+            await cog.vc_lobby.callback(cog, interaction)
+
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "参加して作成" in msg
+        assert "カテゴリ" in msg
+
+    async def test_error_message_contains_exception_text(self) -> None:
+        """エラーメッセージに例外テキストが含まれる。"""
+        cog = _make_cog()
+        interaction = _make_interaction(1)
+        interaction.guild.create_voice_channel = AsyncMock(
+            side_effect=discord.HTTPException(
+                MagicMock(status=403), "Missing Permissions"
+            )
+        )
+
+        mock_factory, _mock_session = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_lobbies_by_guild",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            await cog.vc_lobby.callback(cog, interaction)
+
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "失敗" in msg
+
+
+# ===========================================================================
+# /vc panel コマンドテスト
+# ===========================================================================
+
+
+class TestVcPanelCommand:
+    """Tests for /vc panel slash command."""
 
     async def test_panel_reposts_control_panel(self) -> None:
         """正常系: repost_panel が呼ばれ、ephemeral で応答。"""
@@ -1023,7 +1270,7 @@ class TestPanelCommand:
             "src.cogs.voice.repost_panel",
             new_callable=AsyncMock,
         ) as mock_repost:
-            await cog.panel.callback(cog, interaction)
+            await cog.vc_panel.callback(cog, interaction)
 
             # repost_panel が呼ばれる
             mock_repost.assert_awaited_once_with(channel, cog.bot)
@@ -1033,7 +1280,7 @@ class TestPanelCommand:
             assert call_kwargs["ephemeral"] is True
 
     async def test_panel_allowed_for_non_owner(self) -> None:
-        """オーナー以外でも /panel を実行できる。"""
+        """オーナー以外でも /vc panel を実行できる。"""
         cog = _make_cog()
         channel = _make_channel(100)
         interaction = _make_interaction(2, channel)
@@ -1049,7 +1296,7 @@ class TestPanelCommand:
             "src.cogs.voice.repost_panel",
             new_callable=AsyncMock,
         ) as mock_repost:
-            await cog.panel.callback(cog, interaction)
+            await cog.vc_panel.callback(cog, interaction)
 
             mock_repost.assert_awaited_once_with(channel, cog.bot)
             interaction.response.send_message.assert_awaited_once()
@@ -1064,7 +1311,7 @@ class TestPanelCommand:
         text_channel.id = 100
         interaction = _make_interaction(1, text_channel)
 
-        await cog.panel.callback(cog, interaction)
+        await cog.vc_panel.callback(cog, interaction)
 
         interaction.response.send_message.assert_awaited_once()
         msg = interaction.response.send_message.call_args[0][0]
@@ -1082,7 +1329,7 @@ class TestPanelCommand:
             new_callable=AsyncMock,
             return_value=None,
         ):
-            await cog.panel.callback(cog, interaction)
+            await cog.vc_panel.callback(cog, interaction)
 
             interaction.response.send_message.assert_awaited_once()
             msg = interaction.response.send_message.call_args[0][0]

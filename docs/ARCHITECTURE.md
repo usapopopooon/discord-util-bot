@@ -25,8 +25,8 @@ src/
 ├── bot.py               # Bot クラス (on_ready, Cog ローダー)
 ├── config.py            # pydantic-settings による環境変数管理
 ├── cogs/
-│   ├── admin.py         # /lobby コマンド
-│   ├── voice.py         # VC 自動作成・削除、/panel コマンド
+│   ├── admin.py         # 管理者用コマンド (将来の拡張用)
+│   ├── voice.py         # VC 自動作成・削除、/vc コマンドグループ
 │   ├── bump.py          # Bump リマインダー
 │   └── health.py        # ヘルスチェック (ハートビート)
 ├── core/

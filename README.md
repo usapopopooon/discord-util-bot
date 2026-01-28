@@ -79,17 +79,17 @@ PostgreSQL と Bot が一緒に起動する。
 
 ## スラッシュコマンド
 
-### 管理者コマンド
+### 一時 VC コマンド
 
 | コマンド | 説明 |
 |---------|------|
-| `/lobby` | ロビー VC を作成 (管理者のみ) |
+| `/vc lobby` | ロビー VC を作成 (管理者のみ) |
+| `/vc panel` | コントロールパネルを再投稿 |
 
-### ユーザーコマンド
+### Bump コマンド
 
 | コマンド | 説明 |
 |---------|------|
-| `/panel` | コントロールパネルを再投稿 |
 | `/bump setup` | bump 監視を開始 (実行したチャンネルを監視) |
 | `/bump status` | bump 監視の設定状況を確認 |
 | `/bump disable` | bump 監視を停止 |
@@ -120,8 +120,8 @@ src/
 ├── bot.py               # Bot クラス定義
 ├── config.py            # pydantic-settings による設定管理
 ├── cogs/
-│   ├── admin.py         # /lobby コマンド (管理者用)
-│   ├── voice.py         # VC 自動作成・削除、/panel コマンド
+│   ├── admin.py         # 管理者用コマンド (将来の拡張用)
+│   ├── voice.py         # VC 自動作成・削除、/vc コマンド
 │   ├── bump.py          # Bump リマインダー (/bump コマンド)
 │   └── health.py        # ハートビート死活監視
 ├── core/
