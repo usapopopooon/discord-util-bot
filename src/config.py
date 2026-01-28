@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     discord_token: str
 
     # --- オプションフィールド (デフォルト値あり) ---
-    # データベース接続URL。デフォルトはローカルの SQLite ファイル
-    database_url: str = "sqlite+aiosqlite:///data/ephemeral_vc.db"
+    # データベース接続URL。デフォルトはローカルの PostgreSQL
+    database_url: str = "postgresql+asyncpg://user@localhost/ephemeral_vc"
 
     # ヘルスチェック Embed を送信する Discord チャンネルの ID
     # 0 の場合は Discord への送信をスキップし、ログ出力のみ行う
@@ -47,7 +47,6 @@ class Settings(BaseSettings):
         変換パターン:
           postgres://...     → postgresql+asyncpg://...  (Heroku 形式)
           postgresql://...   → postgresql+asyncpg://...  (標準 PostgreSQL)
-          sqlite+aiosqlite:  → そのまま (変換不要)
         """
         url = self.database_url
         # Heroku uses postgres:// but SQLAlchemy needs postgresql+asyncpg://

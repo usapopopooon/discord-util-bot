@@ -117,14 +117,42 @@ class HealthCog(commands.Cog):
         """ハートビートループ開始前に1回だけ呼ばれる準備用フック。
 
         wait_until_ready() で Bot の Discord 接続完了を待つ。
+        接続完了後、デプロイ (起動) 通知を送信する。
         tasks.loop は before_loop 完了後に即座に初回実行されるので、
         ここでタスク本体を手動で呼ぶと二重実行になるので注意。
         """
         await self.bot.wait_until_ready()
 
+        # --- デプロイ (起動) 通知 ---
+        if settings.health_channel_id:
+            channel = self.bot.get_channel(settings.health_channel_id)
+            if isinstance(channel, discord.TextChannel):
+                embed = self._build_deploy_embed()
+                await channel.send(embed=embed)
+
     # ------------------------------------------------------------------
     # Embed builder
     # ------------------------------------------------------------------
+
+    def _build_deploy_embed(self) -> discord.Embed:
+        """デプロイ (起動) 通知用の Embed を組み立てる。
+
+        ハートビート Embed (緑/黄/赤) と区別するため、青色を使用する。
+        Bot 起動時に1回だけ送信される。
+        """
+        guild_count = len(self.bot.guilds)
+        embed = discord.Embed(
+            title="\U0001f680 Deploy Complete",
+            color=discord.Color.blue(),
+            timestamp=datetime.now(UTC),
+        )
+        embed.add_field(
+            name="Boot",
+            value=f"{self._boot_jst:%Y-%m-%d %H:%M JST}",
+            inline=True,
+        )
+        embed.add_field(name="Guilds", value=str(guild_count), inline=True)
+        return embed
 
     def _build_embed(
         self,

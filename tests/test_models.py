@@ -1,23 +1,43 @@
 """Tests for database models."""
 
+from __future__ import annotations
+
+import os
+from typing import TYPE_CHECKING
+
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from src.database.models import Base, Lobby, VoiceSession
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://user@localhost/ephemeral_vc_test",
+)
+
 
 @pytest.fixture
-async def db_session() -> AsyncSession:
-    """Create an in-memory SQLite async session for testing."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+async def db_session() -> AsyncGenerator[AsyncSession, None]:
+    """PostgreSQL テスト DB のセッションを提供する。"""
+    engine = create_async_engine(TEST_DATABASE_URL)
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
-    session_factory = async_sessionmaker(
+    factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )
-    async with session_factory() as session:
+    async with factory() as session:
         yield session
+
+    await engine.dispose()
 
 
 class TestLobbyModel:

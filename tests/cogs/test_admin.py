@@ -188,3 +188,122 @@ class TestLobbyAdd:
             msg = interaction.response.send_message.call_args[0][0]
             assert "既に" in msg
             assert interaction.response.send_message.call_args[1]["ephemeral"] is True
+
+    async def test_lobby_channel_has_correct_name(self) -> None:
+        """作成される VC の名前が「参加して作成」。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+
+        lobby_channel = MagicMock(spec=discord.VoiceChannel)
+        lobby_channel.id = 500
+        lobby_channel.name = "参加して作成"
+        interaction.guild.create_voice_channel = AsyncMock(
+            return_value=lobby_channel
+        )
+
+        mock_factory, mock_session = _mock_async_session()
+        with patch("src.cogs.admin.async_session", mock_factory), patch(
+            "src.cogs.admin.get_lobbies_by_guild",
+            new_callable=AsyncMock,
+            return_value=[],
+        ), patch(
+            "src.cogs.admin.create_lobby", new_callable=AsyncMock
+        ):
+            await cog.lobby_add.callback(cog, interaction)
+
+            call_kwargs = interaction.guild.create_voice_channel.call_args[1]
+            assert call_kwargs["name"] == "参加して作成"
+
+    async def test_db_registers_correct_guild_id(self) -> None:
+        """DB に正しい guild_id が登録される。"""
+        cog = _make_cog()
+        interaction = _make_interaction(guild_id=7777)
+
+        lobby_channel = MagicMock(spec=discord.VoiceChannel)
+        lobby_channel.id = 500
+        lobby_channel.name = "参加して作成"
+        interaction.guild.create_voice_channel = AsyncMock(
+            return_value=lobby_channel
+        )
+
+        mock_factory, mock_session = _mock_async_session()
+        with patch("src.cogs.admin.async_session", mock_factory), patch(
+            "src.cogs.admin.get_lobbies_by_guild",
+            new_callable=AsyncMock,
+            return_value=[],
+        ), patch(
+            "src.cogs.admin.create_lobby", new_callable=AsyncMock
+        ) as mock_create:
+            await cog.lobby_add.callback(cog, interaction)
+
+            mock_create.assert_awaited_once()
+            assert mock_create.call_args[1]["guild_id"] == "7777"
+
+    async def test_success_message_contains_channel_name(self) -> None:
+        """成功メッセージにチャンネル名が含まれる。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+
+        lobby_channel = MagicMock(spec=discord.VoiceChannel)
+        lobby_channel.id = 500
+        lobby_channel.name = "参加して作成"
+        interaction.guild.create_voice_channel = AsyncMock(
+            return_value=lobby_channel
+        )
+
+        mock_factory, mock_session = _mock_async_session()
+        with patch("src.cogs.admin.async_session", mock_factory), patch(
+            "src.cogs.admin.get_lobbies_by_guild",
+            new_callable=AsyncMock,
+            return_value=[],
+        ), patch(
+            "src.cogs.admin.create_lobby", new_callable=AsyncMock
+        ):
+            await cog.lobby_add.callback(cog, interaction)
+
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "参加して作成" in msg
+        assert "カテゴリ" in msg
+
+    async def test_error_message_contains_exception_text(self) -> None:
+        """エラーメッセージに例外テキストが含まれる。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+        interaction.guild.create_voice_channel = AsyncMock(
+            side_effect=discord.HTTPException(
+                MagicMock(status=403), "Missing Permissions"
+            )
+        )
+
+        mock_factory, _mock_session = _mock_async_session()
+        with patch("src.cogs.admin.async_session", mock_factory), patch(
+            "src.cogs.admin.get_lobbies_by_guild",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            await cog.lobby_add.callback(cog, interaction)
+
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "失敗" in msg
+
+
+# ---------------------------------------------------------------------------
+# setup 関数テスト
+# ---------------------------------------------------------------------------
+
+
+class TestSetup:
+    """Tests for setup function."""
+
+    async def test_setup_adds_cog(self) -> None:
+        """setup() が Bot に AdminCog を追加する。"""
+        from src.cogs.admin import setup
+
+        bot = MagicMock(spec=discord.ext.commands.Bot)
+        bot.add_cog = AsyncMock()
+
+        await setup(bot)
+
+        bot.add_cog.assert_awaited_once()
+        cog = bot.add_cog.call_args[0][0]
+        assert isinstance(cog, AdminCog)

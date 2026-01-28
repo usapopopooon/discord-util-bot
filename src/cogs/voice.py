@@ -33,7 +33,11 @@ from src.services.db_service import (
     get_voice_session,
     update_voice_session,
 )
-from src.ui.control_panel import ControlPanelView, create_control_panel_embed
+from src.ui.control_panel import (
+    ControlPanelView,
+    create_control_panel_embed,
+    repost_panel,
+)
 
 # デフォルトの VC リージョン (サーバー地域)。"japan" = 東京リージョン
 DEFAULT_RTC_REGION = "japan"
@@ -444,30 +448,10 @@ class VoiceCog(commands.Cog):
                 )
                 return
 
-            # 旧パネルメッセージを削除
-            old_panel = await self._find_panel_message(channel)
-            if old_panel:
-                with contextlib.suppress(discord.HTTPException):
-                    await old_panel.delete()
-
-            # 新しいコントロールパネルを作成・送信
-            owner = interaction.user
-            assert isinstance(owner, discord.Member)
-            embed = create_control_panel_embed(voice_session, owner)
-            view = ControlPanelView(
-                voice_session.id,
-                voice_session.is_locked,
-                voice_session.is_hidden,
-            )
-            self.bot.add_view(view)
-            panel_msg = await channel.send(embed=embed, view=view)
-
-            with contextlib.suppress(discord.HTTPException):
-                await panel_msg.pin()
-
-            await interaction.response.send_message(
-                "コントロールパネルを再投稿しました。", ephemeral=True
-            )
+        await repost_panel(channel, self.bot)
+        await interaction.response.send_message(
+            "コントロールパネルを再投稿しました。", ephemeral=True
+        )
 
     async def cog_app_command_error(
         self,

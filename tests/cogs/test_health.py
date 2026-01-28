@@ -227,3 +227,181 @@ class TestCogLifecycle:
         with patch.object(cog._heartbeat, "cancel") as mock_cancel:
             await cog.cog_unload()
             mock_cancel.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _before_heartbeat テスト
+# ---------------------------------------------------------------------------
+
+
+class TestBeforeHeartbeat:
+    """Tests for _before_heartbeat."""
+
+    async def test_waits_until_ready(self) -> None:
+        """ループ開始前に wait_until_ready が呼ばれる。"""
+        cog = _make_cog()
+
+        with patch("src.cogs.health.settings") as mock_settings:
+            mock_settings.health_channel_id = 0
+            await cog._before_heartbeat()
+
+        cog.bot.wait_until_ready.assert_awaited_once()
+
+    async def test_sends_deploy_notification(self) -> None:
+        """health_channel_id 設定時にデプロイ Embed が送信される。"""
+        cog = _make_cog(guild_count=2)
+
+        mock_channel = MagicMock(spec=discord.TextChannel)
+        mock_channel.send = AsyncMock()
+        cog.bot.get_channel = MagicMock(return_value=mock_channel)
+
+        with patch("src.cogs.health.settings") as mock_settings:
+            mock_settings.health_channel_id = 12345
+            await cog._before_heartbeat()
+
+        mock_channel.send.assert_awaited_once()
+        embed = mock_channel.send.call_args[1]["embed"]
+        assert "Deploy" in (embed.title or "")
+        assert embed.color == discord.Color.blue()
+
+    async def test_deploy_skipped_when_no_channel(self) -> None:
+        """channel_id=0 の場合デプロイ通知はスキップ。"""
+        cog = _make_cog()
+        cog.bot.get_channel = MagicMock()
+
+        with patch("src.cogs.health.settings") as mock_settings:
+            mock_settings.health_channel_id = 0
+            await cog._before_heartbeat()
+
+        cog.bot.get_channel.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _build_deploy_embed テスト
+# ---------------------------------------------------------------------------
+
+
+class TestBuildDeployEmbed:
+    """Tests for _build_deploy_embed."""
+
+    def test_deploy_embed_is_blue(self) -> None:
+        """デプロイ Embed の色が青。"""
+        cog = _make_cog(guild_count=3)
+        embed = cog._build_deploy_embed()
+        assert embed.color == discord.Color.blue()
+
+    def test_deploy_embed_has_boot_field(self) -> None:
+        """デプロイ Embed に Boot フィールドがある。"""
+        cog = _make_cog()
+        embed = cog._build_deploy_embed()
+        field_names = [f.name for f in embed.fields]
+        assert "Boot" in field_names
+
+    def test_deploy_embed_has_guilds_field(self) -> None:
+        """デプロイ Embed に Guilds フィールドがある。"""
+        cog = _make_cog(guild_count=5)
+        embed = cog._build_deploy_embed()
+        field_names = [f.name for f in embed.fields]
+        assert "Guilds" in field_names
+        field_values = [f.value for f in embed.fields]
+        assert "5" in field_values
+
+
+# ---------------------------------------------------------------------------
+# _build_embed 追加テスト
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEmbedEdgeCases:
+    """Tests for _build_embed edge cases."""
+
+    def test_embed_has_timestamp(self) -> None:
+        """Embed に timestamp が設定される。"""
+        cog = _make_cog()
+        embed = cog._build_embed(
+            status="Healthy",
+            uptime_str="0h 0m 0s",
+            latency_ms=10,
+            guild_count=1,
+        )
+        assert embed.timestamp is not None
+
+    def test_zero_latency(self) -> None:
+        """レイテンシ 0ms でも Healthy Embed が返る。"""
+        cog = _make_cog(latency=0.0)
+        embed = cog._build_embed(
+            status="Healthy",
+            uptime_str="0h 0m 0s",
+            latency_ms=0,
+            guild_count=1,
+        )
+        assert embed.color == discord.Color.green()
+
+    def test_boundary_200ms(self) -> None:
+        """200ms ちょうどは Degraded (黄)。"""
+        cog = _make_cog()
+        embed = cog._build_embed(
+            status="Degraded",
+            uptime_str="0h 0m 0s",
+            latency_ms=200,
+            guild_count=1,
+        )
+        assert embed.color == discord.Color.yellow()
+
+    def test_boundary_500ms(self) -> None:
+        """500ms ちょうどは Unhealthy (赤)。"""
+        cog = _make_cog()
+        embed = cog._build_embed(
+            status="Unhealthy",
+            uptime_str="0h 0m 0s",
+            latency_ms=500,
+            guild_count=1,
+        )
+        assert embed.color == discord.Color.red()
+
+    def test_large_uptime(self) -> None:
+        """長時間稼働でも正しく表示される。"""
+        cog = _make_cog()
+        embed = cog._build_embed(
+            status="Healthy",
+            uptime_str="999h 59m 59s",
+            latency_ms=10,
+            guild_count=100,
+        )
+        field_values = [f.value for f in embed.fields]
+        assert "999h 59m 59s" in field_values
+
+    def test_guild_count_zero(self) -> None:
+        """ギルド数 0 でも Embed が正しく生成される。"""
+        cog = _make_cog(guild_count=0)
+        embed = cog._build_embed(
+            status="Healthy",
+            uptime_str="0h 0m 0s",
+            latency_ms=10,
+            guild_count=0,
+        )
+        field_values = [f.value for f in embed.fields]
+        assert "0" in field_values
+
+
+# ---------------------------------------------------------------------------
+# _heartbeat ログ出力テスト
+# ---------------------------------------------------------------------------
+
+
+class TestHeartbeatLogging:
+    """Tests for _heartbeat logging."""
+
+    async def test_logs_heartbeat_info(self) -> None:
+        """ハートビート時にログが出力される。"""
+        cog = _make_cog(latency=0.05, guild_count=2)
+
+        with patch("src.cogs.health.settings") as mock_settings, patch(
+            "src.cogs.health.logger"
+        ) as mock_logger:
+            mock_settings.health_channel_id = 0
+            await cog._heartbeat()  # type: ignore[misc]
+
+            mock_logger.info.assert_called_once()
+            log_msg = mock_logger.info.call_args[0][0]
+            assert "Heartbeat" in log_msg

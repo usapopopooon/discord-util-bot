@@ -17,9 +17,11 @@ discord.py の UI コンポーネント:
   - ephemeral=True: 操作者にだけ見えるメッセージ
 """
 
+import contextlib
 from typing import Any
 
 import discord
+from discord.ext import commands
 
 from src.core.permissions import is_owner
 from src.core.validators import validate_channel_name, validate_user_limit
@@ -56,6 +58,87 @@ def create_control_panel_embed(
     embed.add_field(name="人数制限", value=limit_status, inline=True)
 
     return embed
+
+
+async def refresh_panel_embed(
+    channel: discord.VoiceChannel,
+) -> None:
+    """パネルメッセージの Embed を最新の DB 状態で更新する。"""
+    async with async_session() as db_session:
+        voice_session = await get_voice_session(
+            db_session, str(channel.id)
+        )
+        if not voice_session:
+            return
+
+        owner = channel.guild.get_member(
+            int(voice_session.owner_id)
+        )
+        if not owner:
+            return
+
+        embed = create_control_panel_embed(voice_session, owner)
+
+        # ピン留めされたパネルメッセージを探して更新
+        pins = await channel.pins()
+        for msg in pins:
+            if (
+                msg.author == channel.guild.me
+                and msg.embeds
+                and msg.embeds[0].title == "ボイスチャンネル設定"
+            ):
+                view = ControlPanelView(
+                    voice_session.id,
+                    voice_session.is_locked,
+                    voice_session.is_hidden,
+                    channel.nsfw,
+                )
+                await msg.edit(embed=embed, view=view)
+                return
+
+
+async def repost_panel(
+    channel: discord.VoiceChannel,
+    bot: commands.Bot,
+) -> None:
+    """旧パネルを削除し、新しいパネルを送信してピン留めする。
+
+    refresh_panel_embed() が既存メッセージを edit で更新するのに対し、
+    この関数はメッセージを削除→再作成する。オーナー譲渡時や /panel コマンドで使用。
+    """
+    async with async_session() as db_session:
+        voice_session = await get_voice_session(
+            db_session, str(channel.id)
+        )
+        if not voice_session:
+            return
+
+        owner = channel.guild.get_member(int(voice_session.owner_id))
+        if not owner:
+            return
+
+        # 旧パネル削除 (ピンから探す)
+        with contextlib.suppress(discord.HTTPException):
+            pins = await channel.pins()
+            for msg in pins:
+                if (
+                    msg.author == channel.guild.me
+                    and msg.embeds
+                    and msg.embeds[0].title == "ボイスチャンネル設定"
+                ):
+                    await msg.delete()
+                    break
+
+        # 新パネル送信 + ピン留め
+        embed = create_control_panel_embed(voice_session, owner)
+        view = ControlPanelView(
+            voice_session.id,
+            voice_session.is_locked,
+            voice_session.is_hidden,
+            channel.nsfw,
+        )
+        bot.add_view(view)
+        await channel.send(embed=embed, view=view)
 
 
 # =============================================================================
@@ -128,6 +211,13 @@ class RenameModal(discord.ui.Modal, title="チャンネル名変更"):
             f"チャンネル名を **{new_name}** に変更しました。", ephemeral=True
         )
 
+        channel = interaction.channel
+        if isinstance(channel, discord.VoiceChannel):
+            await channel.send(
+                f"🏷️ チャンネル名が **{new_name}** に変更されました。"
+            )
+            await refresh_panel_embed(channel)
+
 
 class UserLimitModal(discord.ui.Modal, title="人数制限変更"):
     """人数制限を変更するモーダル。"""
@@ -191,6 +281,13 @@ class UserLimitModal(discord.ui.Modal, title="人数制限変更"):
         await interaction.response.send_message(
             f"人数制限を **{limit_text}** に設定しました。", ephemeral=True
         )
+
+        channel = interaction.channel
+        if isinstance(channel, discord.VoiceChannel):
+            await channel.send(
+                f"👥 人数制限が **{limit_text}** に変更されました。"
+            )
+            await refresh_panel_embed(channel)
 
 
 # =============================================================================
@@ -301,6 +398,9 @@ class TransferSelectMenu(discord.ui.Select[Any]):
             f"👑 {old} → {new} にオーナーが譲渡されました。"
         )
 
+        # パネルを再投稿 (旧パネル削除 → 新パネル送信 + ピン留め)
+        await repost_panel(channel, interaction.client)  # type: ignore[arg-type]
+
 
 class KickSelectView(discord.ui.View):
     """キック対象を選択するユーザーセレクト。
@@ -342,6 +442,9 @@ class KickSelectView(discord.ui.View):
         await user_to_kick.move_to(None)
         await interaction.response.edit_message(
             content=f"{user_to_kick.mention} をキックしました。", view=None
+        )
+        await channel.send(
+            f"👟 {user_to_kick.mention} がキックされました。"
         )
 
 
@@ -385,6 +488,9 @@ class BlockSelectView(discord.ui.View):
         await interaction.response.edit_message(
             content=f"{user_to_block.mention} をブロックしました。", view=None
         )
+        await channel.send(
+            f"🚫 {user_to_block.mention} がブロックされました。"
+        )
 
 
 class AllowSelectView(discord.ui.View):
@@ -417,6 +523,9 @@ class AllowSelectView(discord.ui.View):
         await channel.set_permissions(user_to_allow, connect=True)
         await interaction.response.edit_message(
             content=f"{user_to_allow.mention} を許可しました。", view=None
+        )
+        await channel.send(
+            f"✅ {user_to_allow.mention} が許可されました。"
         )
 
 
@@ -478,6 +587,10 @@ class BitrateSelectMenu(discord.ui.Select[Any]):
             content=f"ビットレートを **{label}** に変更しました。",
             view=None,
         )
+        if isinstance(channel, discord.VoiceChannel):
+            await channel.send(
+                f"🔊 ビットレートが **{label}** に変更されました。"
+            )
 
 
 class RegionSelectView(discord.ui.View):
@@ -535,6 +648,10 @@ class RegionSelectMenu(discord.ui.Select[Any]):
             content=f"リージョンを **{region_name}** に変更しました。",
             view=None,
         )
+        if isinstance(channel, discord.VoiceChannel):
+            await channel.send(
+                f"🌏 リージョンが **{region_name}** に変更されました。"
+            )
 
 
 # =============================================================================
@@ -755,12 +872,14 @@ class ControlPanelView(discord.ui.View):
             )
 
         status = "ロック" if new_locked_state else "ロック解除"
-        # edit_message: ボタンの表示を更新 (ラベル変更を反映)
-        await interaction.response.edit_message(view=self)
-        # followup.send: edit の後に追加メッセージを送る
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"チャンネルを **{status}** しました。", ephemeral=True
         )
+        emoji = "🔒" if new_locked_state else "🔓"
+        await channel.send(
+            f"{emoji} チャンネルが **{status}** されました。"
+        )
+        await refresh_panel_embed(channel)
 
     @discord.ui.button(
         label="非表示",
@@ -816,10 +935,14 @@ class ControlPanelView(discord.ui.View):
             )
 
         status = "非表示" if new_hidden_state else "表示"
-        await interaction.response.edit_message(view=self)
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"チャンネルを **{status}** にしました。", ephemeral=True
         )
+        emoji = "🙈" if new_hidden_state else "👁️"
+        await channel.send(
+            f"{emoji} チャンネルが **{status}** になりました。"
+        )
+        await refresh_panel_embed(channel)
 
     @discord.ui.button(
         label="年齢制限",
@@ -851,11 +974,14 @@ class ControlPanelView(discord.ui.View):
         else:
             button.label = "年齢制限"
 
-        await interaction.response.edit_message(view=self)
         status = "年齢制限を設定" if new_nsfw else "年齢制限を解除"
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"チャンネルの **{status}** しました。", ephemeral=True
         )
+        await channel.send(
+            f"🔞 チャンネルの **{status}** されました。"
+        )
+        await refresh_panel_embed(channel)
 
     # =========================================================================
     # Row 3: メンバー管理 (譲渡・キック)

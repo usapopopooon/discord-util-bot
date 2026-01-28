@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
@@ -862,15 +863,12 @@ class TestPanelCommand:
     """Tests for /panel slash command."""
 
     async def test_panel_reposts_control_panel(self) -> None:
-        """正常系: 旧パネル削除 + 新パネル送信 + ピン留め。"""
+        """正常系: repost_panel が呼ばれ、ephemeral で応答。"""
         cog = _make_cog()
         channel = _make_channel(100)
-        channel.send = AsyncMock(return_value=MagicMock(pin=AsyncMock()))
         interaction = _make_interaction(1, channel)
 
         voice_session = _make_voice_session(channel_id="100", owner_id="1")
-        old_panel = MagicMock()
-        old_panel.delete = AsyncMock()
 
         mock_factory, mock_session = _mock_async_session()
         with patch("src.cogs.voice.async_session", mock_factory), patch(
@@ -881,21 +879,13 @@ class TestPanelCommand:
             "src.cogs.voice.is_owner",
             return_value=True,
         ), patch(
-            "src.cogs.voice.create_control_panel_embed",
-            return_value=MagicMock(),
-        ), patch(
-            "src.cogs.voice.ControlPanelView",
-            return_value=MagicMock(),
-        ):
-            cog._find_panel_message = AsyncMock(return_value=old_panel)
+            "src.cogs.voice.repost_panel",
+            new_callable=AsyncMock,
+        ) as mock_repost:
             await cog.panel.callback(cog, interaction)
 
-            # 旧パネルが削除される
-            old_panel.delete.assert_awaited_once()
-            # 新パネルが送信される
-            channel.send.assert_awaited_once()
-            # 新パネルがピン留めされる
-            channel.send.return_value.pin.assert_awaited_once()
+            # repost_panel が呼ばれる
+            mock_repost.assert_awaited_once_with(channel, cog.bot)
             # ephemeral で応答
             interaction.response.send_message.assert_awaited_once()
             call_kwargs = interaction.response.send_message.call_args[1]
@@ -994,3 +984,213 @@ class TestCogAppCommandError:
 
         assert raised
         interaction.response.send_message.assert_not_awaited()
+
+
+# ===========================================================================
+# _handle_lobby_join — カテゴリ解決テスト
+# ===========================================================================
+
+
+class TestHandleLobbyJoinCategory:
+    """Tests for _handle_lobby_join category resolution."""
+
+    async def test_uses_lobby_category_id(self) -> None:
+        """ロビーに category_id が設定されている場合はそれを使う。"""
+        cog = _make_cog()
+        member = _make_member(1)
+        channel = _make_channel(100)
+        channel.category = MagicMock(spec=discord.CategoryChannel)
+
+        custom_category = MagicMock(spec=discord.CategoryChannel)
+        lobby = MagicMock()
+        lobby.id = 10
+        lobby.category_id = "999"
+        lobby.default_user_limit = 0
+
+        new_channel = _make_channel(200)
+        new_channel.send = AsyncMock(return_value=MagicMock(pin=AsyncMock()))
+        new_channel.set_permissions = AsyncMock()
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.create_voice_channel = AsyncMock(return_value=new_channel)
+        guild.default_role = MagicMock()
+        guild.get_channel = MagicMock(return_value=custom_category)
+        member.guild = guild
+        member.move_to = AsyncMock()
+
+        voice_session = _make_voice_session(channel_id="200", owner_id="1")
+
+        mock_factory, _ = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_lobby_by_channel_id",
+            new_callable=AsyncMock,
+            return_value=lobby,
+        ), patch(
+            "src.cogs.voice.create_voice_session",
+            new_callable=AsyncMock,
+            return_value=voice_session,
+        ), patch(
+            "src.cogs.voice.create_control_panel_embed",
+            return_value=MagicMock(),
+        ), patch(
+            "src.cogs.voice.ControlPanelView",
+            return_value=MagicMock(),
+        ):
+            await cog._handle_lobby_join(member, channel)
+
+        guild.get_channel.assert_called_once_with(999)
+        call_kwargs = guild.create_voice_channel.call_args[1]
+        assert call_kwargs["category"] == custom_category
+
+    async def test_falls_back_to_channel_category_when_invalid(self) -> None:
+        """category_id のチャンネルが CategoryChannel でない場合はロビーのカテゴリ。"""
+        cog = _make_cog()
+        member = _make_member(1)
+        channel = _make_channel(100)
+        lobby_category = MagicMock(spec=discord.CategoryChannel)
+        channel.category = lobby_category
+
+        lobby = MagicMock()
+        lobby.id = 10
+        lobby.category_id = "999"
+        lobby.default_user_limit = 0
+
+        new_channel = _make_channel(200)
+        new_channel.send = AsyncMock(return_value=MagicMock(pin=AsyncMock()))
+        new_channel.set_permissions = AsyncMock()
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.create_voice_channel = AsyncMock(return_value=new_channel)
+        guild.default_role = MagicMock()
+        # TextChannel を返す (CategoryChannel ではない)
+        guild.get_channel = MagicMock(
+            return_value=MagicMock(spec=discord.TextChannel)
+        )
+        member.guild = guild
+        member.move_to = AsyncMock()
+
+        voice_session = _make_voice_session(channel_id="200", owner_id="1")
+
+        mock_factory, _ = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_lobby_by_channel_id",
+            new_callable=AsyncMock,
+            return_value=lobby,
+        ), patch(
+            "src.cogs.voice.create_voice_session",
+            new_callable=AsyncMock,
+            return_value=voice_session,
+        ), patch(
+            "src.cogs.voice.create_control_panel_embed",
+            return_value=MagicMock(),
+        ), patch(
+            "src.cogs.voice.ControlPanelView",
+            return_value=MagicMock(),
+        ):
+            await cog._handle_lobby_join(member, channel)
+
+        call_kwargs = guild.create_voice_channel.call_args[1]
+        assert call_kwargs["category"] == lobby_category
+
+    async def test_db_error_deletes_new_channel(self) -> None:
+        """DB セッション作成失敗時に VC を削除する。"""
+        cog = _make_cog()
+        member = _make_member(1)
+        channel = _make_channel(100)
+        channel.category = MagicMock(spec=discord.CategoryChannel)
+
+        lobby = MagicMock()
+        lobby.id = 10
+        lobby.category_id = None
+        lobby.default_user_limit = 0
+
+        new_channel = _make_channel(200)
+        new_channel.delete = AsyncMock()
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.create_voice_channel = AsyncMock(return_value=new_channel)
+        guild.default_role = MagicMock()
+        member.guild = guild
+
+        mock_factory, _ = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_lobby_by_channel_id",
+            new_callable=AsyncMock,
+            return_value=lobby,
+        ), patch(
+            "src.cogs.voice.create_voice_session",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("DB error"),
+        ), contextlib.suppress(RuntimeError):
+            await cog._handle_lobby_join(member, channel)
+
+        new_channel.delete.assert_awaited_once()
+
+
+# ===========================================================================
+# on_voice_state_update — 追加エッジケース
+# ===========================================================================
+
+
+class TestOnVoiceStateUpdateEdgeCases:
+    """on_voice_state_update の追加エッジケース。"""
+
+    async def test_move_between_channels(self) -> None:
+        """チャンネル間移動では退出と参加の両方が処理される。"""
+        cog = _make_cog()
+        member = _make_member(1)
+        cog._record_join(100, 1)
+
+        old_channel = _make_channel(100)
+        new_channel = _make_channel(200)
+
+        before = MagicMock(spec=discord.VoiceState)
+        before.channel = old_channel
+        after = MagicMock(spec=discord.VoiceState)
+        after.channel = new_channel
+
+        cog._handle_lobby_join = AsyncMock()  # type: ignore[method-assign]
+        cog._handle_channel_leave = AsyncMock()  # type: ignore[method-assign]
+
+        await cog.on_voice_state_update(member, before, after)
+
+        # 参加処理
+        cog._handle_lobby_join.assert_awaited_once_with(member, new_channel)
+        assert 1 in cog._join_times[200]
+        # 退出処理
+        cog._handle_channel_leave.assert_awaited_once_with(member, old_channel)
+        assert 1 not in cog._join_times.get(100, {})
+
+    async def test_non_voice_channel_join_ignored(self) -> None:
+        """StageChannel など VoiceChannel でない場合は無視。"""
+        cog = _make_cog()
+        member = _make_member(1)
+
+        before = MagicMock(spec=discord.VoiceState)
+        before.channel = None
+        after = MagicMock(spec=discord.VoiceState)
+        after.channel = MagicMock(spec=discord.StageChannel)
+        after.channel.id = 300
+
+        cog._handle_lobby_join = AsyncMock()  # type: ignore[method-assign]
+
+        await cog.on_voice_state_update(member, before, after)
+
+        cog._handle_lobby_join.assert_not_awaited()
+
+    async def test_non_voice_channel_leave_ignored(self) -> None:
+        """VoiceChannel でないチャンネルからの退出は無視。"""
+        cog = _make_cog()
+        member = _make_member(1)
+
+        before = MagicMock(spec=discord.VoiceState)
+        before.channel = MagicMock(spec=discord.StageChannel)
+        before.channel.id = 300
+        after = MagicMock(spec=discord.VoiceState)
+        after.channel = None
+
+        cog._handle_channel_leave = AsyncMock()  # type: ignore[method-assign]
+
+        await cog.on_voice_state_update(member, before, after)
+
+        cog._handle_channel_leave.assert_not_awaited()
