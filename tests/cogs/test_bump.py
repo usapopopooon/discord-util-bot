@@ -1413,6 +1413,12 @@ class TestBumpSetupCommand:
         # 具体的な時刻が Discord タイムスタンプ形式で表示される
         assert f"<t:{expected_ts}:t>" in embed.description  # 絶対時刻 (例: 21:30)
 
+        # 相対時刻 (:R>) は含まれない（絶対時刻のみ表示）
+        assert ":R>" not in embed.description
+
+        # base_description にも時刻が含まれる
+        assert f"<t:{expected_ts}:t> にリマインドを送信します" in embed.description
+
     async def test_setup_detects_bump_already_available(self) -> None:
         """既に bump 可能な場合はその旨を表示する。"""
         from datetime import UTC, datetime, timedelta
