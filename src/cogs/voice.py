@@ -446,13 +446,8 @@ class VoiceCog(commands.Cog):
                 new_owner, read_message_history=True
             )
 
-        # コントロールパネルの Embed を新オーナー情報で更新
-        # まずピン留めメッセージから探し、見つからなければ履歴を検索する
-        embed = create_control_panel_embed(voice_session, new_owner)
-        panel_msg = await self._find_panel_message(channel)
-        if panel_msg:
-            with contextlib.suppress(discord.HTTPException):
-                await panel_msg.edit(embed=embed)
+        # コントロールパネルを再投稿 (旧パネル削除 → 新パネル送信 → ピン留め)
+        await repost_panel(channel, self.bot)
 
         # チャンネルに引き継ぎ通知を送信
         with contextlib.suppress(discord.HTTPException):

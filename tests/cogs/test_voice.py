@@ -613,16 +613,13 @@ class TestHandleChannelLeave:
             "src.cogs.voice.update_voice_session",
             new_callable=AsyncMock,
         ) as mock_update, patch(
-            "src.cogs.voice.create_control_panel_embed",
-            return_value=MagicMock(),
+            "src.cogs.voice.repost_panel",
+            new_callable=AsyncMock,
         ), patch(
             "src.cogs.voice.get_voice_session_members_ordered",
             new_callable=AsyncMock,
             return_value=[mock_db_member2],
         ):
-            # _find_panel_message をモック
-            cog._find_panel_message = AsyncMock(return_value=None)
-
             await cog._handle_channel_leave(owner, channel)
 
             # オーナー ID が新オーナーに更新される
@@ -685,14 +682,13 @@ class TestTransferOwnership:
             "src.cogs.voice.update_voice_session",
             new_callable=AsyncMock,
         ) as mock_update, patch(
-            "src.cogs.voice.create_control_panel_embed",
-            return_value=MagicMock(),
+            "src.cogs.voice.repost_panel",
+            new_callable=AsyncMock,
         ), patch(
             "src.cogs.voice.get_voice_session_members_ordered",
             new_callable=AsyncMock,
             return_value=[mock_db_member2, mock_db_member3],
         ):
-            cog._find_panel_message = AsyncMock(return_value=None)
             await cog._transfer_ownership(
                 mock_session, voice_session, old_owner, channel
             )
@@ -721,14 +717,13 @@ class TestTransferOwnership:
             "src.cogs.voice.update_voice_session",
             new_callable=AsyncMock,
         ), patch(
-            "src.cogs.voice.create_control_panel_embed",
-            return_value=MagicMock(),
+            "src.cogs.voice.repost_panel",
+            new_callable=AsyncMock,
         ), patch(
             "src.cogs.voice.get_voice_session_members_ordered",
             new_callable=AsyncMock,
             return_value=[mock_db_member2],
         ):
-            cog._find_panel_message = AsyncMock(return_value=None)
             await cog._transfer_ownership(
                 mock_session, voice_session, old_owner, channel
             )
@@ -741,8 +736,8 @@ class TestTransferOwnership:
             # 新オーナー: read_message_history=True
             assert calls[1][1]["read_message_history"] is True
 
-    async def test_updates_pinned_embed(self) -> None:
-        """ピン留めされたコントロールパネルの Embed が更新される。"""
+    async def test_reposts_panel(self) -> None:
+        """コントロールパネルが再投稿される。"""
         cog = _make_cog()
         old_owner = _make_member(1)
         new_owner = _make_member(2)
@@ -754,31 +749,26 @@ class TestTransferOwnership:
 
         voice_session = _make_voice_session(channel_id="100", owner_id="1")
 
-        panel_msg = MagicMock()
-        panel_msg.edit = AsyncMock()
-
         mock_db_member2 = MagicMock()
         mock_db_member2.user_id = "2"
 
         mock_session = AsyncMock()
-        mock_embed = MagicMock()
         with patch(
             "src.cogs.voice.update_voice_session",
             new_callable=AsyncMock,
         ), patch(
-            "src.cogs.voice.create_control_panel_embed",
-            return_value=mock_embed,
-        ), patch(
+            "src.cogs.voice.repost_panel",
+            new_callable=AsyncMock,
+        ) as mock_repost, patch(
             "src.cogs.voice.get_voice_session_members_ordered",
             new_callable=AsyncMock,
             return_value=[mock_db_member2],
         ):
-            cog._find_panel_message = AsyncMock(return_value=panel_msg)
             await cog._transfer_ownership(
                 mock_session, voice_session, old_owner, channel
             )
 
-            panel_msg.edit.assert_awaited_once_with(embed=mock_embed)
+            mock_repost.assert_awaited_once_with(channel, cog.bot)
 
     async def test_sends_notification(self) -> None:
         """引き継ぎ通知がチャンネルに送信される。"""
@@ -801,14 +791,13 @@ class TestTransferOwnership:
             "src.cogs.voice.update_voice_session",
             new_callable=AsyncMock,
         ), patch(
-            "src.cogs.voice.create_control_panel_embed",
-            return_value=MagicMock(),
+            "src.cogs.voice.repost_panel",
+            new_callable=AsyncMock,
         ), patch(
             "src.cogs.voice.get_voice_session_members_ordered",
             new_callable=AsyncMock,
             return_value=[mock_db_member2],
         ):
-            cog._find_panel_message = AsyncMock(return_value=None)
             await cog._transfer_ownership(
                 mock_session, voice_session, old_owner, channel
             )
