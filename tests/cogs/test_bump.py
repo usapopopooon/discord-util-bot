@@ -1104,8 +1104,8 @@ class TestBuildDetectionEmbedTimestamp:
         assert "<t:" in (embed.description or "")
         assert ":t>" in (embed.description or "")
 
-    async def test_embed_contains_relative_time(self) -> None:
-        """Embedに相対時刻が含まれる。"""
+    async def test_embed_contains_time_format(self) -> None:
+        """Embedに時刻が含まれる。"""
         from datetime import UTC, datetime, timedelta
 
         cog = _make_cog()
@@ -1116,8 +1116,8 @@ class TestBuildDetectionEmbedTimestamp:
 
         embed = cog._build_detection_embed("DISBOARD", member, remind_at, True)
 
-        # タイムスタンプ形式 <t:...:R> が含まれる
-        assert ":R>" in (embed.description or "")
+        # タイムスタンプ形式 <t:...:t> が含まれる
+        assert ":t>" in (embed.description or "")
 
 
 # ---------------------------------------------------------------------------
@@ -1359,13 +1359,15 @@ class TestBumpSetupCommand:
         assert "サーバー内" in call_args[0][0]
 
     async def test_setup_detects_recent_bump_and_creates_reminder(self) -> None:
-        """直近の bump を検出してリマインダーを自動作成する。"""
+        """直近の bump を検出してリマインダーを自動作成し、具体的な時刻を表示する。"""
         from datetime import UTC, datetime, timedelta
 
         cog = _make_cog()
 
         # 1時間前の bump
         bump_time = datetime.now(UTC) - timedelta(hours=1)
+        expected_remind_at = bump_time + timedelta(hours=2)  # 2時間後にリマインド
+        expected_ts = int(expected_remind_at.timestamp())
 
         mock_interaction = MagicMock(spec=discord.Interaction)
         mock_interaction.guild = MagicMock()
@@ -1407,6 +1409,9 @@ class TestBumpSetupCommand:
         embed = send_kwargs["embed"]
         assert "直近の bump を検出" in embed.description
         assert "リマインダーを自動設定しました" in embed.description
+
+        # 具体的な時刻が Discord タイムスタンプ形式で表示される
+        assert f"<t:{expected_ts}:t>" in embed.description  # 絶対時刻 (例: 21:30)
 
     async def test_setup_detects_bump_already_available(self) -> None:
         """既に bump 可能な場合はその旨を表示する。"""

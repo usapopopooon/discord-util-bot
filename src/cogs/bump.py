@@ -436,13 +436,11 @@ class BumpCog(commands.Cog):
         # Discord タイムスタンプ形式
         ts = int(remind_at.timestamp())
         time_absolute = f"<t:{ts}:t>"  # 短い時刻表示 (例: 21:30)
-        time_relative = f"<t:{ts}:R>"  # 相対時間表示 (例: 2時間後)
 
         if is_enabled:
             description = (
                 f"{user.mention} さんが **{service_name}** を bump しました！\n\n"
-                f"次の bump リマインドは {time_absolute}（{time_relative}）"
-                f"に送信します。"
+                f"次の bump リマインドは {time_absolute} に送信します。"
             )
         else:
             description = (
@@ -595,6 +593,7 @@ class BumpCog(commands.Cog):
         recent_bump_info: str | None = None
         detected_service: str | None = None
         is_enabled = True
+        reminder_time_text: str | None = None  # 具体的なリマインド時刻
 
         if isinstance(channel, discord.TextChannel):
             result = await self._find_recent_bump(channel)
@@ -616,10 +615,11 @@ class BumpCog(commands.Cog):
                         )
                         is_enabled = reminder.is_enabled
                     ts = int(remind_at.timestamp())
+                    reminder_time_text = f"<t:{ts}:t>"
                     recent_bump_info = (
                         f"\n\n**📊 直近の bump を検出:**\n"
                         f"サービス: **{service_name}**\n"
-                        f"次の bump 可能時刻: <t:{ts}:t>（<t:{ts}:R>）\n"
+                        f"次の bump 可能時刻: {reminder_time_text}\n"
                         f"リマインダーを自動設定しました。"
                     )
                 else:
@@ -630,10 +630,16 @@ class BumpCog(commands.Cog):
                         f"✅ 現在 bump 可能です！"
                     )
 
+        # リマインド時刻が分かっている場合は具体的な時刻を表示
+        if reminder_time_text:
+            reminder_desc = f"{reminder_time_text} にリマインドを送信します。"
+        else:
+            reminder_desc = "リマインドを送信します。"
+
         base_description = (
             f"監視チャンネル: <#{channel_id}>\n\n"
             "DISBOARD (`/bump`) または ディス速報 (`/dissoku up`) の "
-            "bump 成功を検知し、2時間後にリマインドを送信します。"
+            f"bump 成功を検知し、{reminder_desc}"
         )
 
         embed = discord.Embed(
