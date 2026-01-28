@@ -256,6 +256,16 @@ class TestRenameModal:
         msg = interaction.response.send_message.call_args[0][0]
         assert "無効" in msg
 
+    async def test_default_value_set(self) -> None:
+        """current_name を渡すとデフォルト値にセットされる。"""
+        modal = RenameModal(session_id=1, current_name="My Channel")
+        assert modal.name.default == "My Channel"
+
+    async def test_no_default_when_empty(self) -> None:
+        """current_name が空の場合、デフォルト値はセットされない。"""
+        modal = RenameModal(session_id=1)
+        assert modal.name.default is None
+
     async def test_non_owner_rejected(self) -> None:
         """オーナー以外はリネームできない。"""
         modal = RenameModal(session_id=1)
@@ -312,6 +322,16 @@ class TestUserLimitModal:
             interaction.channel.edit.assert_awaited_once_with(user_limit=10)
             mock_update.assert_awaited_once()
 
+    async def test_default_value_set(self) -> None:
+        """current_limit を渡すとデフォルト値にセットされる。"""
+        modal = UserLimitModal(session_id=1, current_limit=10)
+        assert modal.limit.default == "10"
+
+    async def test_default_value_zero(self) -> None:
+        """current_limit が 0 の場合もデフォルト値にセットされる。"""
+        modal = UserLimitModal(session_id=1, current_limit=0)
+        assert modal.limit.default == "0"
+
     async def test_non_numeric_rejected(self) -> None:
         """数値でない入力は弾かれる。"""
         modal = UserLimitModal(session_id=1)
@@ -363,6 +383,79 @@ class TestUserLimitModal:
             interaction.channel.edit.assert_awaited_once_with(user_limit=0)
             msg = interaction.response.send_message.call_args[0][0]
             assert "無制限" in msg
+
+
+# ===========================================================================
+# rename_button / limit_button テスト (モーダルにデフォルト値を渡す)
+# ===========================================================================
+
+
+class TestRenameButton:
+    """Tests for ControlPanelView.rename_button passing current values."""
+
+    async def test_passes_current_channel_name(self) -> None:
+        """ボタン押下時に現在のチャンネル名がモーダルに渡される。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "Current Name"
+
+        await view.rename_button.callback(interaction)
+
+        interaction.response.send_modal.assert_awaited_once()
+        modal = interaction.response.send_modal.call_args[0][0]
+        assert isinstance(modal, RenameModal)
+        assert modal.name.default == "Current Name"
+
+    async def test_no_name_for_non_voice_channel(self) -> None:
+        """VoiceChannel でない場合はデフォルト値なし。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1, is_voice=False)
+
+        await view.rename_button.callback(interaction)
+
+        modal = interaction.response.send_modal.call_args[0][0]
+        assert isinstance(modal, RenameModal)
+        assert modal.name.default is None
+
+
+class TestLimitButton:
+    """Tests for ControlPanelView.limit_button passing current values."""
+
+    async def test_passes_current_user_limit(self) -> None:
+        """ボタン押下時に現在の人数制限がモーダルに渡される。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.user_limit = 5
+
+        await view.limit_button.callback(interaction)
+
+        interaction.response.send_modal.assert_awaited_once()
+        modal = interaction.response.send_modal.call_args[0][0]
+        assert isinstance(modal, UserLimitModal)
+        assert modal.limit.default == "5"
+
+    async def test_passes_zero_limit(self) -> None:
+        """人数制限 0 (無制限) もモーダルに渡される。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.user_limit = 0
+
+        await view.limit_button.callback(interaction)
+
+        modal = interaction.response.send_modal.call_args[0][0]
+        assert isinstance(modal, UserLimitModal)
+        assert modal.limit.default == "0"
+
+    async def test_no_limit_for_non_voice_channel(self) -> None:
+        """VoiceChannel でない場合はデフォルト値 0。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1, is_voice=False)
+
+        await view.limit_button.callback(interaction)
+
+        modal = interaction.response.send_modal.call_args[0][0]
+        assert isinstance(modal, UserLimitModal)
+        assert modal.limit.default == "0"
 
 
 # ===========================================================================

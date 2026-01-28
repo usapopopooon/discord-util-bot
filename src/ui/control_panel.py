@@ -78,9 +78,11 @@ class RenameModal(discord.ui.Modal, title="チャンネル名変更"):
         max_length=100,  # Discord のチャンネル名上限
     )
 
-    def __init__(self, session_id: int) -> None:
+    def __init__(self, session_id: int, *, current_name: str = "") -> None:
         super().__init__()
         self.session_id = session_id
+        if current_name:
+            self.name.default = current_name
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         """モーダルの送信ボタンが押されたときの処理。
@@ -137,9 +139,10 @@ class UserLimitModal(discord.ui.Modal, title="人数制限変更"):
         max_length=2,
     )
 
-    def __init__(self, session_id: int) -> None:
+    def __init__(self, session_id: int, *, current_limit: int = 0) -> None:
         super().__init__()
         self.session_id = session_id
+        self.limit.default = str(current_limit)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         """モーダル送信時の処理。入力値を数値に変換し、バリデーション後に適用する。"""
@@ -611,7 +614,13 @@ class ControlPanelView(discord.ui.View):
         self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
     ) -> None:
         """名前変更ボタン。モーダル (入力フォーム) を表示する。"""
-        await interaction.response.send_modal(RenameModal(self.session_id))
+        current_name = ""
+        channel = interaction.channel
+        if isinstance(channel, discord.VoiceChannel):
+            current_name = channel.name
+        await interaction.response.send_modal(
+            RenameModal(self.session_id, current_name=current_name)
+        )
 
     @discord.ui.button(
         label="人数制限",
@@ -624,7 +633,13 @@ class ControlPanelView(discord.ui.View):
         self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
     ) -> None:
         """人数制限ボタン。モーダルを表示する。"""
-        await interaction.response.send_modal(UserLimitModal(self.session_id))
+        current_limit = 0
+        channel = interaction.channel
+        if isinstance(channel, discord.VoiceChannel):
+            current_limit = channel.user_limit
+        await interaction.response.send_modal(
+            UserLimitModal(self.session_id, current_limit=current_limit)
+        )
 
     # =========================================================================
     # Row 1: チャンネル設定 (ビットレート・リージョン)
