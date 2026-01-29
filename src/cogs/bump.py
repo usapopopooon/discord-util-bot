@@ -298,15 +298,20 @@ class BumpCog(commands.Cog):
         if message.author.id not in (DISBOARD_BOT_ID, DISSOKU_BOT_ID, DEBUG_USER_ID):
             return
 
+        bot_name = "DISBOARD" if message.author.id == DISBOARD_BOT_ID else "ディス速報"
         logger.info(
-            "[DEBUG] Received message from bump bot: bot_id=%s bot_name=%s",
-            message.author.id,
-            message.author.name,
+            "Bump bot message received: bot=%s guild=%s channel=%s",
+            bot_name,
+            message.guild.id,
+            message.channel.id,
         )
 
         # Embed もメッセージ本文もなければ無視
         if not message.embeds and not message.content:
-            logger.info("[DEBUG] No embeds or content, skipping")
+            logger.info(
+                "Bump bot message has no embeds or content, waiting for edit: bot=%s",
+                bot_name,
+            )
             return
 
         guild_id = str(message.guild.id)
@@ -318,42 +323,50 @@ class BumpCog(commands.Cog):
         # 設定がないか、設定されたチャンネルでなければ無視
         if not config or config.channel_id != str(message.channel.id):
             logger.info(
-                "[DEBUG] Channel mismatch or no config: config=%s msg_channel=%s",
+                "Bump monitoring not configured for this channel: "
+                "guild=%s config_channel=%s message_channel=%s",
+                guild_id,
                 config.channel_id if config else None,
-                str(message.channel.id),
+                message.channel.id,
             )
             return
 
         # bump 成功かどうかを判定
         service_name = self._detect_bump_success(message)
         if not service_name:
-            logger.info(
-                "[DEBUG] Bump not detected: bot_id=%s embeds=%s content=%s",
-                message.author.id,
-                [e.to_dict() for e in message.embeds],
-                message.content[:100] if message.content else None,
-            )
             return
 
-        logger.info("[DEBUG] Bump detected: service=%s", service_name)
+        logger.info(
+            "Bump success detected: service=%s guild=%s", service_name, guild_id
+        )
 
         # bump 実行者を取得
         user = self._get_bump_user(message)
         if not user:
-            logger.info(
-                "[DEBUG] Could not get bump user: interaction_metadata=%s",
+            logger.warning(
+                "Could not get bump user from interaction_metadata: "
+                "guild=%s service=%s interaction_metadata=%s",
+                guild_id,
+                service_name,
                 message.interaction_metadata,
             )
             return
 
-        logger.info("[DEBUG] Bump user: %s", user.name)
+        logger.info(
+            "Bump user identified: user=%s user_id=%s guild=%s",
+            user.name,
+            user.id,
+            guild_id,
+        )
 
         # Server Bumper ロールを持っているか確認
         if not self._has_target_role(user):
             logger.info(
-                "[DEBUG] User %s does not have %s role, skipping reminder",
+                "User does not have required role, skipping reminder: "
+                "user=%s required_role=%s guild=%s",
                 user.name,
                 TARGET_ROLE_NAME,
+                guild_id,
             )
             return
 
@@ -403,41 +416,57 @@ class BumpCog(commands.Cog):
         Returns:
             サービス名 ("DISBOARD" or "ディス速報")。検知できなければ None
         """
-        # Embed をチェック
+        is_disboard = message.author.id == DISBOARD_BOT_ID
+        is_dissoku = message.author.id == DISSOKU_BOT_ID
+
         for embed in message.embeds:
             description = embed.description or ""
             title = embed.title or ""
+            fields = embed.fields or []
 
-            # ディス速報の場合、embed の内容をログに出力（デバッグ用）
-            if message.author.id == DISSOKU_BOT_ID:
-                logger.info(
-                    "[DEBUG] Dissoku embed: title=%s description=%s",
-                    title[:100] if title else None,
-                    description[:100] if description else None,
-                )
+            # embed 内容をログ出力
+            fields_summary = [
+                {"name": f.name, "value": f.value[:80] if f.value else ""}
+                for f in fields
+            ]
+            logger.info(
+                "Parsing embed: bot=%s title=%s description=%s fields=%s",
+                "DISBOARD" if is_disboard else "ディス速報",
+                title[:80] if title else None,
+                description[:80] if description else None,
+                fields_summary,
+            )
 
-            if (
-                message.author.id == DISBOARD_BOT_ID
-                and DISBOARD_SUCCESS_KEYWORD in description
-            ):
+            # DISBOARD: description に「表示順をアップ」
+            if is_disboard and DISBOARD_SUCCESS_KEYWORD in description:
                 return "DISBOARD"
 
-            # ディス速報は title または description に「アップ」が含まれる
-            if (
-                message.author.id == DISSOKU_BOT_ID
-                and (DISSOKU_SUCCESS_KEYWORD in description
-                     or DISSOKU_SUCCESS_KEYWORD in title)
-            ):
-                return "ディス速報"
+            # ディス速報: title, description, fields のいずれかに「アップ」
+            if is_dissoku:
+                if DISSOKU_SUCCESS_KEYWORD in title:
+                    return "ディス速報"
+                if DISSOKU_SUCCESS_KEYWORD in description:
+                    return "ディス速報"
+                for field in fields:
+                    if DISSOKU_SUCCESS_KEYWORD in (field.name or ""):
+                        return "ディス速報"
+                    if DISSOKU_SUCCESS_KEYWORD in (field.value or ""):
+                        return "ディス速報"
 
-        # ディス速報はメッセージ本文にも「アップ」が含まれる場合がある
+        # ディス速報: message.content に「アップ」
         if (
-            message.author.id == DISSOKU_BOT_ID
+            is_dissoku
             and message.content
             and DISSOKU_SUCCESS_KEYWORD in message.content
         ):
             return "ディス速報"
 
+        # 検知できなかった
+        logger.info(
+            "Bump success keyword not found: bot=%s keyword=%s",
+            "DISBOARD" if is_disboard else "ディス速報",
+            DISBOARD_SUCCESS_KEYWORD if is_disboard else DISSOKU_SUCCESS_KEYWORD,
+        )
         return None
 
     def _get_bump_user(self, message: discord.Message) -> discord.Member | None:

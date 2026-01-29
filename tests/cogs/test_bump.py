@@ -163,6 +163,57 @@ class TestDetectBumpSuccess:
         result = cog._detect_bump_success(message)
         assert result == "ディス速報"
 
+    def test_detects_dissoku_success_in_fields(self) -> None:
+        """ディス速報の bump 成功を検知する (embed.fields)。"""
+        cog = _make_cog()
+        message = _make_message(
+            author_id=DISSOKU_BOT_ID,
+            channel_id=456,
+            embed_description="<@12345>\nコマンド: `/up`",
+        )
+        # fields を追加（成功パターン）
+        field = MagicMock()
+        field.name = f"{DISSOKU_SUCCESS_KEYWORD}しました!"
+        field.value = "1時間後にまたupできます"
+        message.embeds[0].fields = [field]
+
+        result = cog._detect_bump_success(message)
+        assert result == "ディス速報"
+
+    def test_detects_dissoku_success_in_field_value(self) -> None:
+        """ディス速報の bump 成功を検知する (embed.fields[].value)。"""
+        cog = _make_cog()
+        message = _make_message(
+            author_id=DISSOKU_BOT_ID,
+            channel_id=456,
+            embed_description="<@12345>\nコマンド: `/up`",
+        )
+        # fields の value に「アップ」が含まれるパターン
+        field = MagicMock()
+        field.name = "成功!"
+        field.value = f"サーバーを{DISSOKU_SUCCESS_KEYWORD}しました"
+        message.embeds[0].fields = [field]
+
+        result = cog._detect_bump_success(message)
+        assert result == "ディス速報"
+
+    def test_does_not_detect_dissoku_failure_in_fields(self) -> None:
+        """ディス速報の失敗メッセージは検知しない。"""
+        cog = _make_cog()
+        message = _make_message(
+            author_id=DISSOKU_BOT_ID,
+            channel_id=456,
+            embed_description="<@12345>\nコマンド: `/up`",
+        )
+        # fields を追加（失敗パターン - 「アップ」が含まれない）
+        field = MagicMock()
+        field.name = "失敗しました..."
+        field.value = "間隔をあけてください(76分)"
+        message.embeds[0].fields = [field]
+
+        result = cog._detect_bump_success(message)
+        assert result is None
+
     def test_returns_none_for_non_bump_message(self) -> None:
         """bump 成功ではないメッセージは None を返す。"""
         cog = _make_cog()
@@ -231,6 +282,27 @@ class TestGetBumpUser:
         result = cog._get_bump_user(message)
         assert result is None
 
+    def test_returns_member_from_guild_when_user_is_not_member(self) -> None:
+        """interaction.user が User (not Member) の場合、guild.get_member で取得。"""
+        cog = _make_cog()
+        message = MagicMock(spec=discord.Message)
+
+        # interaction_metadata.user が User (not Member)
+        user = MagicMock(spec=discord.User)
+        user.id = 12345
+        message.interaction_metadata = MagicMock()
+        message.interaction_metadata.user = user
+
+        # guild.get_member で Member を返す
+        member = _make_member()
+        message.guild = MagicMock()
+        message.guild.get_member = MagicMock(return_value=member)
+
+        result = cog._get_bump_user(message)
+
+        message.guild.get_member.assert_called_once_with(12345)
+        assert result == member
+
 
 # ---------------------------------------------------------------------------
 # _has_target_role テスト
@@ -280,6 +352,21 @@ class TestOnMessage:
         session.__aenter__ = AsyncMock(return_value=session)
         session.__aexit__ = AsyncMock(return_value=None)
         return session
+
+    async def test_skips_dm_message(self) -> None:
+        """DM メッセージは無視する。"""
+        cog = _make_cog()
+        message = _make_message(
+            author_id=DISBOARD_BOT_ID,
+            channel_id=456,
+            embed_description=DISBOARD_SUCCESS_KEYWORD,
+        )
+        message.guild = None  # DM
+
+        with patch("src.cogs.bump.upsert_bump_reminder") as mock_upsert:
+            await cog.on_message(message)
+
+        mock_upsert.assert_not_called()
 
     async def test_skips_when_channel_not_configured(self) -> None:
         """bump 監視設定がないギルドは無視。"""
@@ -630,6 +717,62 @@ class TestOnMessageEdit:
 
         # embed が追加されてないのでスキップ
         mock_upsert.assert_not_called()
+
+    async def test_detects_dissoku_success_in_fields_via_edit(self) -> None:
+        """on_message_edit で fields 内の「アップ」を検知する。"""
+        cog = _make_cog()
+        member = _make_member()
+
+        # before: embed なし（ディス速報の初期メッセージ）
+        before = _make_message(
+            author_id=DISSOKU_BOT_ID,
+            channel_id=456,
+            interaction_user=member,
+        )
+        before.embeds = []
+
+        # after: embed あり（fields に「アップ」）
+        after = _make_message(
+            author_id=DISSOKU_BOT_ID,
+            channel_id=456,
+            embed_description="<@12345>\nコマンド: `/up`",
+            interaction_user=member,
+        )
+        # 成功時の fields パターン
+        field = MagicMock()
+        field.name = f"{DISSOKU_SUCCESS_KEYWORD}しました!"
+        field.value = "1時間後にまたupできます"
+        after.embeds[0].fields = [field]
+        after.channel.send = AsyncMock()
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        mock_config = _make_bump_config(channel_id="456")
+        mock_reminder = MagicMock()
+        mock_reminder.is_enabled = True
+        mock_reminder.role_id = None
+
+        with (
+            patch("src.cogs.bump.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.bump.get_bump_config",
+                new_callable=AsyncMock,
+                return_value=mock_config,
+            ),
+            patch(
+                "src.cogs.bump.upsert_bump_reminder",
+                new_callable=AsyncMock,
+                return_value=mock_reminder,
+            ) as mock_upsert,
+        ):
+            await cog.on_message_edit(before, after)
+
+        # ディス速報の bump が検知されてリマインダー登録
+        mock_upsert.assert_called_once()
+        call_kwargs = mock_upsert.call_args[1]
+        assert call_kwargs["service_name"] == "ディス速報"
 
 
 # ---------------------------------------------------------------------------
