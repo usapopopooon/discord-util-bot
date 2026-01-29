@@ -308,8 +308,8 @@ class BumpCog(commands.Cog):
         user = self._get_bump_user(message)
         if not user:
             logger.info(
-                "[DEBUG] Could not get bump user: interaction=%s",
-                message.interaction,
+                "[DEBUG] Could not get bump user: interaction_metadata=%s",
+                message.interaction_metadata,
             )
             return
 
@@ -402,11 +402,11 @@ class BumpCog(commands.Cog):
     def _get_bump_user(self, message: discord.Message) -> discord.Member | None:
         """bump を実行したユーザーを取得する。
 
-        message.interaction から取得を試み、失敗したら None を返す。
+        message.interaction_metadata から取得を試み、失敗したら None を返す。
         """
-        # スラッシュコマンドの場合、interaction.user に実行者がいる
-        if message.interaction and message.interaction.user:
-            user = message.interaction.user
+        # スラッシュコマンドの場合、interaction_metadata.user に実行者がいる
+        if message.interaction_metadata and message.interaction_metadata.user:
+            user = message.interaction_metadata.user
             # Member でない場合は guild から取得し直す
             if isinstance(user, discord.Member):
                 return user
