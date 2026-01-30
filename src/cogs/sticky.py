@@ -16,6 +16,7 @@ import asyncio
 import logging
 from contextlib import suppress
 from datetime import UTC, datetime
+from typing import Any
 
 import discord
 from discord import app_commands
@@ -34,6 +35,130 @@ logger = logging.getLogger(__name__)
 
 # デフォルトの embed 色 (Discord Blurple)
 DEFAULT_COLOR = 0x5865F2
+
+
+class StickySetModal(discord.ui.Modal, title="Sticky メッセージ設定"):
+    """Sticky メッセージを設定するモーダル。"""
+
+    sticky_title: discord.ui.TextInput[Any] = discord.ui.TextInput(
+        label="タイトル",
+        placeholder="embed のタイトルを入力...",
+        max_length=256,
+        required=True,
+    )
+
+    description: discord.ui.TextInput[Any] = discord.ui.TextInput(
+        label="説明文",
+        style=discord.TextStyle.paragraph,
+        placeholder="embed の説明文を入力（改行可）...",
+        max_length=4000,
+        required=True,
+    )
+
+    color: discord.ui.TextInput[Any] = discord.ui.TextInput(
+        label="色 (16進数、例: FF0000)",
+        placeholder="省略時はデフォルト色",
+        max_length=10,
+        required=False,
+    )
+
+    delay: discord.ui.TextInput[Any] = discord.ui.TextInput(
+        label="遅延（秒）",
+        placeholder="最後のメッセージから再投稿までの遅延",
+        default="5",
+        max_length=4,
+        required=False,
+    )
+
+    def __init__(self, cog: StickyCog) -> None:
+        super().__init__()
+        self.cog = cog
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        """モーダル送信時の処理。"""
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "このコマンドはサーバー内でのみ使用できます。", ephemeral=True
+            )
+            return
+
+        title = self.sticky_title.value
+        description = self.description.value
+
+        # 色のパース
+        color_int: int | None = None
+        if self.color.value:
+            try:
+                color_clean = self.color.value.lstrip("#").lstrip("0x")
+                color_int = int(color_clean, 16)
+            except ValueError:
+                await interaction.response.send_message(
+                    f"無効な色形式です: `{self.color.value}`\n"
+                    "16進数で指定してください（例: `FF0000`, `#00FF00`）",
+                    ephemeral=True,
+                )
+                return
+
+        # delay のパース
+        delay_seconds = 5
+        if self.delay.value:
+            try:
+                delay_seconds = int(self.delay.value)
+            except ValueError:
+                await interaction.response.send_message(
+                    f"無効な遅延値です: `{self.delay.value}`\n"
+                    "数字を入力してください",
+                    ephemeral=True,
+                )
+                return
+
+        # delay の検証
+        if delay_seconds < 1:
+            delay_seconds = 1
+        if delay_seconds > 3600:
+            delay_seconds = 3600
+
+        guild_id = str(interaction.guild.id)
+        channel_id = str(interaction.channel_id)
+
+        # 設定を保存
+        async with async_session() as session:
+            await create_sticky_message(
+                session,
+                channel_id=channel_id,
+                guild_id=guild_id,
+                title=title,
+                description=description,
+                color=color_int,
+                cooldown_seconds=delay_seconds,
+            )
+
+        # embed を投稿
+        embed = self.cog._build_embed(title, description, color_int)
+        await interaction.response.send_message(
+            "✅ Sticky メッセージを設定しました。", ephemeral=True
+        )
+
+        # 実際の sticky メッセージを投稿
+        channel = interaction.channel
+        if channel and hasattr(channel, "send"):
+            try:
+                new_message = await channel.send(embed=embed)
+                async with async_session() as session:
+                    await update_sticky_message_id(
+                        session,
+                        channel_id,
+                        str(new_message.id),
+                        last_posted_at=datetime.now(UTC),
+                    )
+                logger.info(
+                    "Sticky message set: guild=%s channel=%s title=%s",
+                    guild_id,
+                    channel_id,
+                    title,
+                )
+            except discord.HTTPException as e:
+                logger.error("Failed to post initial sticky message: %s", e)
 
 
 class StickyCog(commands.Cog):
@@ -57,8 +182,9 @@ class StickyCog(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         """新規メッセージを監視し、sticky メッセージの再投稿をスケジュールする。"""
-        # Bot のメッセージは無視
-        if message.author.bot:
+        # 自分自身のメッセージは無視（無限ループ防止）
+        # 他のボットや他のユーザーのメッセージは sticky を再投稿するトリガーとなる
+        if self.bot.user and message.author.id == self.bot.user.id:
             return
 
         # ギルドがなければ無視 (DM など)
@@ -204,20 +330,7 @@ class StickyCog(commands.Cog):
     )
 
     @sticky_group.command(name="set", description="sticky メッセージを設定")
-    @app_commands.describe(
-        title="embed のタイトル",
-        description="embed の説明文",
-        color="embed の色 (16進数、例: FF0000)",
-        delay="最後のメッセージから再投稿までの遅延（秒）",
-    )
-    async def sticky_set(
-        self,
-        interaction: discord.Interaction,
-        title: str,
-        description: str,
-        color: str | None = None,
-        delay: int = 5,
-    ) -> None:
+    async def sticky_set(self, interaction: discord.Interaction) -> None:
         """このチャンネルに sticky メッセージを設定する。"""
         if not interaction.guild:
             await interaction.response.send_message(
@@ -225,68 +338,7 @@ class StickyCog(commands.Cog):
             )
             return
 
-        # 色のパース
-        color_int: int | None = None
-        if color:
-            try:
-                # 0x プレフィックスや # を除去
-                color_clean = color.lstrip("#").lstrip("0x")
-                color_int = int(color_clean, 16)
-            except ValueError:
-                await interaction.response.send_message(
-                    f"無効な色形式です: `{color}`\n"
-                    "16進数で指定してください（例: `FF0000`, `#00FF00`）",
-                    ephemeral=True,
-                )
-                return
-
-        # delay の検証
-        if delay < 1:
-            delay = 1
-        if delay > 3600:
-            delay = 3600
-
-        guild_id = str(interaction.guild.id)
-        channel_id = str(interaction.channel_id)
-
-        # 設定を保存
-        async with async_session() as session:
-            await create_sticky_message(
-                session,
-                channel_id=channel_id,
-                guild_id=guild_id,
-                title=title,
-                description=description,
-                color=color_int,
-                cooldown_seconds=delay,
-            )
-
-        # embed を投稿
-        embed = self._build_embed(title, description, color_int)
-        await interaction.response.send_message(
-            "✅ Sticky メッセージを設定しました。", ephemeral=True
-        )
-
-        # 実際の sticky メッセージを投稿
-        channel = interaction.channel
-        if channel and hasattr(channel, "send"):
-            try:
-                new_message = await channel.send(embed=embed)
-                async with async_session() as session:
-                    await update_sticky_message_id(
-                        session,
-                        channel_id,
-                        str(new_message.id),
-                        last_posted_at=datetime.now(UTC),
-                    )
-                logger.info(
-                    "Sticky message set: guild=%s channel=%s title=%s",
-                    guild_id,
-                    channel_id,
-                    title,
-                )
-            except discord.HTTPException as e:
-                logger.error("Failed to post initial sticky message: %s", e)
+        await interaction.response.send_modal(StickySetModal(self))
 
     @sticky_group.command(name="remove", description="sticky メッセージを解除")
     async def sticky_remove(self, interaction: discord.Interaction) -> None:

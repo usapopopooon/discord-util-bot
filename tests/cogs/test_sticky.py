@@ -9,16 +9,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 from discord.ext import commands
 
-from src.cogs.sticky import DEFAULT_COLOR, StickyCog
+from src.cogs.sticky import DEFAULT_COLOR, StickyCog, StickySetModal
 
 # ---------------------------------------------------------------------------
 # テスト用ヘルパー
 # ---------------------------------------------------------------------------
 
 
-def _make_cog() -> StickyCog:
+def _make_cog(bot_user_id: int = 99999) -> StickyCog:
     """Create a StickyCog with a mock bot."""
     bot = MagicMock(spec=commands.Bot)
+    bot.user = MagicMock()
+    bot.user.id = bot_user_id
     return StickyCog(bot)
 
 
@@ -118,15 +120,82 @@ class TestBuildEmbed:
 class TestOnMessage:
     """Tests for on_message listener."""
 
-    async def test_ignores_bot_messages(self) -> None:
-        """Bot のメッセージは無視する。"""
-        cog = _make_cog()
-        message = _make_message(is_bot=True)
+    async def test_ignores_own_bot_messages(self) -> None:
+        """自分自身の Bot メッセージは無視する（無限ループ防止）。"""
+        bot_user_id = 99999
+        cog = _make_cog(bot_user_id=bot_user_id)
+        # メッセージの author.id を bot.user.id と同じにする
+        message = _make_message(author_id=bot_user_id, is_bot=True)
 
         with patch("src.cogs.sticky.get_sticky_message") as mock_get:
             await cog.on_message(message)
 
         mock_get.assert_not_called()
+
+    async def test_triggers_on_other_bot_messages(self) -> None:
+        """他の Bot のメッセージでも sticky を再投稿する。"""
+        cog = _make_cog(bot_user_id=99999)
+        # 別の bot からのメッセージ
+        message = _make_message(author_id=88888, is_bot=True)
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+        sticky = _make_sticky()
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch("src.cogs.sticky.get_sticky_message", return_value=sticky),
+        ):
+            await cog.on_message(message)
+
+        # タスクがスケジュールされていることを確認
+        channel_id = str(message.channel.id)
+        assert channel_id in cog._pending_tasks
+
+    async def test_triggers_on_bot_embed_messages(self) -> None:
+        """他の Bot の embed メッセージでも sticky を再投稿する。"""
+        cog = _make_cog(bot_user_id=99999)
+        # 別の bot からの embed 付きメッセージ
+        message = _make_message(author_id=88888, is_bot=True)
+        message.embeds = [MagicMock()]  # embed が含まれている
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+        sticky = _make_sticky()
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch("src.cogs.sticky.get_sticky_message", return_value=sticky),
+        ):
+            await cog.on_message(message)
+
+        # タスクがスケジュールされていることを確認
+        channel_id = str(message.channel.id)
+        assert channel_id in cog._pending_tasks
+
+    async def test_handles_bot_user_none(self) -> None:
+        """bot.user が None の場合でもエラーにならない。"""
+        cog = _make_cog()
+        cog.bot.user = None  # bot.user を None に設定
+        message = _make_message(is_bot=True)
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+        sticky = _make_sticky()
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch("src.cogs.sticky.get_sticky_message", return_value=sticky),
+        ):
+            # エラーなく実行される
+            await cog.on_message(message)
+
+        # bot.user が None の場合、全てのメッセージが処理される
+        channel_id = str(message.channel.id)
+        assert channel_id in cog._pending_tasks
 
     async def test_ignores_dm_messages(self) -> None:
         """DM メッセージは無視する。"""
@@ -584,7 +653,45 @@ class TestStickySetCommand:
         interaction = _make_interaction()
         interaction.guild = None
 
-        await cog.sticky_set.callback(cog, interaction, "Title", "Description")
+        await cog.sticky_set.callback(cog, interaction)
+
+        interaction.response.send_message.assert_called_once()
+        call_args = interaction.response.send_message.call_args
+        assert "サーバー内でのみ" in call_args[0][0]
+
+    async def test_shows_modal(self) -> None:
+        """ギルド内でモーダルを表示する。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+        interaction.response.send_modal = AsyncMock()
+
+        await cog.sticky_set.callback(cog, interaction)
+
+        interaction.response.send_modal.assert_called_once()
+
+
+class TestStickySetModal:
+    """Tests for StickySetModal."""
+
+    def _make_modal(self) -> StickySetModal:
+        """Create a StickySetModal with a mock cog."""
+        cog = _make_cog()
+        modal = StickySetModal(cog)
+        return modal
+
+    async def test_requires_guild(self) -> None:
+        """ギルド外では使用できない。"""
+        modal = self._make_modal()
+        interaction = _make_interaction()
+        interaction.guild = None
+
+        # Set modal values
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = ""
+        modal.delay._value = "5"
+
+        await modal.on_submit(interaction)
 
         interaction.response.send_message.assert_called_once()
         call_args = interaction.response.send_message.call_args
@@ -592,8 +699,14 @@ class TestStickySetCommand:
 
     async def test_creates_sticky_message(self) -> None:
         """sticky メッセージを作成する。"""
-        cog = _make_cog()
+        modal = self._make_modal()
         interaction = _make_interaction()
+
+        # Set modal values
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = ""
+        modal.delay._value = "5"
 
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
@@ -614,15 +727,21 @@ class TestStickySetCommand:
                 new_callable=AsyncMock,
             ),
         ):
-            await cog.sticky_set.callback(cog, interaction, "Title", "Description")
+            await modal.on_submit(interaction)
 
         mock_create.assert_called_once()
         interaction.response.send_message.assert_called_once()
 
     async def test_parses_hex_color(self) -> None:
         """16進数の色をパースする。"""
-        cog = _make_cog()
+        modal = self._make_modal()
         interaction = _make_interaction()
+
+        # Set modal values
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = "FF0000"
+        modal.delay._value = "5"
 
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
@@ -643,29 +762,37 @@ class TestStickySetCommand:
                 new_callable=AsyncMock,
             ),
         ):
-            await cog.sticky_set.callback(
-                cog, interaction, "Title", "Description", color="FF0000"
-            )
+            await modal.on_submit(interaction)
 
         call_kwargs = mock_create.call_args[1]
         assert call_kwargs["color"] == 0xFF0000
 
     async def test_rejects_invalid_color(self) -> None:
         """無効な色形式はエラーを返す。"""
-        cog = _make_cog()
+        modal = self._make_modal()
         interaction = _make_interaction()
 
-        await cog.sticky_set.callback(
-            cog, interaction, "Title", "Description", color="invalid"
-        )
+        # Set modal values
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = "invalid"
+        modal.delay._value = "5"
+
+        await modal.on_submit(interaction)
 
         call_args = interaction.response.send_message.call_args
         assert "無効な色形式" in call_args[0][0]
 
     async def test_uses_delay_parameter(self) -> None:
         """delay パラメータを使用する。"""
-        cog = _make_cog()
+        modal = self._make_modal()
         interaction = _make_interaction()
+
+        # Set modal values
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = ""
+        modal.delay._value = "10"
 
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
@@ -686,12 +813,238 @@ class TestStickySetCommand:
                 new_callable=AsyncMock,
             ),
         ):
-            await cog.sticky_set.callback(
-                cog, interaction, "Title", "Description", delay=10
-            )
+            await modal.on_submit(interaction)
 
         call_kwargs = mock_create.call_args[1]
         assert call_kwargs["cooldown_seconds"] == 10
+
+    async def test_rejects_invalid_delay(self) -> None:
+        """無効な遅延値はエラーを返す。"""
+        modal = self._make_modal()
+        interaction = _make_interaction()
+
+        # Set modal values
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = ""
+        modal.delay._value = "abc"
+
+        await modal.on_submit(interaction)
+
+        call_args = interaction.response.send_message.call_args
+        assert "無効な遅延値" in call_args[0][0]
+
+    async def test_multiline_description(self) -> None:
+        """改行を含む説明文を処理できる。"""
+        modal = self._make_modal()
+        interaction = _make_interaction()
+
+        # Set modal values with multiline description
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Line 1\nLine 2\nLine 3"
+        modal.color._value = ""
+        modal.delay._value = "5"
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        new_message = MagicMock()
+        new_message.id = 1234567890
+        interaction.channel.send = AsyncMock(return_value=new_message)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.create_sticky_message",
+                new_callable=AsyncMock,
+            ) as mock_create,
+            patch(
+                "src.cogs.sticky.update_sticky_message_id",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await modal.on_submit(interaction)
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["description"] == "Line 1\nLine 2\nLine 3"
+
+    async def test_delay_minimum_boundary(self) -> None:
+        """遅延の最小値は1秒に制限される。"""
+        modal = self._make_modal()
+        interaction = _make_interaction()
+
+        # Set modal values with delay below minimum
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = ""
+        modal.delay._value = "0"
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        new_message = MagicMock()
+        new_message.id = 1234567890
+        interaction.channel.send = AsyncMock(return_value=new_message)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.create_sticky_message",
+                new_callable=AsyncMock,
+            ) as mock_create,
+            patch(
+                "src.cogs.sticky.update_sticky_message_id",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await modal.on_submit(interaction)
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["cooldown_seconds"] == 1
+
+    async def test_delay_maximum_boundary(self) -> None:
+        """遅延の最大値は3600秒に制限される。"""
+        modal = self._make_modal()
+        interaction = _make_interaction()
+
+        # Set modal values with delay above maximum
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = ""
+        modal.delay._value = "9999"
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        new_message = MagicMock()
+        new_message.id = 1234567890
+        interaction.channel.send = AsyncMock(return_value=new_message)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.create_sticky_message",
+                new_callable=AsyncMock,
+            ) as mock_create,
+            patch(
+                "src.cogs.sticky.update_sticky_message_id",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await modal.on_submit(interaction)
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["cooldown_seconds"] == 3600
+
+    async def test_color_with_hash_prefix(self) -> None:
+        """# プレフィックス付きの色をパースする。"""
+        modal = self._make_modal()
+        interaction = _make_interaction()
+
+        # Set modal values
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = "#00FF00"
+        modal.delay._value = "5"
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        new_message = MagicMock()
+        new_message.id = 1234567890
+        interaction.channel.send = AsyncMock(return_value=new_message)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.create_sticky_message",
+                new_callable=AsyncMock,
+            ) as mock_create,
+            patch(
+                "src.cogs.sticky.update_sticky_message_id",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await modal.on_submit(interaction)
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["color"] == 0x00FF00
+
+    async def test_handles_send_failure(self) -> None:
+        """メッセージ送信に失敗しても例外を投げない。"""
+        modal = self._make_modal()
+        interaction = _make_interaction()
+
+        # Set modal values
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = ""
+        modal.delay._value = "5"
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        # send が例外を投げる
+        interaction.channel.send = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "")
+        )
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.create_sticky_message",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.cogs.sticky.update_sticky_message_id",
+                new_callable=AsyncMock,
+            ) as mock_update,
+        ):
+            # 例外が発生しないことを確認
+            await modal.on_submit(interaction)
+
+        # 送信失敗時は DB 更新されない
+        mock_update.assert_not_called()
+
+    async def test_empty_delay_defaults_to_five(self) -> None:
+        """空の遅延値はデフォルト5秒になる。"""
+        modal = self._make_modal()
+        interaction = _make_interaction()
+
+        # Set modal values with empty delay
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = ""
+        modal.delay._value = ""
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        new_message = MagicMock()
+        new_message.id = 1234567890
+        interaction.channel.send = AsyncMock(return_value=new_message)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.create_sticky_message",
+                new_callable=AsyncMock,
+            ) as mock_create,
+            patch(
+                "src.cogs.sticky.update_sticky_message_id",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await modal.on_submit(interaction)
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["cooldown_seconds"] == 5
 
 
 class TestStickyRemoveCommand:
