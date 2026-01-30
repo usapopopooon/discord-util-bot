@@ -957,6 +957,23 @@ class TestStickyMessageFields:
         await db_session.commit()
         assert sticky.message_type == "text"
 
+    async def test_empty_title_allowed(
+        self, db_session: AsyncSession
+    ) -> None:
+        """embed でも title を空文字で保存できる（タイトルなし embed）。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="",
+            description="Description only embed",
+            message_type="embed",
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.title == ""
+        assert sticky.description == "Description only embed"
+        assert sticky.message_type == "embed"
+
     async def test_default_cooldown_seconds(
         self, db_session: AsyncSession
     ) -> None:
@@ -1272,3 +1289,21 @@ class TestModelsParametrized:
         db_session.add(sticky)
         await db_session.commit()
         assert sticky.color == color
+
+    @pytest.mark.parametrize(
+        "title",
+        ["", "Short", "A" * 256, "🎉 お知らせ"],
+    )
+    async def test_sticky_title_variations(
+        self, db_session: AsyncSession, title: str
+    ) -> None:
+        """様々な title 値を保存できる（空文字含む）。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title=title,
+            description="Description",
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.title == title

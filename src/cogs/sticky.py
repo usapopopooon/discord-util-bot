@@ -41,10 +41,10 @@ class StickyEmbedModal(discord.ui.Modal, title="Sticky メッセージ設定 (Em
     """Embed 形式の Sticky メッセージを設定するモーダル。"""
 
     sticky_title: discord.ui.TextInput[Any] = discord.ui.TextInput(
-        label="タイトル",
-        placeholder="embed のタイトルを入力...",
+        label="タイトル（省略可）",
+        placeholder="embed のタイトルを入力（省略可）...",
         max_length=256,
-        required=True,
+        required=False,
     )
 
     description: discord.ui.TextInput[Any] = discord.ui.TextInput(

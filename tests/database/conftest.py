@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -109,6 +110,7 @@ async def bump_reminder(db_session: AsyncSession) -> BumpReminder:
         guild_id=snowflake(),
         channel_id=snowflake(),
         service_name=fake.random_element(elements=["DISBOARD", "ディス速報"]),
+        remind_at=datetime.now(UTC) + timedelta(hours=2),
     )
 
 
