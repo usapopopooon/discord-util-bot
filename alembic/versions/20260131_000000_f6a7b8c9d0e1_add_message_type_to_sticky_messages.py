@@ -20,15 +20,26 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "sticky_messages",
-        sa.Column(
-            "message_type",
-            sa.String(),
-            nullable=False,
-            server_default="embed",
-        ),
-    )
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+
+    # sticky_messages テーブルが存在しない場合はスキップ
+    if "sticky_messages" not in inspector.get_table_names():
+        return
+
+    columns = [c["name"] for c in inspector.get_columns("sticky_messages")]
+
+    # message_type カラムを追加
+    if "message_type" not in columns:
+        op.add_column(
+            "sticky_messages",
+            sa.Column(
+                "message_type",
+                sa.String(),
+                nullable=False,
+                server_default="embed",
+            ),
+        )
 
 
 def downgrade() -> None:

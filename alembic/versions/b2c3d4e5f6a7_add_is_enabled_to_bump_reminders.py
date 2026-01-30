@@ -20,11 +20,18 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    columns = [c["name"] for c in inspector.get_columns("bump_reminders")]
+
     # is_enabled カラムを追加 (デフォルト True)
-    op.add_column(
-        "bump_reminders",
-        sa.Column("is_enabled", sa.Boolean(), nullable=False, server_default="true"),
-    )
+    if "is_enabled" not in columns:
+        op.add_column(
+            "bump_reminders",
+            sa.Column(
+                "is_enabled", sa.Boolean(), nullable=False, server_default="true"
+            ),
+        )
     # remind_at を nullable に変更
     op.alter_column(
         "bump_reminders",

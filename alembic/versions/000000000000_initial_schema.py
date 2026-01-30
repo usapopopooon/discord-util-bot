@@ -27,12 +27,17 @@ def upgrade() -> None:
         sa.Column("guild_id", sa.String(), nullable=False),
         sa.Column("lobby_channel_id", sa.String(), nullable=False),
         sa.Column("category_id", sa.String(), nullable=True),
-        sa.Column("default_user_limit", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column(
+            "default_user_limit", sa.Integer(), nullable=False, server_default="0"
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_lobbies_guild_id"), "lobbies", ["guild_id"], unique=False)
     op.create_index(
-        op.f("ix_lobbies_lobby_channel_id"), "lobbies", ["lobby_channel_id"], unique=True
+        op.f("ix_lobbies_lobby_channel_id"),
+        "lobbies",
+        ["lobby_channel_id"],
+        unique=True,
     )
 
     # voice_sessions テーブル
@@ -50,7 +55,10 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
-        op.f("ix_voice_sessions_channel_id"), "voice_sessions", ["channel_id"], unique=True
+        op.f("ix_voice_sessions_channel_id"),
+        "voice_sessions",
+        ["channel_id"],
+        unique=True,
     )
 
     # voice_session_members テーブル
@@ -112,7 +120,10 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("channel_id"),
     )
     op.create_index(
-        op.f("ix_sticky_messages_guild_id"), "sticky_messages", ["guild_id"], unique=False
+        op.f("ix_sticky_messages_guild_id"),
+        "sticky_messages",
+        ["guild_id"],
+        unique=False,
     )
 
 

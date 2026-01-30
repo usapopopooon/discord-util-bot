@@ -20,11 +20,16 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    columns = [c["name"] for c in inspector.get_columns("bump_reminders")]
+
     # role_id カラムを追加 (nullable、None ならデフォルトロールを使用)
-    op.add_column(
-        "bump_reminders",
-        sa.Column("role_id", sa.String(), nullable=True),
-    )
+    if "role_id" not in columns:
+        op.add_column(
+            "bump_reminders",
+            sa.Column("role_id", sa.String(), nullable=True),
+        )
 
 
 def downgrade() -> None:
