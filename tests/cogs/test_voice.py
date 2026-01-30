@@ -6,6 +6,7 @@ import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
+import pytest
 from discord import app_commands
 
 from src.cogs.voice import VoiceCog
@@ -1909,3 +1910,346 @@ class TestVoiceStateUpdateWithRestrictions:
         # キックされたので参加記録がない
         assert 2 not in cog._join_times.get(100, {})
         member.move_to.assert_awaited_once_with(None)
+
+
+# ===========================================================================
+# Faker を使ったランダムデータテスト
+# ===========================================================================
+
+
+from faker import Faker  # noqa: E402
+
+fake = Faker("ja_JP")
+
+
+def _snowflake() -> str:
+    """Discord snowflake 風の ID を生成する。"""
+    return str(fake.random_number(digits=18, fix_len=True))
+
+
+class TestVoiceCogWithFaker:
+    """Faker を使ったランダムデータでのテスト。"""
+
+    def test_record_join_cache_with_random_ids(self) -> None:
+        """ランダムな ID で参加記録が正しく動作する。"""
+        cog = _make_cog()
+        channel_id = int(_snowflake())
+        user_id = int(_snowflake())
+
+        cog._record_join_cache(channel_id, user_id)
+
+        assert user_id in cog._join_times[channel_id]
+
+    def test_multiple_random_members_in_cache(self) -> None:
+        """ランダムな複数メンバーの参加記録が正しく動作する。"""
+        cog = _make_cog()
+        channel_id = int(_snowflake())
+        user_ids = [int(_snowflake()) for _ in range(5)]
+
+        for user_id in user_ids:
+            cog._record_join_cache(channel_id, user_id)
+
+        assert len(cog._join_times[channel_id]) == 5
+        for user_id in user_ids:
+            assert user_id in cog._join_times[channel_id]
+
+    async def test_get_longest_member_with_random_ids(self) -> None:
+        """ランダム ID で最古メンバー取得が正しく動作する。"""
+        cog = _make_cog()
+        user_id_1 = int(_snowflake())
+        user_id_2 = int(_snowflake())
+
+        m1 = _make_member(user_id_1)
+        m2 = _make_member(user_id_2)
+        channel = _make_channel(int(_snowflake()), [m1, m2])
+        channel.guild = MagicMock()
+        channel.guild.get_member = lambda uid: m1 if uid == user_id_1 else m2
+
+        voice_session = _make_voice_session()
+
+        mock_db_member1 = MagicMock()
+        mock_db_member1.user_id = str(user_id_1)
+        mock_db_member2 = MagicMock()
+        mock_db_member2.user_id = str(user_id_2)
+
+        mock_session = AsyncMock()
+        with patch(
+            "src.cogs.voice.get_voice_session_members_ordered",
+            new_callable=AsyncMock,
+            return_value=[mock_db_member1, mock_db_member2],
+        ):
+            result = await cog._get_longest_member(
+                mock_session, voice_session, channel, exclude_id=999999
+            )
+            assert result is m1
+
+    async def test_voice_session_with_random_channel_name(self) -> None:
+        """ランダムなチャンネル名でセッション作成。"""
+        cog = _make_cog()
+        member = _make_member(int(_snowflake()))
+        channel = _make_channel(int(_snowflake()))
+        channel.category = MagicMock(spec=discord.CategoryChannel)
+
+        lobby = MagicMock()
+        lobby.id = fake.random_int(min=1, max=1000)
+        lobby.category_id = None
+        lobby.default_user_limit = fake.random_int(min=0, max=10)
+
+        new_channel_id = int(_snowflake())
+        new_channel = _make_channel(new_channel_id)
+        new_channel.send = AsyncMock(return_value=MagicMock(pin=AsyncMock()))
+        new_channel.set_permissions = AsyncMock()
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.create_voice_channel = AsyncMock(return_value=new_channel)
+        guild.default_role = MagicMock()
+        member.guild = guild
+        member.move_to = AsyncMock()
+
+        voice_session = _make_voice_session(
+            channel_id=str(new_channel_id), owner_id=str(member.id)
+        )
+
+        mock_factory, _ = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_lobby_by_channel_id",
+            new_callable=AsyncMock,
+            return_value=lobby,
+        ), patch(
+            "src.cogs.voice.create_voice_session",
+            new_callable=AsyncMock,
+            return_value=voice_session,
+        ), patch(
+            "src.cogs.voice.add_voice_session_member",
+            new_callable=AsyncMock,
+        ), patch(
+            "src.cogs.voice.create_control_panel_embed",
+            return_value=MagicMock(),
+        ), patch(
+            "src.cogs.voice.ControlPanelView",
+            return_value=MagicMock(),
+        ):
+            await cog._handle_lobby_join(member, channel)
+
+            guild.create_voice_channel.assert_awaited_once()
+
+
+class TestVoiceCogWithParametrize:
+    """パラメタライズテスト。"""
+
+    @pytest.mark.parametrize(
+        "user_limit,member_count,should_kick",
+        [
+            (0, 5, False),   # 制限なしなら何人でもOK
+            (5, 3, False),   # 制限内ならOK
+            (5, 5, False),   # ちょうど制限と同じならOK
+            (5, 6, True),    # 制限超過でキック
+            (2, 10, True),   # 大幅超過でキック
+        ],
+    )
+    async def test_user_limit_enforcement(
+        self, user_limit: int, member_count: int, should_kick: bool
+    ) -> None:
+        """人数制限によるキック判定のパラメタライズテスト。"""
+        cog = _make_cog()
+        new_member = _make_member(99)
+        new_member.guild_permissions = MagicMock()
+        new_member.guild_permissions.administrator = False
+        new_member.move_to = AsyncMock()
+        new_member.send = AsyncMock()
+
+        # member_count 人いる状態 (new_member を含む)
+        members = [_make_member(i) for i in range(member_count - 1)] + [new_member]
+        channel = _make_channel(100, members)
+        channel.name = "Test Channel"
+        channel.send = AsyncMock()
+        overwrites = MagicMock()
+        overwrites.connect = None
+        channel.overwrites_for = MagicMock(return_value=overwrites)
+
+        voice_session = _make_voice_session(channel_id="100", owner_id="1")
+        voice_session.user_limit = user_limit
+
+        mock_factory, _ = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_voice_session",
+            new_callable=AsyncMock,
+            return_value=voice_session,
+        ):
+            result = await cog._enforce_channel_restrictions(new_member, channel)
+
+        assert result is should_kick
+
+    @pytest.mark.parametrize(
+        "is_locked,has_connect_permission,should_kick",
+        [
+            (False, None, False),   # ロックなし
+            (False, True, False),   # ロックなし、権限あり
+            (True, True, False),    # ロックあり、権限あり → OK
+            (True, None, True),     # ロックあり、権限なし → キック
+            (True, False, True),    # ロックあり、明示的拒否 → キック
+        ],
+    )
+    async def test_lock_enforcement(
+        self, is_locked: bool, has_connect_permission: bool | None, should_kick: bool
+    ) -> None:
+        """ロック状態によるキック判定のパラメタライズテスト。"""
+        cog = _make_cog()
+        member = _make_member(99)
+        member.guild_permissions = MagicMock()
+        member.guild_permissions.administrator = False
+        member.move_to = AsyncMock()
+        member.send = AsyncMock()
+
+        channel = _make_channel(100, [member])
+        channel.name = "Test Channel"
+        channel.send = AsyncMock()
+        overwrites = MagicMock()
+        overwrites.connect = has_connect_permission
+        channel.overwrites_for = MagicMock(return_value=overwrites)
+
+        voice_session = _make_voice_session(
+            channel_id="100", owner_id="1", is_locked=is_locked
+        )
+
+        mock_factory, _ = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_voice_session",
+            new_callable=AsyncMock,
+            return_value=voice_session,
+        ):
+            result = await cog._enforce_channel_restrictions(member, channel)
+
+        assert result is should_kick
+
+    @pytest.mark.parametrize(
+        "is_admin,is_owner,is_bot,expected_bypass",
+        [
+            (True, False, False, True),   # 管理者はバイパス
+            (False, True, False, True),   # オーナーはバイパス
+            (False, False, True, True),   # Bot はバイパス
+            (False, False, False, False), # 一般ユーザーはバイパスしない
+        ],
+    )
+    async def test_restriction_bypass(
+        self, is_admin: bool, is_owner: bool, is_bot: bool, expected_bypass: bool
+    ) -> None:
+        """制限バイパスのパラメタライズテスト。"""
+        cog = _make_cog()
+        member = _make_member(99, bot=is_bot)
+        if not is_bot:
+            member.guild_permissions = MagicMock()
+            member.guild_permissions.administrator = is_admin
+            member.move_to = AsyncMock()
+            member.send = AsyncMock()
+
+        channel = _make_channel(100, [member])
+        channel.name = "Test Channel"
+        channel.send = AsyncMock()
+        overwrites = MagicMock()
+        overwrites.connect = None
+        channel.overwrites_for = MagicMock(return_value=overwrites)
+
+        owner_id = "99" if is_owner else "1"
+        voice_session = _make_voice_session(
+            channel_id="100", owner_id=owner_id, is_locked=True
+        )
+
+        mock_factory, _ = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_voice_session",
+            new_callable=AsyncMock,
+            return_value=voice_session,
+        ):
+            result = await cog._enforce_channel_restrictions(member, channel)
+
+        # バイパスが期待される場合、キックされない (result=False)
+        assert result is not expected_bypass
+
+    @pytest.mark.parametrize(
+        "default_user_limit",
+        [0, 1, 5, 10, 99],
+    )
+    async def test_lobby_default_user_limit(self, default_user_limit: int) -> None:
+        """ロビーのデフォルト人数制限がセッションに反映される。"""
+        cog = _make_cog()
+        member = _make_member(1)
+        channel = _make_channel(100)
+        channel.category = MagicMock(spec=discord.CategoryChannel)
+
+        lobby = MagicMock()
+        lobby.id = 10
+        lobby.category_id = None
+        lobby.default_user_limit = default_user_limit
+
+        new_channel = _make_channel(200)
+        new_channel.send = AsyncMock(return_value=MagicMock(pin=AsyncMock()))
+        new_channel.set_permissions = AsyncMock()
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.create_voice_channel = AsyncMock(return_value=new_channel)
+        guild.default_role = MagicMock()
+        member.guild = guild
+        member.move_to = AsyncMock()
+
+        voice_session = _make_voice_session(channel_id="200", owner_id="1")
+
+        mock_factory, _ = _mock_async_session()
+        with patch("src.cogs.voice.async_session", mock_factory), patch(
+            "src.cogs.voice.get_lobby_by_channel_id",
+            new_callable=AsyncMock,
+            return_value=lobby,
+        ), patch(
+            "src.cogs.voice.create_voice_session",
+            new_callable=AsyncMock,
+            return_value=voice_session,
+        ) as mock_create, patch(
+            "src.cogs.voice.add_voice_session_member",
+            new_callable=AsyncMock,
+        ), patch(
+            "src.cogs.voice.create_control_panel_embed",
+            return_value=MagicMock(),
+        ), patch(
+            "src.cogs.voice.ControlPanelView",
+            return_value=MagicMock(),
+        ):
+            await cog._handle_lobby_join(member, channel)
+
+            mock_create.assert_awaited_once()
+            assert mock_create.call_args[1]["user_limit"] == default_user_limit
+
+    @pytest.mark.parametrize(
+        "channel_type,expected_handled",
+        [
+            (discord.VoiceChannel, True),
+            (discord.StageChannel, False),
+            (discord.TextChannel, False),
+        ],
+    )
+    async def test_channel_type_filtering(
+        self, channel_type: type, expected_handled: bool
+    ) -> None:
+        """チャンネルタイプによるフィルタリング。"""
+        cog = _make_cog()
+        member = _make_member(1)
+
+        before = MagicMock(spec=discord.VoiceState)
+        before.channel = None
+
+        after_channel = MagicMock(spec=channel_type)
+        after_channel.id = 100
+        after = MagicMock(spec=discord.VoiceState)
+        after.channel = after_channel
+
+        cog._handle_lobby_join = AsyncMock()  # type: ignore[method-assign]
+        cog._record_join_to_db = AsyncMock()  # type: ignore[method-assign]
+        cog._enforce_channel_restrictions = AsyncMock(  # type: ignore[method-assign]
+            return_value=False
+        )
+
+        await cog.on_voice_state_update(member, before, after)
+
+        if expected_handled:
+            cog._handle_lobby_join.assert_awaited_once()
+        else:
+            cog._handle_lobby_join.assert_not_awaited()

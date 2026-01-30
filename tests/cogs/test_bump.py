@@ -2265,3 +2265,188 @@ class TestBumpDisableCommand:
         call_kwargs = mock_interaction.response.send_message.call_args[1]
         embed = call_kwargs["embed"]
         assert "既に無効" in embed.description
+
+
+# ---------------------------------------------------------------------------
+# Faker を使ったテスト
+# ---------------------------------------------------------------------------
+
+from faker import Faker  # noqa: E402
+
+fake = Faker("ja_JP")
+
+
+def _snowflake() -> str:
+    """Discord snowflake 風の ID を生成する。"""
+    return str(fake.random_number(digits=18, fix_len=True))
+
+
+class TestBumpWithFaker:
+    """Faker を使ったランダムデータでのテスト。"""
+
+    async def test_on_message_with_random_ids(self) -> None:
+        """ランダムなIDでon_messageをテスト。"""
+        cog = _make_cog()
+        guild_id = int(_snowflake())
+        channel_id = int(_snowflake())
+
+        member = _make_member(has_target_role=True)
+        message = _make_message(
+            author_id=DISBOARD_BOT_ID,
+            channel_id=channel_id,
+            guild_id=guild_id,
+            embed_description=DISBOARD_SUCCESS_KEYWORD,
+            interaction_user=member,
+        )
+        message.channel.send = AsyncMock()
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        mock_config = _make_bump_config(
+            guild_id=str(guild_id), channel_id=str(channel_id)
+        )
+        mock_reminder = _make_reminder(is_enabled=True)
+
+        with (
+            patch("src.cogs.bump.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.bump.get_bump_config",
+                new_callable=AsyncMock,
+                return_value=mock_config,
+            ),
+            patch(
+                "src.cogs.bump.upsert_bump_reminder",
+                new_callable=AsyncMock,
+                return_value=mock_reminder,
+            ) as mock_upsert,
+        ):
+            await cog.on_message(message)
+
+        mock_upsert.assert_awaited_once()
+        call_kwargs = mock_upsert.call_args[1]
+        assert call_kwargs["guild_id"] == str(guild_id)
+        assert call_kwargs["channel_id"] == str(channel_id)
+
+    async def test_reminder_with_random_service(self) -> None:
+        """ランダムなサービス名でリマインダーをテスト。"""
+        service = fake.random_element(elements=["DISBOARD", "ディス速報"])
+        cog = _make_cog()
+
+        embed = cog._build_reminder_embed(service)
+
+        assert service in (embed.description or "")
+        assert embed.footer is not None
+        assert service in (embed.footer.text or "")
+
+    async def test_detection_embed_with_random_data(self) -> None:
+        """ランダムなデータで検知Embedをテスト。"""
+        from datetime import UTC, datetime, timedelta
+
+        cog = _make_cog()
+
+        member = MagicMock(spec=discord.Member)
+        member.id = int(_snowflake())
+        member.name = fake.user_name()
+        member.mention = f"<@{member.id}>"
+
+        service = fake.random_element(elements=["DISBOARD", "ディス速報"])
+        remind_at = datetime.now(UTC) + timedelta(hours=fake.random_int(min=1, max=2))
+        is_enabled = fake.boolean()
+
+        embed = cog._build_detection_embed(service, member, remind_at, is_enabled)
+
+        assert member.mention in (embed.description or "")
+        assert service in (embed.description or "")
+        if not is_enabled:
+            assert "無効" in (embed.description or "")
+
+
+class TestBumpWithParameterize:
+    """pytest.mark.parametrize を使ったテスト。"""
+
+    @pytest.mark.parametrize(
+        "service_name,bot_id,keyword",
+        [
+            ("DISBOARD", DISBOARD_BOT_ID, DISBOARD_SUCCESS_KEYWORD),
+            ("ディス速報", DISSOKU_BOT_ID, DISSOKU_SUCCESS_KEYWORD),
+        ],
+    )
+    def test_detect_bump_success_for_each_service(
+        self, service_name: str, bot_id: int, keyword: str
+    ) -> None:
+        """各サービスのbump成功検知をテスト。"""
+        cog = _make_cog()
+        message = _make_message(
+            author_id=bot_id,
+            channel_id=456,
+            embed_description=f"サーバーを{keyword}しました！",
+        )
+
+        result = cog._detect_bump_success(message)
+        assert result == service_name
+
+    @pytest.mark.parametrize(
+        "is_enabled,expected_label",
+        [
+            (True, "通知を無効にする"),
+            (False, "通知を有効にする"),
+        ],
+    )
+    async def test_notification_view_button_label(
+        self, is_enabled: bool, expected_label: str
+    ) -> None:
+        """通知状態に応じたボタンラベルをテスト。"""
+        view = BumpNotificationView("12345", "DISBOARD", is_enabled)
+        assert view.toggle_button.label == expected_label
+
+    @pytest.mark.parametrize(
+        "has_role,should_process",
+        [
+            (True, True),
+            (False, False),
+        ],
+    )
+    def test_has_target_role_check(self, has_role: bool, should_process: bool) -> None:
+        """ロール有無によるフィルタリングをテスト。"""
+        cog = _make_cog()
+        member = _make_member(has_target_role=has_role)
+
+        result = cog._has_target_role(member)
+        assert result == should_process
+
+    @pytest.mark.parametrize("service_name", ["DISBOARD", "ディス速報"])
+    def test_reminder_embed_for_each_service(self, service_name: str) -> None:
+        """各サービスのリマインダーEmbedをテスト。"""
+        cog = _make_cog()
+
+        embed = cog._build_reminder_embed(service_name)
+
+        assert embed.title == "Bump リマインダー"
+        assert embed.color == discord.Color.blue()
+        assert service_name in (embed.description or "")
+
+    @pytest.mark.parametrize(
+        "role_id,expected_in_embed",
+        [
+            (None, TARGET_ROLE_NAME),
+            ("999", "カスタム"),
+        ],
+    )
+    async def test_reminder_role_display(
+        self, role_id: str | None, expected_in_embed: str
+    ) -> None:
+        """リマインダーのロール表示をテスト。"""
+        from datetime import UTC, datetime, timedelta
+
+        cog = _make_cog()
+        member = _make_member()
+        remind_at = datetime.now(UTC) + timedelta(hours=2)
+
+        role_name = "カスタムロール" if role_id else None
+        embed = cog._build_detection_embed(
+            "DISBOARD", member, remind_at, True, role_name=role_name
+        )
+
+        assert expected_in_embed in (embed.description or "")

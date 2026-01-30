@@ -11,7 +11,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.database.models import Lobby, VoiceSession
+from src.database.models import (
+    BumpConfig,
+    BumpReminder,
+    Lobby,
+    StickyMessage,
+    VoiceSession,
+    VoiceSessionMember,
+)
 
 from .conftest import snowflake
 
@@ -453,3 +460,815 @@ class TestVoiceSessionFields:
         await db_session.commit()
         ids = [s.id for s in sessions]
         assert len(set(ids)) == 3
+
+
+# ===========================================================================
+# VoiceSessionMember — ユニーク制約・FK・タイムスタンプ
+# ===========================================================================
+
+
+class TestVoiceSessionMemberConstraints:
+    """VoiceSessionMember モデルの制約テスト。"""
+
+    async def test_unique_session_user(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """同じセッション+ユーザーの組み合わせは重複登録できない。"""
+        user_id = snowflake()
+        db_session.add(
+            VoiceSessionMember(
+                voice_session_id=voice_session.id,
+                user_id=user_id,
+            )
+        )
+        await db_session.commit()
+
+        db_session.add(
+            VoiceSessionMember(
+                voice_session_id=voice_session.id,
+                user_id=user_id,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    async def test_same_user_different_sessions(
+        self, db_session: AsyncSession, lobby: Lobby
+    ) -> None:
+        """同じユーザーが異なるセッションには参加できる。"""
+        user_id = snowflake()
+        for _ in range(3):
+            vs = VoiceSession(
+                lobby_id=lobby.id,
+                channel_id=snowflake(),
+                owner_id=snowflake(),
+                name=fake.word(),
+            )
+            db_session.add(vs)
+            await db_session.flush()
+            db_session.add(
+                VoiceSessionMember(
+                    voice_session_id=vs.id,
+                    user_id=user_id,
+                )
+            )
+        await db_session.commit()
+
+        result = await db_session.execute(
+            select(VoiceSessionMember).where(
+                VoiceSessionMember.user_id == user_id
+            )
+        )
+        assert len(list(result.scalars().all())) == 3
+
+    async def test_cascade_delete_on_session_delete(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """VoiceSession を削除すると関連メンバーもカスケード削除される。"""
+        for _ in range(3):
+            db_session.add(
+                VoiceSessionMember(
+                    voice_session_id=voice_session.id,
+                    user_id=snowflake(),
+                )
+            )
+        await db_session.commit()
+
+        await db_session.delete(voice_session)
+        await db_session.commit()
+
+        result = await db_session.execute(select(VoiceSessionMember))
+        assert list(result.scalars().all()) == []
+
+    async def test_foreign_key_violation(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない voice_session_id は FK 違反。"""
+        db_session.add(
+            VoiceSessionMember(
+                voice_session_id=999999,
+                user_id=snowflake(),
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+
+class TestVoiceSessionMemberFields:
+    """VoiceSessionMember フィールドのテスト。"""
+
+    async def test_joined_at_auto_set(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """joined_at が自動設定される。"""
+        member = VoiceSessionMember(
+            voice_session_id=voice_session.id,
+            user_id=snowflake(),
+        )
+        db_session.add(member)
+        await db_session.commit()
+        assert member.joined_at is not None
+
+    async def test_joined_at_is_recent(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """joined_at がテスト実行時刻と近い。"""
+        member = VoiceSessionMember(
+            voice_session_id=voice_session.id,
+            user_id=snowflake(),
+        )
+        db_session.add(member)
+        await db_session.commit()
+
+        now = datetime.now(UTC)
+        ts = member.joined_at
+        if ts.tzinfo is None:
+            diff = abs(now.replace(tzinfo=None) - ts)
+        else:
+            diff = abs(now - ts)
+        assert diff < timedelta(seconds=10)
+
+    async def test_repr_contains_ids(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """__repr__ に session_id と user_id が含まれる。"""
+        user_id = snowflake()
+        member = VoiceSessionMember(
+            voice_session_id=voice_session.id,
+            user_id=user_id,
+        )
+        db_session.add(member)
+        await db_session.commit()
+
+        text = repr(member)
+        assert user_id in text
+        assert str(voice_session.id) in text
+
+
+# ===========================================================================
+# BumpReminder — ユニーク制約・フィールド
+# ===========================================================================
+
+
+class TestBumpReminderConstraints:
+    """BumpReminder モデルの制約テスト。"""
+
+    async def test_unique_guild_service(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同じ guild + service の組み合わせは重複登録できない。"""
+        guild_id = snowflake()
+        service = "DISBOARD"
+
+        db_session.add(
+            BumpReminder(
+                guild_id=guild_id,
+                channel_id=snowflake(),
+                service_name=service,
+            )
+        )
+        await db_session.commit()
+
+        db_session.add(
+            BumpReminder(
+                guild_id=guild_id,
+                channel_id=snowflake(),
+                service_name=service,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    async def test_same_guild_different_services(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同じギルドでも異なるサービスなら登録できる。"""
+        guild_id = snowflake()
+        for service in ["DISBOARD", "ディス速報"]:
+            db_session.add(
+                BumpReminder(
+                    guild_id=guild_id,
+                    channel_id=snowflake(),
+                    service_name=service,
+                )
+            )
+        await db_session.commit()
+
+        result = await db_session.execute(
+            select(BumpReminder).where(BumpReminder.guild_id == guild_id)
+        )
+        assert len(list(result.scalars().all())) == 2
+
+    async def test_multiple_guilds_same_service(
+        self, db_session: AsyncSession
+    ) -> None:
+        """異なるギルドで同じサービスを登録できる。"""
+        service = "DISBOARD"
+        for _ in range(3):
+            db_session.add(
+                BumpReminder(
+                    guild_id=snowflake(),
+                    channel_id=snowflake(),
+                    service_name=service,
+                )
+            )
+        await db_session.commit()
+
+        result = await db_session.execute(
+            select(BumpReminder).where(BumpReminder.service_name == service)
+        )
+        assert len(list(result.scalars().all())) == 3
+
+
+class TestBumpReminderFields:
+    """BumpReminder フィールドのテスト。"""
+
+    async def test_default_is_enabled(
+        self, db_session: AsyncSession
+    ) -> None:
+        """is_enabled のデフォルトは True。"""
+        reminder = BumpReminder(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            service_name="DISBOARD",
+        )
+        db_session.add(reminder)
+        await db_session.commit()
+        assert reminder.is_enabled is True
+
+    async def test_remind_at_nullable(
+        self, db_session: AsyncSession
+    ) -> None:
+        """remind_at は None を許容する。"""
+        reminder = BumpReminder(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            service_name="DISBOARD",
+        )
+        db_session.add(reminder)
+        await db_session.commit()
+        assert reminder.remind_at is None
+
+    async def test_remind_at_set(
+        self, db_session: AsyncSession
+    ) -> None:
+        """remind_at に値をセットできる。"""
+        remind_time = datetime.now(UTC) + timedelta(hours=2)
+        reminder = BumpReminder(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            service_name="DISBOARD",
+            remind_at=remind_time,
+        )
+        db_session.add(reminder)
+        await db_session.commit()
+        assert reminder.remind_at is not None
+
+    async def test_role_id_nullable(
+        self, db_session: AsyncSession
+    ) -> None:
+        """role_id は None を許容する。"""
+        reminder = BumpReminder(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            service_name="DISBOARD",
+        )
+        db_session.add(reminder)
+        await db_session.commit()
+        assert reminder.role_id is None
+
+    async def test_role_id_set(
+        self, db_session: AsyncSession
+    ) -> None:
+        """role_id に値をセットできる。"""
+        role_id = snowflake()
+        reminder = BumpReminder(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            service_name="DISBOARD",
+            role_id=role_id,
+        )
+        db_session.add(reminder)
+        await db_session.commit()
+        assert reminder.role_id == role_id
+
+    async def test_is_enabled_toggle(
+        self, db_session: AsyncSession
+    ) -> None:
+        """is_enabled を False に設定して保存できる。"""
+        reminder = BumpReminder(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            service_name="DISBOARD",
+            is_enabled=False,
+        )
+        db_session.add(reminder)
+        await db_session.commit()
+        assert reminder.is_enabled is False
+
+    async def test_repr_contains_fields(
+        self, db_session: AsyncSession
+    ) -> None:
+        """__repr__ に主要フィールドが含まれる。"""
+        guild_id = snowflake()
+        reminder = BumpReminder(
+            guild_id=guild_id,
+            channel_id=snowflake(),
+            service_name="DISBOARD",
+        )
+        db_session.add(reminder)
+        await db_session.commit()
+
+        text = repr(reminder)
+        assert guild_id in text
+        assert "DISBOARD" in text
+
+
+# ===========================================================================
+# BumpConfig — フィールド・デフォルト値
+# ===========================================================================
+
+
+class TestBumpConfigConstraints:
+    """BumpConfig モデルの制約テスト。"""
+
+    async def test_guild_id_primary_key(
+        self, db_session: AsyncSession
+    ) -> None:
+        """guild_id が主キーなので重複登録できない。"""
+        guild_id = snowflake()
+
+        db_session.add(
+            BumpConfig(
+                guild_id=guild_id,
+                channel_id=snowflake(),
+            )
+        )
+        await db_session.commit()
+
+        db_session.add(
+            BumpConfig(
+                guild_id=guild_id,
+                channel_id=snowflake(),
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+
+class TestBumpConfigFields:
+    """BumpConfig フィールドのテスト。"""
+
+    async def test_created_at_auto_set(
+        self, db_session: AsyncSession
+    ) -> None:
+        """created_at が自動設定される。"""
+        config = BumpConfig(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+        )
+        db_session.add(config)
+        await db_session.commit()
+        assert config.created_at is not None
+
+    async def test_created_at_is_recent(
+        self, db_session: AsyncSession
+    ) -> None:
+        """created_at がテスト実行時刻と近い。"""
+        config = BumpConfig(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+        )
+        db_session.add(config)
+        await db_session.commit()
+
+        now = datetime.now(UTC)
+        ts = config.created_at
+        if ts.tzinfo is None:
+            diff = abs(now.replace(tzinfo=None) - ts)
+        else:
+            diff = abs(now - ts)
+        assert diff < timedelta(seconds=10)
+
+    async def test_repr_contains_ids(
+        self, db_session: AsyncSession
+    ) -> None:
+        """__repr__ に guild_id と channel_id が含まれる。"""
+        guild_id = snowflake()
+        channel_id = snowflake()
+        config = BumpConfig(
+            guild_id=guild_id,
+            channel_id=channel_id,
+        )
+        db_session.add(config)
+        await db_session.commit()
+
+        text = repr(config)
+        assert guild_id in text
+        assert channel_id in text
+
+
+# ===========================================================================
+# StickyMessage — フィールド・デフォルト値
+# ===========================================================================
+
+
+class TestStickyMessageConstraints:
+    """StickyMessage モデルの制約テスト。"""
+
+    async def test_channel_id_primary_key(
+        self, db_session: AsyncSession
+    ) -> None:
+        """channel_id が主キーなので重複登録できない。"""
+        channel_id = snowflake()
+
+        db_session.add(
+            StickyMessage(
+                channel_id=channel_id,
+                guild_id=snowflake(),
+                title="Title",
+                description="Description",
+            )
+        )
+        await db_session.commit()
+
+        db_session.add(
+            StickyMessage(
+                channel_id=channel_id,
+                guild_id=snowflake(),
+                title="Another",
+                description="Another",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    async def test_multiple_channels_same_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同じギルドで複数チャンネルに sticky を設定できる。"""
+        guild_id = snowflake()
+        for _ in range(3):
+            db_session.add(
+                StickyMessage(
+                    channel_id=snowflake(),
+                    guild_id=guild_id,
+                    title=fake.sentence(nb_words=3),
+                    description=fake.paragraph(),
+                )
+            )
+        await db_session.commit()
+
+        result = await db_session.execute(
+            select(StickyMessage).where(StickyMessage.guild_id == guild_id)
+        )
+        assert len(list(result.scalars().all())) == 3
+
+
+class TestStickyMessageFields:
+    """StickyMessage フィールドのテスト。"""
+
+    async def test_default_message_type(
+        self, db_session: AsyncSession
+    ) -> None:
+        """message_type のデフォルトは 'embed'。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="Title",
+            description="Description",
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.message_type == "embed"
+
+    async def test_message_type_text(
+        self, db_session: AsyncSession
+    ) -> None:
+        """message_type を 'text' に設定できる。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="",
+            description="Plain text message",
+            message_type="text",
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.message_type == "text"
+
+    async def test_default_cooldown_seconds(
+        self, db_session: AsyncSession
+    ) -> None:
+        """cooldown_seconds のデフォルトは 5。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="Title",
+            description="Description",
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.cooldown_seconds == 5
+
+    async def test_cooldown_seconds_custom(
+        self, db_session: AsyncSession
+    ) -> None:
+        """cooldown_seconds をカスタム値に設定できる。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="Title",
+            description="Description",
+            cooldown_seconds=60,
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.cooldown_seconds == 60
+
+    async def test_message_id_nullable(
+        self, db_session: AsyncSession
+    ) -> None:
+        """message_id は None を許容する。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="Title",
+            description="Description",
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.message_id is None
+
+    async def test_message_id_set(
+        self, db_session: AsyncSession
+    ) -> None:
+        """message_id に値をセットできる。"""
+        msg_id = snowflake()
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="Title",
+            description="Description",
+            message_id=msg_id,
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.message_id == msg_id
+
+    async def test_color_nullable(
+        self, db_session: AsyncSession
+    ) -> None:
+        """color は None を許容する。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="Title",
+            description="Description",
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.color is None
+
+    async def test_color_set(
+        self, db_session: AsyncSession
+    ) -> None:
+        """color に値をセットできる。"""
+        color = 0xFF5733
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="Title",
+            description="Description",
+            color=color,
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.color == color
+
+    async def test_last_posted_at_nullable(
+        self, db_session: AsyncSession
+    ) -> None:
+        """last_posted_at は None を許容する。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="Title",
+            description="Description",
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.last_posted_at is None
+
+    async def test_last_posted_at_set(
+        self, db_session: AsyncSession
+    ) -> None:
+        """last_posted_at に値をセットできる。"""
+        posted_time = datetime.now(UTC)
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="Title",
+            description="Description",
+            last_posted_at=posted_time,
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.last_posted_at is not None
+
+    async def test_created_at_auto_set(
+        self, db_session: AsyncSession
+    ) -> None:
+        """created_at が自動設定される。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="Title",
+            description="Description",
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.created_at is not None
+
+    async def test_unicode_content(
+        self, db_session: AsyncSession
+    ) -> None:
+        """title と description に Unicode (日本語・絵文字) を使える。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="🎉 お知らせ",
+            description="これは日本語のテスト説明文です。絵文字も使えます！🚀",
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        await db_session.refresh(sticky)
+        assert "お知らせ" in sticky.title
+        assert "日本語" in sticky.description
+
+    async def test_long_description(
+        self, db_session: AsyncSession
+    ) -> None:
+        """長い description も保存できる。"""
+        long_desc = "A" * 4000  # Embed description limit is 4096
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="Title",
+            description=long_desc,
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        await db_session.refresh(sticky)
+        assert len(sticky.description) == 4000
+
+    async def test_repr_contains_ids(
+        self, db_session: AsyncSession
+    ) -> None:
+        """__repr__ に channel_id と guild_id が含まれる。"""
+        channel_id = snowflake()
+        guild_id = snowflake()
+        sticky = StickyMessage(
+            channel_id=channel_id,
+            guild_id=guild_id,
+            title="Title",
+            description="Description",
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+
+        text = repr(sticky)
+        assert channel_id in text
+        assert guild_id in text
+
+
+# ===========================================================================
+# パラメタライズテスト
+# ===========================================================================
+
+
+class TestModelsParametrized:
+    """各モデルのパラメタライズテスト。"""
+
+    @pytest.mark.parametrize(
+        "user_limit",
+        [0, 1, 10, 50, 99],
+    )
+    async def test_voice_session_user_limit_values(
+        self, db_session: AsyncSession, lobby: Lobby, user_limit: int
+    ) -> None:
+        """様々な user_limit 値を保存できる。"""
+        vs = VoiceSession(
+            lobby_id=lobby.id,
+            channel_id=snowflake(),
+            owner_id=snowflake(),
+            name=fake.word(),
+            user_limit=user_limit,
+        )
+        db_session.add(vs)
+        await db_session.commit()
+        assert vs.user_limit == user_limit
+
+    @pytest.mark.parametrize(
+        "is_locked,is_hidden",
+        [
+            (False, False),
+            (True, False),
+            (False, True),
+            (True, True),
+        ],
+    )
+    async def test_voice_session_boolean_combinations(
+        self,
+        db_session: AsyncSession,
+        lobby: Lobby,
+        is_locked: bool,
+        is_hidden: bool,
+    ) -> None:
+        """is_locked と is_hidden の全組み合わせを保存できる。"""
+        vs = VoiceSession(
+            lobby_id=lobby.id,
+            channel_id=snowflake(),
+            owner_id=snowflake(),
+            name=fake.word(),
+            is_locked=is_locked,
+            is_hidden=is_hidden,
+        )
+        db_session.add(vs)
+        await db_session.commit()
+        assert vs.is_locked == is_locked
+        assert vs.is_hidden == is_hidden
+
+    @pytest.mark.parametrize(
+        "service_name",
+        ["DISBOARD", "ディス速報"],
+    )
+    async def test_bump_reminder_service_names(
+        self, db_session: AsyncSession, service_name: str
+    ) -> None:
+        """各サービス名を保存できる。"""
+        reminder = BumpReminder(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            service_name=service_name,
+        )
+        db_session.add(reminder)
+        await db_session.commit()
+        assert reminder.service_name == service_name
+
+    @pytest.mark.parametrize(
+        "message_type",
+        ["embed", "text"],
+    )
+    async def test_sticky_message_types(
+        self, db_session: AsyncSession, message_type: str
+    ) -> None:
+        """各メッセージタイプを保存できる。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="Title",
+            description="Description",
+            message_type=message_type,
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.message_type == message_type
+
+    @pytest.mark.parametrize(
+        "cooldown_seconds",
+        [1, 5, 10, 30, 60, 300],
+    )
+    async def test_sticky_cooldown_values(
+        self, db_session: AsyncSession, cooldown_seconds: int
+    ) -> None:
+        """様々な cooldown_seconds 値を保存できる。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="Title",
+            description="Description",
+            cooldown_seconds=cooldown_seconds,
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.cooldown_seconds == cooldown_seconds
+
+    @pytest.mark.parametrize(
+        "color",
+        [0x000000, 0xFF0000, 0x00FF00, 0x0000FF, 0xFFFFFF, 0x5865F2],
+    )
+    async def test_sticky_color_values(
+        self, db_session: AsyncSession, color: int
+    ) -> None:
+        """様々な color 値を保存できる。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="Title",
+            description="Description",
+            color=color,
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+        assert sticky.color == color
