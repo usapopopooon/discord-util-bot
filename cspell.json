@@ -28,7 +28,8 @@
     "sqlalchemy",
     "pycord",
     "discordpy",
-    "aiohttp"
+    "aiohttp",
+    "Messageable"
   ],
   "ignorePaths": [
     ".venv",

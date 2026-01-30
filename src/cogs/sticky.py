@@ -6,12 +6,13 @@
 仕組み:
   - /sticky set で sticky メッセージを設定
   - on_message で新規メッセージを監視
-  - cooldown 経過後、古い sticky を削除して新しい sticky を投稿
+  - delay 秒後に古い sticky を削除して新しい sticky を投稿（デバウンス方式）
   - Bot 再起動後も DB から設定を復元して動作継続
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -40,6 +41,14 @@ class StickyCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        # チャンネルごとの遅延再投稿タスクを管理
+        self._pending_tasks: dict[str, asyncio.Task[None]] = {}
+
+    async def cog_unload(self) -> None:
+        """Cog がアンロードされる際に、保留中のタスクをキャンセルする。"""
+        for task in self._pending_tasks.values():
+            task.cancel()
+        self._pending_tasks.clear()
 
     # ==========================================================================
     # メッセージ監視
@@ -47,7 +56,7 @@ class StickyCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        """新規メッセージを監視し、sticky メッセージを再投稿する。"""
+        """新規メッセージを監視し、sticky メッセージの再投稿をスケジュールする。"""
         # Bot のメッセージは無視
         if message.author.bot:
             return
@@ -65,36 +74,91 @@ class StickyCog(commands.Cog):
         if not sticky:
             return
 
-        # cooldown チェック
-        now = datetime.now(UTC)
-        if sticky.last_posted_at:
-            elapsed = (now - sticky.last_posted_at).total_seconds()
-            if elapsed < sticky.cooldown_seconds:
-                logger.info(
-                    "Sticky cooldown active: channel=%s elapsed=%.1fs cooldown=%ds",
-                    channel_id,
-                    elapsed,
-                    sticky.cooldown_seconds,
-                )
-                return
+        # 既存のタスクをキャンセル（デバウンス）
+        if channel_id in self._pending_tasks:
+            self._pending_tasks[channel_id].cancel()
+            with suppress(asyncio.CancelledError):
+                await self._pending_tasks[channel_id]
 
-        # 古い sticky メッセージを削除
-        if sticky.message_id:
-            with suppress(discord.NotFound, discord.HTTPException):
-                old_message = await message.channel.fetch_message(
-                    int(sticky.message_id)
-                )
+        # 遅延後に再投稿するタスクをスケジュール
+        task = asyncio.create_task(
+            self._delayed_repost(message.channel, channel_id, sticky.cooldown_seconds)
+        )
+        self._pending_tasks[channel_id] = task
+
+        logger.debug(
+            "Scheduled sticky repost: channel=%s delay=%ds",
+            channel_id,
+            sticky.cooldown_seconds,
+        )
+
+    async def _delayed_repost(
+        self,
+        channel: discord.abc.Messageable,
+        channel_id: str,
+        delay_seconds: int,
+    ) -> None:
+        """指定秒数後に sticky メッセージを再投稿する。"""
+        try:
+            await asyncio.sleep(delay_seconds)
+        except asyncio.CancelledError:
+            # キャンセルされた場合は何もしない
+            return
+        finally:
+            # タスク管理から削除
+            self._pending_tasks.pop(channel_id, None)
+
+        # 再度 sticky 設定を取得（削除されている可能性があるため）
+        async with async_session() as session:
+            sticky = await get_sticky_message(session, channel_id)
+
+        if not sticky:
+            return
+
+        # 古い sticky メッセージを確認・削除
+        # メッセージが既に削除されている場合は再投稿せず、DB からも削除
+        if not sticky.message_id:
+            logger.info(
+                "No message_id for sticky, removing config: channel=%s",
+                channel_id,
+            )
+            async with async_session() as session:
+                await delete_sticky_message(session, channel_id)
+            return
+
+        if hasattr(channel, "fetch_message"):
+            try:
+                old_message = await channel.fetch_message(int(sticky.message_id))
                 await old_message.delete()
                 logger.info(
                     "Deleted old sticky message: channel=%s message_id=%s",
                     channel_id,
                     sticky.message_id,
                 )
+            except discord.NotFound:
+                # メッセージが既に削除されている場合は再投稿せず、DB からも削除
+                logger.info(
+                    "Sticky message already deleted, removing config: channel=%s",
+                    channel_id,
+                )
+                async with async_session() as session:
+                    await delete_sticky_message(session, channel_id)
+                return
+            except discord.HTTPException as e:
+                logger.warning(
+                    "Failed to fetch/delete old sticky message: channel=%s error=%s",
+                    channel_id,
+                    e,
+                )
+                # 取得・削除に失敗した場合も再投稿せず、DB からも削除
+                async with async_session() as session:
+                    await delete_sticky_message(session, channel_id)
+                return
 
         # 新しい sticky メッセージを投稿
         embed = self._build_embed(sticky.title, sticky.description, sticky.color)
         try:
-            new_message = await message.channel.send(embed=embed)
+            new_message = await channel.send(embed=embed)
             logger.info(
                 "Posted new sticky message: channel=%s message_id=%s",
                 channel_id,
@@ -102,6 +166,7 @@ class StickyCog(commands.Cog):
             )
 
             # DB を更新
+            now = datetime.now(UTC)
             async with async_session() as session:
                 await update_sticky_message_id(
                     session,
@@ -110,8 +175,9 @@ class StickyCog(commands.Cog):
                     last_posted_at=now,
                 )
         except discord.HTTPException as e:
-            logger.error("Failed to post sticky message: channel=%s error=%s",
-                         channel_id, e)
+            logger.error(
+                "Failed to post sticky message: channel=%s error=%s", channel_id, e
+            )
 
     # ==========================================================================
     # ヘルパーメソッド
@@ -142,7 +208,7 @@ class StickyCog(commands.Cog):
         title="embed のタイトル",
         description="embed の説明文",
         color="embed の色 (16進数、例: FF0000)",
-        cooldown="再投稿までの間隔（秒）",
+        delay="最後のメッセージから再投稿までの遅延（秒）",
     )
     async def sticky_set(
         self,
@@ -150,7 +216,7 @@ class StickyCog(commands.Cog):
         title: str,
         description: str,
         color: str | None = None,
-        cooldown: int = 5,
+        delay: int = 5,
     ) -> None:
         """このチャンネルに sticky メッセージを設定する。"""
         if not interaction.guild:
@@ -174,11 +240,11 @@ class StickyCog(commands.Cog):
                 )
                 return
 
-        # cooldown の検証
-        if cooldown < 1:
-            cooldown = 1
-        if cooldown > 3600:
-            cooldown = 3600
+        # delay の検証
+        if delay < 1:
+            delay = 1
+        if delay > 3600:
+            delay = 3600
 
         guild_id = str(interaction.guild.id)
         channel_id = str(interaction.channel_id)
@@ -192,7 +258,7 @@ class StickyCog(commands.Cog):
                 title=title,
                 description=description,
                 color=color_int,
-                cooldown_seconds=cooldown,
+                cooldown_seconds=delay,
             )
 
         # embed を投稿
@@ -232,6 +298,11 @@ class StickyCog(commands.Cog):
             return
 
         channel_id = str(interaction.channel_id)
+
+        # 保留中のタスクをキャンセル
+        if channel_id in self._pending_tasks:
+            self._pending_tasks[channel_id].cancel()
+            self._pending_tasks.pop(channel_id, None)
 
         # 現在の sticky メッセージを削除
         async with async_session() as session:
@@ -300,9 +371,7 @@ class StickyCog(commands.Cog):
             inline=False,
         )
         embed.add_field(name="色", value=color_hex, inline=True)
-        embed.add_field(
-            name="クールダウン", value=f"{sticky.cooldown_seconds}秒", inline=True
-        )
+        embed.add_field(name="遅延", value=f"{sticky.cooldown_seconds}秒", inline=True)
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

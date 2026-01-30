@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+import asyncio
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
@@ -157,18 +158,15 @@ class TestOnMessage:
         ):
             await cog.on_message(message)
 
-        message.channel.send.assert_not_called()
+        # タスクがスケジュールされていない
+        assert len(cog._pending_tasks) == 0
 
-    async def test_respects_cooldown(self) -> None:
-        """cooldown 中は再投稿しない。"""
+    async def test_schedules_delayed_repost(self) -> None:
+        """メッセージが来たら遅延再投稿をスケジュールする。"""
         cog = _make_cog()
         message = _make_message()
 
-        # 2秒前に投稿済み、cooldown は 5秒
-        sticky = _make_sticky(
-            last_posted_at=datetime.now(UTC) - timedelta(seconds=2),
-            cooldown_seconds=5,
-        )
+        sticky = _make_sticky(cooldown_seconds=5)
 
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
@@ -184,33 +182,61 @@ class TestOnMessage:
         ):
             await cog.on_message(message)
 
-        # cooldown 中なので送信しない
-        message.channel.send.assert_not_called()
+        # タスクがスケジュールされている
+        assert "456" in cog._pending_tasks
+        # クリーンアップ
+        cog._pending_tasks["456"].cancel()
 
-    async def test_reposts_after_cooldown(self) -> None:
-        """cooldown 経過後は再投稿する。"""
+    async def test_cancels_existing_task_on_new_message(self) -> None:
+        """新しいメッセージが来たら既存のタスクをキャンセルする（デバウンス）。"""
         cog = _make_cog()
         message = _make_message()
 
-        # 10秒前に投稿済み、cooldown は 5秒
-        sticky = _make_sticky(
-            last_posted_at=datetime.now(UTC) - timedelta(seconds=10),
-            cooldown_seconds=5,
-        )
+        sticky = _make_sticky(cooldown_seconds=5)
 
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
-        # 新しいメッセージの mock
-        new_message = MagicMock()
-        new_message.id = 1234567890
-        message.channel.send = AsyncMock(return_value=new_message)
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+        ):
+            # 1回目のメッセージ
+            await cog.on_message(message)
+            first_task = cog._pending_tasks["456"]
 
-        # 古いメッセージの削除用 mock
-        old_message = MagicMock()
-        old_message.delete = AsyncMock()
-        message.channel.fetch_message = AsyncMock(return_value=old_message)
+            # 2回目のメッセージ
+            await cog.on_message(message)
+            second_task = cog._pending_tasks["456"]
+
+        # 1回目のタスクはキャンセルされている
+        assert first_task.cancelled()
+        # 2回目のタスクが新しく設定されている
+        assert first_task is not second_task
+        # クリーンアップ
+        second_task.cancel()
+
+
+class TestDelayedRepost:
+    """Tests for _delayed_repost method."""
+
+    async def test_reposts_after_delay(self) -> None:
+        """遅延後に再投稿する。"""
+        cog = _make_cog()
+        channel = MagicMock()
+        channel.send = AsyncMock(return_value=MagicMock(id=1234567890))
+        channel.fetch_message = AsyncMock(return_value=MagicMock(delete=AsyncMock()))
+
+        sticky = _make_sticky()
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
 
         with (
             patch("src.cogs.sticky.async_session", return_value=mock_session),
@@ -223,31 +249,29 @@ class TestOnMessage:
                 "src.cogs.sticky.update_sticky_message_id",
                 new_callable=AsyncMock,
             ),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
         ):
-            await cog.on_message(message)
+            await cog._delayed_repost(channel, "456", 5)
 
-        # 古いメッセージを削除
-        old_message.delete.assert_called_once()
-        # 新しいメッセージを送信
-        message.channel.send.assert_called_once()
+        mock_sleep.assert_called_once_with(5)
+        channel.send.assert_called_once()
 
-    async def test_posts_when_no_previous_message(self) -> None:
-        """message_id がない場合も投稿する。"""
+    async def test_deletes_old_message_before_repost(self) -> None:
+        """再投稿前に古いメッセージを削除する。"""
         cog = _make_cog()
-        message = _make_message()
+        channel = MagicMock()
+        new_msg = MagicMock(id=1234567890)
+        channel.send = AsyncMock(return_value=new_msg)
 
-        sticky = _make_sticky(
-            message_id=None,
-            last_posted_at=None,
-        )
+        old_msg = MagicMock()
+        old_msg.delete = AsyncMock()
+        channel.fetch_message = AsyncMock(return_value=old_msg)
+
+        sticky = _make_sticky(message_id="999")
 
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
-
-        new_message = MagicMock()
-        new_message.id = 1234567890
-        message.channel.send = AsyncMock(return_value=new_message)
 
         with (
             patch("src.cogs.sticky.async_session", return_value=mock_session),
@@ -260,10 +284,290 @@ class TestOnMessage:
                 "src.cogs.sticky.update_sticky_message_id",
                 new_callable=AsyncMock,
             ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
         ):
-            await cog.on_message(message)
+            await cog._delayed_repost(channel, "456", 5)
 
-        message.channel.send.assert_called_once()
+        old_msg.delete.assert_called_once()
+        channel.send.assert_called_once()
+
+    async def test_does_nothing_if_cancelled(self) -> None:
+        """キャンセルされた場合は何もしない。"""
+        cog = _make_cog()
+        channel = MagicMock()
+        channel.send = AsyncMock()
+
+        with patch(
+            "asyncio.sleep", side_effect=asyncio.CancelledError
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        channel.send.assert_not_called()
+
+    async def test_does_nothing_if_sticky_deleted(self) -> None:
+        """sticky が削除されていた場合は何もしない。"""
+        cog = _make_cog()
+        channel = MagicMock()
+        channel.send = AsyncMock()
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        channel.send.assert_not_called()
+
+    async def test_skips_repost_when_message_not_found(self) -> None:
+        """メッセージが既に削除されていた場合は再投稿せず、DB から削除する。"""
+        cog = _make_cog()
+        channel = MagicMock()
+        channel.send = AsyncMock()
+        channel.fetch_message = AsyncMock(side_effect=discord.NotFound(MagicMock(), ""))
+
+        sticky = _make_sticky(message_id="999")
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.delete_sticky_message",
+                new_callable=AsyncMock,
+            ) as mock_delete,
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        # NotFound の場合、再投稿しない
+        channel.send.assert_not_called()
+        # DB から削除される
+        mock_delete.assert_called_once()
+
+    async def test_skips_repost_when_no_message_id(self) -> None:
+        """message_id がない場合は再投稿せず、DB から削除する。"""
+        cog = _make_cog()
+        channel = MagicMock()
+        channel.send = AsyncMock()
+
+        sticky = _make_sticky(message_id=None)
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.delete_sticky_message",
+                new_callable=AsyncMock,
+            ) as mock_delete,
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        # message_id がない場合、再投稿しない
+        channel.send.assert_not_called()
+        # DB から削除される
+        mock_delete.assert_called_once()
+
+    async def test_skips_repost_on_http_exception(self) -> None:
+        """HTTP エラーが発生した場合は再投稿せず、DB から削除する。"""
+        cog = _make_cog()
+        channel = MagicMock()
+        channel.send = AsyncMock()
+        channel.fetch_message = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "")
+        )
+
+        sticky = _make_sticky(message_id="999")
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.delete_sticky_message",
+                new_callable=AsyncMock,
+            ) as mock_delete,
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        # HTTPException の場合も再投稿しない
+        channel.send.assert_not_called()
+        # DB から削除される
+        mock_delete.assert_called_once()
+
+    async def test_updates_db_after_successful_repost(self) -> None:
+        """再投稿成功後に DB を更新する。"""
+        cog = _make_cog()
+        channel = MagicMock()
+        new_msg = MagicMock(id=1234567890)
+        channel.send = AsyncMock(return_value=new_msg)
+
+        old_msg = MagicMock()
+        old_msg.delete = AsyncMock()
+        channel.fetch_message = AsyncMock(return_value=old_msg)
+
+        sticky = _make_sticky(message_id="999")
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.update_sticky_message_id",
+                new_callable=AsyncMock,
+            ) as mock_update,
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        # DB が新しいメッセージ ID で更新される
+        mock_update.assert_called_once()
+        call_args = mock_update.call_args
+        assert call_args[0][1] == "456"  # channel_id
+        assert call_args[0][2] == "1234567890"  # new message_id
+
+    async def test_handles_send_failure(self) -> None:
+        """メッセージ送信に失敗しても例外を投げない。"""
+        cog = _make_cog()
+        channel = MagicMock()
+        channel.send = AsyncMock(side_effect=discord.HTTPException(MagicMock(), ""))
+
+        old_msg = MagicMock()
+        old_msg.delete = AsyncMock()
+        channel.fetch_message = AsyncMock(return_value=old_msg)
+
+        sticky = _make_sticky(message_id="999")
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.update_sticky_message_id",
+                new_callable=AsyncMock,
+            ) as mock_update,
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            # 例外が発生しないことを確認
+            await cog._delayed_repost(channel, "456", 5)
+
+        # 送信失敗時は DB 更新されない
+        mock_update.assert_not_called()
+
+    async def test_removes_task_from_pending_after_completion(self) -> None:
+        """完了後に _pending_tasks からタスクが削除される。"""
+        cog = _make_cog()
+        channel = MagicMock()
+        channel.send = AsyncMock(return_value=MagicMock(id=123))
+        channel.fetch_message = AsyncMock(return_value=MagicMock(delete=AsyncMock()))
+
+        sticky = _make_sticky()
+
+        # タスクを事前に登録
+        cog._pending_tasks["456"] = MagicMock()
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.update_sticky_message_id",
+                new_callable=AsyncMock,
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        # タスクが削除されている
+        assert "456" not in cog._pending_tasks
+
+    async def test_removes_task_from_pending_on_cancel(self) -> None:
+        """キャンセル時にも _pending_tasks からタスクが削除される。"""
+        cog = _make_cog()
+        channel = MagicMock()
+
+        # タスクを事前に登録
+        cog._pending_tasks["456"] = MagicMock()
+
+        with patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+            await cog._delayed_repost(channel, "456", 5)
+
+        # タスクが削除されている
+        assert "456" not in cog._pending_tasks
+
+
+class TestCogUnload:
+    """Tests for cog_unload method."""
+
+    async def test_cancels_pending_tasks(self) -> None:
+        """アンロード時に保留中のタスクをキャンセルする。"""
+        cog = _make_cog()
+
+        # ダミーのタスクを追加
+        async def dummy() -> None:
+            await asyncio.sleep(100)
+
+        task = asyncio.create_task(dummy())
+        cog._pending_tasks["456"] = task
+
+        await cog.cog_unload()
+
+        # タスクがキャンセル中または完了していることを確認
+        assert task.cancelling() > 0 or task.cancelled()
+        assert len(cog._pending_tasks) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +662,37 @@ class TestStickySetCommand:
         call_args = interaction.response.send_message.call_args
         assert "無効な色形式" in call_args[0][0]
 
+    async def test_uses_delay_parameter(self) -> None:
+        """delay パラメータを使用する。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        new_message = MagicMock()
+        new_message.id = 1234567890
+        interaction.channel.send = AsyncMock(return_value=new_message)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.create_sticky_message",
+                new_callable=AsyncMock,
+            ) as mock_create,
+            patch(
+                "src.cogs.sticky.update_sticky_message_id",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await cog.sticky_set.callback(
+                cog, interaction, "Title", "Description", delay=10
+            )
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["cooldown_seconds"] == 10
+
 
 class TestStickyRemoveCommand:
     """Tests for /sticky remove command."""
@@ -427,6 +762,46 @@ class TestStickyRemoveCommand:
 
         mock_delete.assert_called_once()
         old_message.delete.assert_called_once()
+
+    async def test_cancels_pending_task(self) -> None:
+        """保留中のタスクをキャンセルする。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+
+        # ダミーのタスクを追加
+        async def dummy() -> None:
+            await asyncio.sleep(100)
+
+        task = asyncio.create_task(dummy())
+        cog._pending_tasks["456"] = task
+
+        sticky = _make_sticky()
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        old_message = MagicMock()
+        old_message.delete = AsyncMock()
+        interaction.channel.fetch_message = AsyncMock(return_value=old_message)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.delete_sticky_message",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await cog.sticky_remove.callback(cog, interaction)
+
+        # タスクがキャンセル中または完了していることを確認
+        assert task.cancelling() > 0 or task.cancelled()
+        assert "456" not in cog._pending_tasks
 
 
 class TestStickyStatusCommand:
