@@ -411,7 +411,7 @@ class TransferSelectMenu(discord.ui.Select[Any]):
             )
 
         # ephemeral のセレクトメニューを削除し、チャンネルに通知
-        await interaction.response.edit_message(content="✅", view=None)
+        await interaction.response.edit_message(content="\u200b", view=None)
         old = interaction.user.mention
         new = new_owner.mention
         await channel.send(
@@ -461,7 +461,7 @@ class KickSelectView(discord.ui.View):
         # move_to(None) でユーザーを VC から切断する
         await user_to_kick.move_to(None)
         # ephemeral のセレクトメニューを削除し、チャンネルに通知
-        await interaction.response.edit_message(content="✅", view=None)
+        await interaction.response.edit_message(content="\u200b", view=None)
         await channel.send(
             f"👟 {user_to_kick.mention} がキックされました。"
         )
@@ -505,7 +505,7 @@ class BlockSelectView(discord.ui.View):
             await user_to_block.move_to(None)
 
         # ephemeral のセレクトメニューを削除し、チャンネルに通知
-        await interaction.response.edit_message(content="✅", view=None)
+        await interaction.response.edit_message(content="\u200b", view=None)
         await channel.send(
             f"🚫 {user_to_block.mention} がブロックされました。"
         )
@@ -540,7 +540,7 @@ class AllowSelectView(discord.ui.View):
         # connect=True で接続を許可
         await channel.set_permissions(user_to_allow, connect=True)
         # ephemeral のセレクトメニューを削除し、チャンネルに通知
-        await interaction.response.edit_message(content="✅", view=None)
+        await interaction.response.edit_message(content="\u200b", view=None)
         await channel.send(
             f"✅ {user_to_allow.mention} が許可されました。"
         )
@@ -601,7 +601,7 @@ class BitrateSelectMenu(discord.ui.Select[Any]):
 
         label = f"{bitrate // 1000} kbps"
         # ephemeral のセレクトメニューを削除し、チャンネルに通知
-        await interaction.response.edit_message(content="✅", view=None)
+        await interaction.response.edit_message(content="\u200b", view=None)
         if isinstance(channel, discord.VoiceChannel):
             await channel.send(
                 f"🔊 ビットレートが **{label}** に変更されました。"
@@ -633,6 +633,9 @@ class RegionSelectView(discord.ui.View):
         ("ロシア", "russia"),
     ]
 
+    # 値から日本語ラベルへのマッピング
+    REGION_LABELS = {value: label for label, value in REGIONS}
+
     def __init__(self) -> None:
         super().__init__(timeout=60)
         options = [
@@ -658,9 +661,9 @@ class RegionSelectMenu(discord.ui.Select[Any]):
         if isinstance(channel, discord.VoiceChannel):
             await channel.edit(rtc_region=region)
 
-        region_name = selected if selected != "auto" else "自動"
+        region_name = RegionSelectView.REGION_LABELS.get(selected, selected)
         # ephemeral のセレクトメニューを削除し、チャンネルに通知
-        await interaction.response.edit_message(content="✅", view=None)
+        await interaction.response.edit_message(content="\u200b", view=None)
         if isinstance(channel, discord.VoiceChannel):
             await channel.send(
                 f"🌏 リージョンが **{region_name}** に変更されました。"

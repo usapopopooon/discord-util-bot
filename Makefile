@@ -1,4 +1,4 @@
-.PHONY: setup install dev test test-db test-db-start test-db-stop lint typecheck ci run clean
+.PHONY: setup install dev test test-db test-db-start test-db-stop lint typecheck spellcheck jsoncheck ci run clean
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -24,6 +24,12 @@ lint: setup
 
 typecheck: setup
 	$(VENV)/bin/mypy src
+
+spellcheck:
+	npm run lint:spell
+
+jsoncheck:
+	npm run lint:json
 
 run: setup
 	$(PYTHON) -m src.main
@@ -54,6 +60,10 @@ test-db-stop:
 
 # CI チェック (GitHub Actions と同じ)
 ci: setup
+	@echo "=== Spell Check ==="
+	npm run lint:spell
+	@echo "=== JSON Lint ==="
+	npm run lint:json
 	@echo "=== YAML Lint ==="
 	yamllint -s .
 	@echo "=== TOML Check ==="

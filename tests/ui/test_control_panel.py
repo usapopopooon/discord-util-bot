@@ -894,9 +894,9 @@ class TestBitrateSelectMenu:
         await menu.callback(interaction)
 
         interaction.channel.edit.assert_awaited_once_with(bitrate=64000)
-        # セレクトメニューを ✅ に置き換え
+        # セレクトメニューを非表示にする
         interaction.response.edit_message.assert_awaited_once()
-        assert interaction.response.edit_message.call_args[1]["content"] == "✅"
+        assert interaction.response.edit_message.call_args[1]["content"] == "\u200b"
         # チャンネルに通知メッセージが送信される
         msg = interaction.channel.send.call_args[0][0]
         assert "64 kbps" in msg
@@ -931,7 +931,7 @@ class TestBitrateSelectMenu:
 
         # セレクトメニューを閉じる
         interaction.response.edit_message.assert_awaited_once()
-        assert interaction.response.edit_message.call_args[1]["content"] == "✅"
+        assert interaction.response.edit_message.call_args[1]["content"] == "\u200b"
         # チャンネルへの通知は送信されない
         interaction.channel.send.assert_not_awaited()
 
@@ -971,11 +971,11 @@ class TestRegionSelectMenu:
         await menu.callback(interaction)
 
         interaction.channel.edit.assert_awaited_once_with(rtc_region="japan")
-        # セレクトメニューを ✅ に置き換え
-        assert interaction.response.edit_message.call_args[1]["content"] == "✅"
-        # チャンネルに通知メッセージが送信される
+        # セレクトメニューを非表示にする
+        assert interaction.response.edit_message.call_args[1]["content"] == "\u200b"
+        # チャンネルに通知メッセージが送信される (日本語で表示)
         msg = interaction.channel.send.call_args[0][0]
-        assert "japan" in msg
+        assert "日本" in msg
 
     async def test_change_region_auto(self) -> None:
         """自動リージョンは None を渡す。"""
@@ -988,8 +988,8 @@ class TestRegionSelectMenu:
         await menu.callback(interaction)
 
         interaction.channel.edit.assert_awaited_once_with(rtc_region=None)
-        # セレクトメニューを ✅ に置き換え
-        assert interaction.response.edit_message.call_args[1]["content"] == "✅"
+        # セレクトメニューを非表示にする
+        assert interaction.response.edit_message.call_args[1]["content"] == "\u200b"
         # チャンネルに通知メッセージが送信される
         msg = interaction.channel.send.call_args[0][0]
         assert "自動" in msg
@@ -1404,6 +1404,21 @@ class TestRegionSelectViewStructure:
         menu = view.children[0]
         values = [opt.value for opt in menu.options]
         assert "japan" in values
+
+    async def test_region_labels_mapping(self) -> None:
+        """全てのリージョンに日本語ラベルがマッピングされている。"""
+        # REGION_LABELS は全ての値をカバーしている
+        for label, value in RegionSelectView.REGIONS:
+            assert value in RegionSelectView.REGION_LABELS
+            assert RegionSelectView.REGION_LABELS[value] == label
+
+    async def test_region_labels_are_japanese(self) -> None:
+        """リージョンラベルが日本語で定義されている。"""
+        # 主要なリージョンのラベルを確認
+        assert RegionSelectView.REGION_LABELS["auto"] == "自動"
+        assert RegionSelectView.REGION_LABELS["japan"] == "日本"
+        assert RegionSelectView.REGION_LABELS["singapore"] == "シンガポール"
+        assert RegionSelectView.REGION_LABELS["us-west"] == "米国西部"
 
 
 # ===========================================================================
@@ -1829,9 +1844,9 @@ class TestKickSelectCallback:
         await select.callback(interaction)
 
         user_to_kick.move_to.assert_awaited_once_with(None)
-        # セレクトメニューを ✅ に置き換え
+        # セレクトメニューを非表示にする
         interaction.response.edit_message.assert_awaited_once()
-        assert interaction.response.edit_message.call_args[1]["content"] == "✅"
+        assert interaction.response.edit_message.call_args[1]["content"] == "\u200b"
         # チャンネルに通知メッセージが送信される
         channel.send.assert_awaited_once()
         msg = channel.send.call_args[0][0]
@@ -1902,9 +1917,9 @@ class TestBlockSelectCallback:
         )
         # VC にいるのでキックもされる
         user_to_block.move_to.assert_awaited_once_with(None)
-        # セレクトメニューを ✅ に置き換え
+        # セレクトメニューを非表示にする
         interaction.response.edit_message.assert_awaited_once()
-        assert interaction.response.edit_message.call_args[1]["content"] == "✅"
+        assert interaction.response.edit_message.call_args[1]["content"] == "\u200b"
         # チャンネルに通知メッセージが送信される
         channel.send.assert_awaited_once()
         msg = channel.send.call_args[0][0]
@@ -1990,9 +2005,9 @@ class TestAllowSelectCallback:
         channel.set_permissions.assert_awaited_once_with(
             user_to_allow, connect=True
         )
-        # セレクトメニューを ✅ に置き換え
+        # セレクトメニューを非表示にする
         interaction.response.edit_message.assert_awaited_once()
-        assert interaction.response.edit_message.call_args[1]["content"] == "✅"
+        assert interaction.response.edit_message.call_args[1]["content"] == "\u200b"
         # チャンネルに通知メッセージが送信される
         channel.send.assert_awaited_once()
         msg = channel.send.call_args[0][0]

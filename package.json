@@ -1,0 +1,17 @@
+{
+  "name": "discord-util-bot",
+  "private": true,
+  "description": "Discord utility bot - Node.js tooling",
+  "volta": {
+    "node": "22.13.1",
+    "npm": "10.9.2"
+  },
+  "scripts": {
+    "lint:json": "prettier --check \"*.json\" \"**/*.json\" --ignore-path .gitignore",
+    "lint:spell": "cspell \"src/**/*.py\" \"tests/**/*.py\""
+  },
+  "devDependencies": {
+    "cspell": "^8.17.3",
+    "prettier": "^3.4.2"
+  }
+}
