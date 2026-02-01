@@ -1,10 +1,14 @@
 #!/bin/bash
-# ローカルで PostgreSQL を使ったテストを実行するスクリプト
+# ローカルで PostgreSQL を使ったテストを実行するスクリプト (Bash 版)
 #
 # 使い方:
 #   ./scripts/test-with-db.sh          # 全テストを実行
 #   ./scripts/test-with-db.sh -v       # verbose モードで実行
 #   ./scripts/test-with-db.sh -k bump  # bump 関連のテストのみ実行
+#
+# Windows ユーザーへ:
+#   - PowerShell: .\scripts\test-with-db.ps1
+#   - クロスプラットフォーム: python scripts/test_with_db.py
 
 set -e
 

@@ -61,109 +61,16 @@ Discord の一時ボイスチャンネル管理 Bot。ロビー VC に参加す�
 - **SSL 接続**: Heroku Postgres など SSL を要求するデータベースに対応
 - **コネクションプール**: データベース接続数を制限し、クラウド環境に最適化
 
-## 環境変数
-
-### 必須
-
-| 変数名 | 説明 |
-|--------|------|
-| `DISCORD_TOKEN` | Discord Bot トークン |
-
-### オプション (Bot)
-
-| 変数名 | デフォルト | 説明 |
-|--------|-----------|------|
-| `DATABASE_URL` | `postgresql+asyncpg://user@localhost/discord_util_bot` | PostgreSQL 接続 URL |
-| `HEALTH_CHANNEL_ID` | `0` | ヘルスチェック Embed を送信するチャンネル ID (0 = 無効) |
-| `BUMP_CHANNEL_ID` | `0` | Bump リマインダー用チャンネル ID (0 = 無効) |
-
-### オプション (データベース接続)
-
-| 変数名 | デフォルト | 説明 |
-|--------|-----------|------|
-| `DATABASE_REQUIRE_SSL` | `false` | SSL 接続を有効化 (Heroku Postgres 用) |
-| `DB_POOL_SIZE` | `5` | コネクションプールサイズ |
-| `DB_MAX_OVERFLOW` | `10` | オーバーフロー接続数 |
-
-### オプション (Web 管理画面)
-
-| 変数名 | デフォルト | 説明 |
-|--------|-----------|------|
-| `ADMIN_EMAIL` | `admin@example.com` | 初期管理者メールアドレス |
-| `ADMIN_PASSWORD` | `changeme` | 初期管理者パスワード |
-| `SESSION_SECRET_KEY` | (ランダム生成) | セッション署名キー (再起動後もセッション維持する場合は設定) |
-| `SECURE_COOKIE` | `true` | HTTPS 環境でのみ Cookie を送信 |
-| `APP_URL` | `http://localhost:8000` | パスワードリセットリンク用 URL |
-
-### オプション (SMTP / メール送信)
-
-| 変数名 | デフォルト | 説明 |
-|--------|-----------|------|
-| `SMTP_HOST` | (空) | SMTP サーバーホスト名 (設定時にメール機能有効) |
-| `SMTP_PORT` | `587` | SMTP ポート番号 |
-| `SMTP_USER` | (空) | SMTP 認証ユーザー名 |
-| `SMTP_PASSWORD` | (空) | SMTP 認証パスワード |
-| `SMTP_FROM_EMAIL` | (空) | 送信元メールアドレス |
-| `SMTP_USE_TLS` | `true` | TLS を使用するかどうか |
-
-## セットアップ
-
-### ローカル開発 (Make)
+## クイックスタート
 
 ```bash
 git clone https://github.com/usapopopooon/discord-util-bot.git
 cd discord-util-bot
 cp .env.example .env  # DISCORD_TOKEN を設定
-make run
+make run              # または docker-compose up -d
 ```
 
-### ローカル開発 (手動)
-
-```bash
-git clone https://github.com/usapopopooon/discord-util-bot.git
-cd discord-util-bot
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-cp .env.example .env  # DISCORD_TOKEN を設定
-
-# マイグレーション実行
-alembic upgrade head
-
-# Bot 起動
-python -m src.main
-```
-
-### Docker Compose
-
-```bash
-cp .env.example .env  # DISCORD_TOKEN を設定
-docker-compose up -d
-```
-
-PostgreSQL と Bot が一緒に起動する。
-
-### Heroku へのデプロイ
-
-1. 必要な環境変数を設定:
-   - `DISCORD_TOKEN`: Bot トークン
-   - `DATABASE_URL`: Heroku Postgres の URL (自動設定される)
-   - `DATABASE_REQUIRE_SSL`: `true`
-
-2. Procfile で Bot を起動:
-   ```
-   worker: python -m src.main
-   ```
-
-3. Web 管理画面を使用する場合:
-   ```
-   web: uvicorn src.web.app:app --host 0.0.0.0 --port $PORT
-   ```
-
-4. デプロイは GitHub Actions から手動トリガーで実行:
-   - **ローカルからの手動デプロイは禁止** (バージョン齟齬・テスト見逃し防止)
-   - `main` ブランチへの push → CI テスト実行
-   - GitHub Actions で手動トリガー → テスト → デプロイ
+詳細な環境構築・開発ガイドは [docs/SETUP.md](docs/SETUP.md) を参照。
 
 ## スラッシュコマンド
 
@@ -255,52 +162,13 @@ src/
 
 ## 開発
 
-### Make コマンド
-
-| コマンド | 説明 |
-|---------|------|
-| `make setup` | venv 作成 + 依存関係インストール |
-| `make run` | Bot を起動 |
-| `make test` | テスト実行 |
-| `make lint` | Ruff リンター実行 |
-| `make typecheck` | mypy 型チェック実行 |
-| `make clean` | venv とキャッシュを削除 |
-
-### テスト
-
 ```bash
-# テスト実行
-make test
-
-# カバレッジ付き
-.venv/bin/pytest --cov --cov-report=html
-
-# 特定のテストファイル
-.venv/bin/pytest tests/cogs/test_sticky.py -v
+make test       # テスト実行
+make lint       # リンター実行
+make typecheck  # 型チェック
 ```
 
-### マイグレーション
-
-```bash
-# マイグレーション作成
-alembic revision --autogenerate -m "Add new table"
-
-# マイグレーション適用
-alembic upgrade head
-
-# ロールバック
-alembic downgrade -1
-```
-
-### CI
-
-GitHub Actions で以下を自動実行:
-- cspell (スペルチェック)
-- JSON / YAML / TOML lint (構文チェック)
-- Ruff format (フォーマットチェック)
-- Ruff check (リンター)
-- mypy (型チェック)
-- pytest + Codecov (テスト + カバレッジ 98%+)
+詳細な開発ガイド (Make コマンド、テスト、マイグレーション、CI) は [docs/SETUP.md](docs/SETUP.md) を参照。
 
 ## アーキテクチャ
 
