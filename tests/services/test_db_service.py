@@ -21,15 +21,20 @@ from src.services.db_service import (
     create_sticky_message,
     create_voice_session,
     delete_bump_config,
+    delete_discord_channel,
+    delete_discord_channels_by_guild,
+    delete_discord_guild,
     delete_discord_role,
     delete_discord_roles_by_guild,
     delete_lobby,
     delete_sticky_message,
     delete_voice_session,
+    get_all_discord_guilds,
     get_all_sticky_messages,
     get_all_voice_sessions,
     get_bump_config,
     get_bump_reminder,
+    get_discord_channels_by_guild,
     get_discord_roles_by_guild,
     get_due_bump_reminders,
     get_lobbies_by_guild,
@@ -44,6 +49,8 @@ from src.services.db_service import (
     update_voice_session,
     upsert_bump_config,
     upsert_bump_reminder,
+    upsert_discord_channel,
+    upsert_discord_guild,
     upsert_discord_role,
 )
 
@@ -1377,3 +1384,449 @@ class TestDiscordRoleOperations:
 
         assert role.role_name == long_name
         assert len(role.role_name) == 100
+
+
+class TestDiscordGuildOperations:
+    """Tests for Discord guild cache database operations."""
+
+    async def test_upsert_discord_guild_create(self, db_session: AsyncSession) -> None:
+        """Test creating a new Discord guild."""
+        guild = await upsert_discord_guild(
+            db_session,
+            guild_id="123456789",
+            guild_name="Test Server",
+            icon_hash="abc123",
+            member_count=100,
+        )
+
+        assert guild.guild_id == "123456789"
+        assert guild.guild_name == "Test Server"
+        assert guild.icon_hash == "abc123"
+        assert guild.member_count == 100
+        assert guild.updated_at is not None
+
+    async def test_upsert_discord_guild_update(self, db_session: AsyncSession) -> None:
+        """Test updating an existing Discord guild."""
+        await upsert_discord_guild(
+            db_session,
+            guild_id="123456789",
+            guild_name="Original Name",
+            member_count=50,
+        )
+
+        guild = await upsert_discord_guild(
+            db_session,
+            guild_id="123456789",
+            guild_name="Updated Name",
+            icon_hash="new_hash",
+            member_count=200,
+        )
+
+        assert guild.guild_name == "Updated Name"
+        assert guild.icon_hash == "new_hash"
+        assert guild.member_count == 200
+
+    async def test_upsert_discord_guild_with_defaults(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a guild with default values."""
+        guild = await upsert_discord_guild(
+            db_session,
+            guild_id="123456789",
+            guild_name="Test Server",
+        )
+
+        assert guild.icon_hash is None
+        assert guild.member_count == 0
+
+    async def test_delete_discord_guild(self, db_session: AsyncSession) -> None:
+        """Test deleting a Discord guild."""
+        await upsert_discord_guild(
+            db_session,
+            guild_id="123456789",
+            guild_name="Test Server",
+        )
+
+        result = await delete_discord_guild(db_session, "123456789")
+        assert result is True
+
+        guilds = await get_all_discord_guilds(db_session)
+        assert len(guilds) == 0
+
+    async def test_delete_discord_guild_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test deleting a non-existent Discord guild."""
+        result = await delete_discord_guild(db_session, "nonexistent")
+        assert result is False
+
+    async def test_get_all_discord_guilds(self, db_session: AsyncSession) -> None:
+        """Test getting all Discord guilds."""
+        await upsert_discord_guild(
+            db_session,
+            guild_id="111",
+            guild_name="Server A",
+        )
+        await upsert_discord_guild(
+            db_session,
+            guild_id="222",
+            guild_name="Server B",
+        )
+        await upsert_discord_guild(
+            db_session,
+            guild_id="333",
+            guild_name="Server C",
+        )
+
+        guilds = await get_all_discord_guilds(db_session)
+        assert len(guilds) == 3
+
+    async def test_get_all_discord_guilds_empty(self, db_session: AsyncSession) -> None:
+        """Test getting all guilds when there are none."""
+        guilds = await get_all_discord_guilds(db_session)
+        assert guilds == []
+
+    async def test_upsert_discord_guild_with_unicode_name(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a guild with unicode characters in name."""
+        guild = await upsert_discord_guild(
+            db_session,
+            guild_id="123456789",
+            guild_name="日本語サーバー 🎮",
+        )
+
+        assert guild.guild_name == "日本語サーバー 🎮"
+
+
+class TestDiscordChannelOperations:
+    """Tests for Discord channel cache database operations."""
+
+    async def test_upsert_discord_channel_create(self, db_session: AsyncSession) -> None:
+        """Test creating a new Discord channel."""
+        channel = await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            channel_name="general",
+            channel_type=0,
+            position=1,
+            category_id="789",
+        )
+
+        assert channel.id is not None
+        assert channel.guild_id == "123"
+        assert channel.channel_id == "456"
+        assert channel.channel_name == "general"
+        assert channel.channel_type == 0
+        assert channel.position == 1
+        assert channel.category_id == "789"
+        assert channel.updated_at is not None
+
+    async def test_upsert_discord_channel_update(self, db_session: AsyncSession) -> None:
+        """Test updating an existing Discord channel."""
+        await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            channel_name="original-channel",
+            channel_type=0,
+            position=1,
+        )
+
+        channel = await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            channel_name="renamed-channel",
+            channel_type=0,
+            position=5,
+            category_id="999",
+        )
+
+        assert channel.channel_name == "renamed-channel"
+        assert channel.position == 5
+        assert channel.category_id == "999"
+
+    async def test_upsert_discord_channel_with_defaults(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a channel with default values."""
+        channel = await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            channel_name="test-channel",
+        )
+
+        assert channel.channel_type == 0
+        assert channel.position == 0
+        assert channel.category_id is None
+
+    async def test_upsert_discord_channel_different_guilds(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that same channel_id in different guilds are separate records."""
+        channel1 = await upsert_discord_channel(
+            db_session,
+            guild_id="111",
+            channel_id="456",
+            channel_name="channel-in-guild-1",
+        )
+
+        channel2 = await upsert_discord_channel(
+            db_session,
+            guild_id="222",
+            channel_id="456",
+            channel_name="channel-in-guild-2",
+        )
+
+        assert channel1.id != channel2.id
+        assert channel1.guild_id != channel2.guild_id
+
+    async def test_delete_discord_channel(self, db_session: AsyncSession) -> None:
+        """Test deleting a Discord channel."""
+        await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            channel_name="test-channel",
+        )
+
+        result = await delete_discord_channel(db_session, "123", "456")
+        assert result is True
+
+        channels = await get_discord_channels_by_guild(db_session, "123")
+        assert len(channels) == 0
+
+    async def test_delete_discord_channel_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test deleting a non-existent Discord channel."""
+        result = await delete_discord_channel(db_session, "nonexistent", "456")
+        assert result is False
+
+    async def test_delete_discord_channels_by_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test deleting all channels for a guild."""
+        await upsert_discord_channel(
+            db_session, guild_id="123", channel_id="1", channel_name="channel-1"
+        )
+        await upsert_discord_channel(
+            db_session, guild_id="123", channel_id="2", channel_name="channel-2"
+        )
+        await upsert_discord_channel(
+            db_session, guild_id="123", channel_id="3", channel_name="channel-3"
+        )
+        await upsert_discord_channel(
+            db_session, guild_id="999", channel_id="4", channel_name="other-guild-channel"
+        )
+
+        count = await delete_discord_channels_by_guild(db_session, "123")
+        assert count == 3
+
+        channels = await get_discord_channels_by_guild(db_session, "123")
+        assert len(channels) == 0
+
+        other_channels = await get_discord_channels_by_guild(db_session, "999")
+        assert len(other_channels) == 1
+
+    async def test_delete_discord_channels_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test deleting channels for a guild with no channels."""
+        count = await delete_discord_channels_by_guild(db_session, "nonexistent")
+        assert count == 0
+
+    async def test_get_discord_channels_by_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting all channels for a guild sorted by position."""
+        await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="1",
+            channel_name="last-channel",
+            position=10,
+        )
+        await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="2",
+            channel_name="first-channel",
+            position=1,
+        )
+        await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="3",
+            channel_name="middle-channel",
+            position=5,
+        )
+
+        channels = await get_discord_channels_by_guild(db_session, "123")
+
+        assert len(channels) == 3
+        # Should be sorted by position ascending
+        assert channels[0].channel_name == "first-channel"
+        assert channels[1].channel_name == "middle-channel"
+        assert channels[2].channel_name == "last-channel"
+
+    async def test_get_discord_channels_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting channels for a guild with no channels."""
+        channels = await get_discord_channels_by_guild(db_session, "nonexistent")
+        assert channels == []
+
+    async def test_upsert_discord_channel_various_types(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating channels with various types."""
+        # Text channel
+        text_ch = await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="1",
+            channel_name="text-channel",
+            channel_type=0,
+        )
+        assert text_ch.channel_type == 0
+
+        # News/Announcement channel
+        news_ch = await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="2",
+            channel_name="announcement",
+            channel_type=5,
+        )
+        assert news_ch.channel_type == 5
+
+        # Forum channel
+        forum_ch = await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="3",
+            channel_name="forum",
+            channel_type=15,
+        )
+        assert forum_ch.channel_type == 15
+
+    async def test_upsert_discord_channel_with_unicode_name(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a channel with unicode characters in name."""
+        channel = await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            channel_name="日本語チャンネル",
+        )
+
+        assert channel.channel_name == "日本語チャンネル"
+
+    async def test_upsert_discord_channel_preserves_id_on_update(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that updating a channel preserves the same ID."""
+        channel1 = await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            channel_name="original",
+        )
+        original_id = channel1.id
+
+        channel2 = await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            channel_name="updated",
+        )
+
+        assert channel2.id == original_id
+
+    async def test_delete_discord_channel_wrong_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test deleting a channel with wrong guild_id returns False."""
+        await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            channel_name="test-channel",
+        )
+
+        result = await delete_discord_channel(db_session, "999", "456")
+        assert result is False
+
+        channels = await get_discord_channels_by_guild(db_session, "123")
+        assert len(channels) == 1
+
+
+class TestDiscordGuildSortingAndTimestamps:
+    """Tests for Discord guild sorting and timestamp behavior."""
+
+    async def test_get_all_discord_guilds_sorted_by_name(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that guilds are returned sorted by guild_name."""
+        # Create guilds in non-alphabetical order
+        await upsert_discord_guild(db_session, guild_id="1", guild_name="Zebra Server")
+        await upsert_discord_guild(db_session, guild_id="2", guild_name="Alpha Server")
+        await upsert_discord_guild(db_session, guild_id="3", guild_name="Middle Server")
+
+        guilds = await get_all_discord_guilds(db_session)
+
+        assert len(guilds) == 3
+        assert guilds[0].guild_name == "Alpha Server"
+        assert guilds[1].guild_name == "Middle Server"
+        assert guilds[2].guild_name == "Zebra Server"
+
+    async def test_upsert_discord_guild_updates_timestamp(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that updated_at is updated when guild is updated."""
+        import asyncio
+
+        guild1 = await upsert_discord_guild(
+            db_session, guild_id="123", guild_name="Original"
+        )
+        original_timestamp = guild1.updated_at
+
+        # Wait a bit to ensure timestamp difference
+        await asyncio.sleep(0.01)
+
+        guild2 = await upsert_discord_guild(
+            db_session, guild_id="123", guild_name="Updated"
+        )
+
+        assert guild2.updated_at >= original_timestamp
+
+    async def test_upsert_discord_channel_updates_timestamp(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that updated_at is updated when channel is updated."""
+        import asyncio
+
+        channel1 = await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            channel_name="original-channel",
+        )
+        original_timestamp = channel1.updated_at
+
+        # Wait a bit to ensure timestamp difference
+        await asyncio.sleep(0.01)
+
+        channel2 = await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            channel_name="updated-channel",
+        )
+
+        assert channel2.updated_at >= original_timestamp

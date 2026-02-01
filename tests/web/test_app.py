@@ -13,6 +13,8 @@ from src.database.models import (
     AdminUser,
     BumpConfig,
     BumpReminder,
+    DiscordChannel,
+    DiscordGuild,
     DiscordRole,
     Lobby,
     RolePanel,
@@ -3369,6 +3371,256 @@ class TestGetDiscordRolesByGuildEdgeCases:
         result = await _get_discord_roles_by_guild(db_session)
 
         assert result["123"][0][1] == "日本語ロール 🎮"
+
+
+class TestGetDiscordGuildsAndChannels:
+    """_get_discord_guilds_and_channels のテスト。"""
+
+    async def test_returns_guilds_sorted_by_name(self, db_session: AsyncSession) -> None:
+        """ギルドが名前順でソートされて返される。"""
+        from src.web.app import _get_discord_guilds_and_channels
+
+        # 順不同で追加
+        db_session.add(DiscordGuild(guild_id="3", guild_name="Zebra Server"))
+        db_session.add(DiscordGuild(guild_id="1", guild_name="Alpha Server"))
+        db_session.add(DiscordGuild(guild_id="2", guild_name="Middle Server"))
+        await db_session.commit()
+
+        guilds_map, _ = await _get_discord_guilds_and_channels(db_session)
+
+        # dict なので順序は保証されないが、値が正しいことを確認
+        assert len(guilds_map) == 3
+        assert guilds_map["1"] == "Alpha Server"
+        assert guilds_map["2"] == "Middle Server"
+        assert guilds_map["3"] == "Zebra Server"
+
+    async def test_returns_channels_grouped_by_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """チャンネルがギルドごとにグループ化されて返される。"""
+        from src.web.app import _get_discord_guilds_and_channels
+
+        db_session.add(DiscordGuild(guild_id="111", guild_name="Guild A"))
+        db_session.add(DiscordGuild(guild_id="222", guild_name="Guild B"))
+        db_session.add(
+            DiscordChannel(
+                guild_id="111", channel_id="1", channel_name="general", position=0
+            )
+        )
+        db_session.add(
+            DiscordChannel(
+                guild_id="111", channel_id="2", channel_name="random", position=1
+            )
+        )
+        db_session.add(
+            DiscordChannel(
+                guild_id="222", channel_id="3", channel_name="announcements", position=0
+            )
+        )
+        await db_session.commit()
+
+        _, channels_map = await _get_discord_guilds_and_channels(db_session)
+
+        assert len(channels_map) == 2
+        assert len(channels_map["111"]) == 2
+        assert len(channels_map["222"]) == 1
+
+    async def test_returns_channels_sorted_by_position(
+        self, db_session: AsyncSession
+    ) -> None:
+        """チャンネルが position 順でソートされて返される。"""
+        from src.web.app import _get_discord_guilds_and_channels
+
+        db_session.add(DiscordGuild(guild_id="123", guild_name="Test Guild"))
+        # 順不同で追加
+        db_session.add(
+            DiscordChannel(
+                guild_id="123", channel_id="3", channel_name="last-channel", position=10
+            )
+        )
+        db_session.add(
+            DiscordChannel(
+                guild_id="123", channel_id="1", channel_name="first-channel", position=0
+            )
+        )
+        db_session.add(
+            DiscordChannel(
+                guild_id="123", channel_id="2", channel_name="middle-channel", position=5
+            )
+        )
+        await db_session.commit()
+
+        _, channels_map = await _get_discord_guilds_and_channels(db_session)
+
+        channels = channels_map["123"]
+        assert channels[0][1] == "first-channel"
+        assert channels[1][1] == "middle-channel"
+        assert channels[2][1] == "last-channel"
+
+    async def test_returns_empty_when_no_data(self, db_session: AsyncSession) -> None:
+        """データがない場合は空の辞書を返す。"""
+        from src.web.app import _get_discord_guilds_and_channels
+
+        guilds_map, channels_map = await _get_discord_guilds_and_channels(db_session)
+
+        assert guilds_map == {}
+        assert channels_map == {}
+
+
+class TestRolePanelCreatePageWithGuildChannelNames:
+    """ギルド・チャンネル名を含むパネル作成ページのテスト。"""
+
+    async def test_create_page_shows_guild_names(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """パネル作成ページにギルド名が表示される。"""
+        db_session.add(
+            DiscordGuild(guild_id="123456789012345678", guild_name="My Test Server")
+        )
+        await db_session.commit()
+
+        response = await authenticated_client.get("/rolepanels/new")
+        assert response.status_code == 200
+        # セレクトボックスにギルド名が含まれる
+        assert "My Test Server" in response.text
+
+    async def test_create_page_shows_channel_names(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """パネル作成ページにチャンネル名が表示される。"""
+        db_session.add(
+            DiscordGuild(guild_id="123456789012345678", guild_name="My Test Server")
+        )
+        db_session.add(
+            DiscordChannel(
+                guild_id="123456789012345678",
+                channel_id="987654321098765432",
+                channel_name="general-chat",
+                position=0,
+            )
+        )
+        await db_session.commit()
+
+        response = await authenticated_client.get("/rolepanels/new")
+        assert response.status_code == 200
+        # JavaScript 用 JSON にチャンネル名が含まれる
+        assert "general-chat" in response.text
+
+
+class TestRolePanelDetailPageWithGuildChannelNames:
+    """ギルド・チャンネル名を含むパネル詳細ページのテスト。"""
+
+    async def test_detail_page_shows_guild_name(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """パネル詳細ページにギルド名が表示される。"""
+        # パネルを作成
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        # ギルドキャッシュを追加
+        db_session.add(
+            DiscordGuild(guild_id="123456789012345678", guild_name="Cached Server Name")
+        )
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert response.status_code == 200
+        # ギルド名が表示される
+        assert "Cached Server Name" in response.text
+
+    async def test_detail_page_shows_channel_name(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """パネル詳細ページにチャンネル名が表示される。"""
+        # パネルを作成
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        # チャンネルキャッシュを追加
+        db_session.add(
+            DiscordGuild(guild_id="123456789012345678", guild_name="Test Server")
+        )
+        db_session.add(
+            DiscordChannel(
+                guild_id="123456789012345678",
+                channel_id="987654321098765432",
+                channel_name="cached-channel",
+                position=0,
+            )
+        )
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert response.status_code == 200
+        # チャンネル名が表示される (#付き)
+        assert "#cached-channel" in response.text
+
+    async def test_detail_page_shows_guild_id_when_not_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュにないギルドはギルド ID のみ表示される。"""
+        # パネルを作成 (ギルドキャッシュなし)
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert response.status_code == 200
+        # ギルド ID がそのまま表示される
+        assert "123456789012345678" in response.text
+
+    async def test_detail_page_shows_channel_id_when_not_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュにないチャンネルはチャンネル ID のみ表示される。"""
+        # パネルを作成 (チャンネルキャッシュなし)
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        # ギルドだけキャッシュ
+        db_session.add(
+            DiscordGuild(guild_id="123456789012345678", guild_name="Test Server")
+        )
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert response.status_code == 200
+        # チャンネル ID がそのまま表示される
+        assert "987654321098765432" in response.text
 
 
 class TestRolePanelReactionTypeEdgeCases:

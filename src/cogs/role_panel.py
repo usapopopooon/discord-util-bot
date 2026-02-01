@@ -24,6 +24,9 @@ from discord.ext import commands
 from src.database.engine import async_session
 from src.services.db_service import (
     add_role_panel_item,
+    delete_discord_channel,
+    delete_discord_channels_by_guild,
+    delete_discord_guild,
     delete_discord_role,
     delete_discord_roles_by_guild,
     delete_role_panel,
@@ -33,6 +36,8 @@ from src.services.db_service import (
     get_role_panel_items,
     get_role_panels_by_channel,
     remove_role_panel_item,
+    upsert_discord_channel,
+    upsert_discord_guild,
     upsert_discord_role,
 )
 from src.ui.role_panel_view import (
@@ -423,8 +428,61 @@ class RolePanelCog(commands.Cog):
             logger.error("Failed to modify role: %s", e)
 
     # -------------------------------------------------------------------------
-    # ロール同期イベント
+    # 同期イベント (ギルド、チャンネル、ロール)
     # -------------------------------------------------------------------------
+
+    # 同期対象のチャンネルタイプ (テキスト系のみ)
+    SYNC_CHANNEL_TYPES = {
+        discord.ChannelType.text,  # 0
+        discord.ChannelType.news,  # 5 (announcement)
+        discord.ChannelType.forum,  # 15
+    }
+
+    async def _sync_guild_info(self, guild: discord.Guild) -> None:
+        """ギルド情報を DB に同期する。
+
+        Args:
+            guild: Discord ギルド
+        """
+        async with async_session() as db_session:
+            await upsert_discord_guild(
+                db_session,
+                guild_id=str(guild.id),
+                guild_name=guild.name,
+                icon_hash=guild.icon.key if guild.icon else None,
+                member_count=guild.member_count or 0,
+            )
+
+    async def _sync_guild_channels(self, guild: discord.Guild) -> int:
+        """ギルドのチャンネル情報を DB に同期する。
+
+        Args:
+            guild: Discord ギルド
+
+        Returns:
+            同期したチャンネル数
+        """
+        count = 0
+        async with async_session() as db_session:
+            for channel in guild.channels:
+                # テキスト系チャンネルのみ同期
+                if channel.type not in self.SYNC_CHANNEL_TYPES:
+                    continue
+                # Bot が見えるチャンネルのみ
+                if not channel.permissions_for(guild.me).view_channel:
+                    continue
+
+                await upsert_discord_channel(
+                    db_session,
+                    guild_id=str(guild.id),
+                    channel_id=str(channel.id),
+                    channel_name=channel.name,
+                    channel_type=channel.type.value,
+                    position=channel.position,
+                    category_id=str(channel.category_id) if channel.category_id else None,
+                )
+                count += 1
+        return count
 
     async def _sync_guild_roles(self, guild: discord.Guild) -> int:
         """ギルドのロール情報を DB に同期する。
@@ -454,26 +512,73 @@ class RolePanelCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
-        """Bot 起動時に全ギルドのロールを同期する。"""
-        total = 0
+        """Bot 起動時に全ギルドの情報を同期する。"""
+        total_roles = 0
+        total_channels = 0
         for guild in self.bot.guilds:
-            count = await self._sync_guild_roles(guild)
-            total += count
-            logger.debug("Synced %d roles for guild %s", count, guild.name)
-        logger.info("Synced %d roles across %d guilds", total, len(self.bot.guilds))
+            # ギルド情報を同期
+            await self._sync_guild_info(guild)
+            # ロールを同期
+            role_count = await self._sync_guild_roles(guild)
+            total_roles += role_count
+            # チャンネルを同期
+            channel_count = await self._sync_guild_channels(guild)
+            total_channels += channel_count
+            logger.debug(
+                "Synced %d roles, %d channels for guild %s",
+                role_count,
+                channel_count,
+                guild.name,
+            )
+        logger.info(
+            "Synced %d guilds, %d roles, %d channels",
+            len(self.bot.guilds),
+            total_roles,
+            total_channels,
+        )
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild) -> None:
-        """新しいギルドに参加したときにロールを同期する。"""
-        count = await self._sync_guild_roles(guild)
-        logger.info("Synced %d roles for new guild %s", count, guild.name)
+        """新しいギルドに参加したときに情報を同期する。"""
+        await self._sync_guild_info(guild)
+        role_count = await self._sync_guild_roles(guild)
+        channel_count = await self._sync_guild_channels(guild)
+        logger.info(
+            "Synced %d roles, %d channels for new guild %s",
+            role_count,
+            channel_count,
+            guild.name,
+        )
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: discord.Guild) -> None:
         """ギルドから退出したときにキャッシュを削除する。"""
         async with async_session() as db_session:
-            count = await delete_discord_roles_by_guild(db_session, str(guild.id))
-            logger.info("Deleted %d cached roles for guild %s", count, guild.name)
+            role_count = await delete_discord_roles_by_guild(db_session, str(guild.id))
+            channel_count = await delete_discord_channels_by_guild(
+                db_session, str(guild.id)
+            )
+            await delete_discord_guild(db_session, str(guild.id))
+            logger.info(
+                "Deleted guild info, %d roles, %d channels for guild %s",
+                role_count,
+                channel_count,
+                guild.name,
+            )
+
+    @commands.Cog.listener()
+    async def on_guild_update(
+        self, before: discord.Guild, after: discord.Guild
+    ) -> None:
+        """ギルド情報が更新されたときに DB を更新する。"""
+        # 名前やアイコンが変わった場合のみ更新
+        if before.name != after.name or before.icon != after.icon:
+            await self._sync_guild_info(after)
+            logger.debug("Updated guild info for %s", after.name)
+
+    # -------------------------------------------------------------------------
+    # ロールイベント
+    # -------------------------------------------------------------------------
 
     @commands.Cog.listener()
     async def on_guild_role_create(self, role: discord.Role) -> None:
@@ -515,6 +620,78 @@ class RolePanelCog(commands.Cog):
         async with async_session() as db_session:
             await delete_discord_role(db_session, str(role.guild.id), str(role.id))
             logger.debug("Deleted role %s from cache", role.name)
+
+    # -------------------------------------------------------------------------
+    # チャンネルイベント
+    # -------------------------------------------------------------------------
+
+    @commands.Cog.listener()
+    async def on_guild_channel_create(
+        self, channel: discord.abc.GuildChannel
+    ) -> None:
+        """チャンネルが作成されたときに DB に追加する。"""
+        if channel.type not in self.SYNC_CHANNEL_TYPES:
+            return
+        if not channel.permissions_for(channel.guild.me).view_channel:
+            return
+
+        async with async_session() as db_session:
+            await upsert_discord_channel(
+                db_session,
+                guild_id=str(channel.guild.id),
+                channel_id=str(channel.id),
+                channel_name=channel.name,
+                channel_type=channel.type.value,
+                position=channel.position,
+                category_id=str(channel.category_id) if channel.category_id else None,
+            )
+            logger.debug("Added channel %s to cache", channel.name)
+
+    @commands.Cog.listener()
+    async def on_guild_channel_update(
+        self,
+        before: discord.abc.GuildChannel,
+        after: discord.abc.GuildChannel,
+    ) -> None:
+        """チャンネルが更新されたときに DB を更新する。"""
+        if after.type not in self.SYNC_CHANNEL_TYPES:
+            # タイプが変わって対象外になった場合は削除
+            async with async_session() as db_session:
+                await delete_discord_channel(
+                    db_session, str(after.guild.id), str(after.id)
+                )
+            return
+
+        if not after.permissions_for(after.guild.me).view_channel:
+            # 権限がなくなった場合も削除
+            async with async_session() as db_session:
+                await delete_discord_channel(
+                    db_session, str(after.guild.id), str(after.id)
+                )
+            return
+
+        async with async_session() as db_session:
+            await upsert_discord_channel(
+                db_session,
+                guild_id=str(after.guild.id),
+                channel_id=str(after.id),
+                channel_name=after.name,
+                channel_type=after.type.value,
+                position=after.position,
+                category_id=str(after.category_id) if after.category_id else None,
+            )
+            logger.debug("Updated channel %s in cache", after.name)
+
+    @commands.Cog.listener()
+    async def on_guild_channel_delete(
+        self, channel: discord.abc.GuildChannel
+    ) -> None:
+        """チャンネルが削除されたときに DB から削除する。"""
+        async with async_session() as db_session:
+            await delete_discord_channel(
+                db_session, str(channel.guild.id), str(channel.id)
+            )
+            logger.debug("Deleted channel %s from cache", channel.name)
 
 
 async def setup(bot: commands.Bot) -> None:

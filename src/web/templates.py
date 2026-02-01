@@ -1033,16 +1033,21 @@ def role_panel_create_page(
     panel_type: str = "button",
     title: str = "",
     description: str = "",
-    guild_channels: dict[str, list[str]] | None = None,
+    guilds_map: dict[str, str] | None = None,
+    channels_map: dict[str, list[tuple[str, str]]] | None = None,
     discord_roles: dict[str, list[tuple[str, str, int]]] | None = None,
 ) -> str:
     """Role panel create page template.
 
     Args:
+        guilds_map: ギルドID -> ギルド名 のマッピング
+        channels_map: ギルドID -> [(channel_id, channel_name), ...] のマッピング
         discord_roles: ギルドID -> [(role_id, role_name, color), ...] のマッピング
     """
-    if guild_channels is None:
-        guild_channels = {}
+    if guilds_map is None:
+        guilds_map = {}
+    if channels_map is None:
+        channels_map = {}
     if discord_roles is None:
         discord_roles = {}
 
@@ -1054,28 +1059,37 @@ def role_panel_create_page(
         </div>
         """
 
+    # ギルドが登録されていない場合の警告
+    no_guilds_warning = ""
+    if not guilds_map:
+        no_guilds_warning = """
+        <div class="bg-yellow-500/20 border border-yellow-500 text-yellow-300 px-4 py-3 rounded mb-4">
+            No guilds available. Please start the Bot first to sync guild and channel information.
+        </div>
+        """
+
     # Panel type selection
     button_selected = "checked" if panel_type == "button" else ""
     reaction_selected = "checked" if panel_type == "reaction" else ""
 
-    # Guild select options
+    # Guild select options (名前で表示)
     guild_options = ""
-    for gid in guild_channels:
+    for gid, gname in sorted(guilds_map.items(), key=lambda x: x[1]):
         selected = "selected" if gid == guild_id else ""
         guild_options += (
-            f'<option value="{escape(gid)}" {selected}>{escape(gid)}</option>\n'
+            f'<option value="{escape(gid)}" {selected}>{escape(gname)}</option>\n'
         )
-
-    # 既知のギルド以外が指定されている場合は「その他」を選択
-    guild_is_other = guild_id and guild_id not in guild_channels
-    other_selected = "selected" if guild_is_other else ""
 
     # Channel/Role データを JavaScript 用に JSON 化
     import json
 
-    guild_channels_json = json.dumps(guild_channels)
-    # discord_roles は {guild_id: [(role_id, role_name, color), ...]} なので
-    # JavaScript で使いやすい形式に変換: {guild_id: [{id, name, color}, ...]}
+    # channels_map を JavaScript で使いやすい形式に変換: {guild_id: [{id, name}, ...]}
+    channels_for_js: dict[str, list[dict[str, str]]] = {}
+    for gid, channels in channels_map.items():
+        channels_for_js[gid] = [{"id": c[0], "name": c[1]} for c in channels]
+    channels_json = json.dumps(channels_for_js)
+
+    # discord_roles を JavaScript で使いやすい形式に変換: {guild_id: [{id, name, color}, ...]}
     discord_roles_for_js: dict[str, list[dict[str, str | int]]] = {}
     for gid, roles in discord_roles.items():
         discord_roles_for_js[gid] = [
@@ -1089,64 +1103,44 @@ def role_panel_create_page(
         <div class="max-w-lg">
             <div class="bg-gray-800 p-6 rounded-lg">
                 {message_html}
+                {no_guilds_warning}
                 <form method="POST" action="/rolepanels/new" id="createPanelForm">
                     <div class="mb-4">
                         <label for="guild_select" class="block text-sm font-medium mb-2">
-                            Guild ID <span class="text-red-400">*</span>
+                            Server <span class="text-red-400">*</span>
                         </label>
                         <select
                             id="guild_select"
-                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
-                                   focus:outline-none focus:ring-2 focus:ring-blue-500
-                                   text-gray-100 font-mono mb-2"
-                        >
-                            <option value="">-- Select Guild --</option>
-                            {guild_options}
-                            <option value="__other__" {other_selected}>Other (enter manually)</option>
-                        </select>
-                        <input
-                            type="text"
-                            id="guild_id"
                             name="guild_id"
-                            value="{escape(guild_id)}"
                             required
-                            pattern="[0-9]+"
                             class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
                                    focus:outline-none focus:ring-2 focus:ring-blue-500
-                                   text-gray-100 font-mono {"hidden" if not guild_is_other and guild_id in guild_channels else ""}"
-                            placeholder="123456789012345678"
-                            id="guild_id_input"
+                                   text-gray-100"
+                            {"disabled" if not guilds_map else ""}
                         >
+                            <option value="">-- Select Server --</option>
+                            {guild_options}
+                        </select>
                         <p class="text-gray-500 text-xs mt-1">
-                            Discord server ID (enable Developer Mode in Discord settings)
+                            Select a Discord server where the Bot is present
                         </p>
                     </div>
 
                     <div class="mb-4">
                         <label for="channel_select" class="block text-sm font-medium mb-2">
-                            Channel ID <span class="text-red-400">*</span>
+                            Channel <span class="text-red-400">*</span>
                         </label>
                         <select
                             id="channel_select"
+                            name="channel_id"
+                            required
                             class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
                                    focus:outline-none focus:ring-2 focus:ring-blue-500
-                                   text-gray-100 font-mono mb-2"
+                                   text-gray-100"
+                            {"disabled" if not guilds_map else ""}
                         >
                             <option value="">-- Select Channel --</option>
-                            <option value="__other__">Other (enter manually)</option>
                         </select>
-                        <input
-                            type="text"
-                            id="channel_id"
-                            name="channel_id"
-                            value="{escape(channel_id)}"
-                            required
-                            pattern="[0-9]+"
-                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
-                                   focus:outline-none focus:ring-2 focus:ring-blue-500
-                                   text-gray-100 font-mono"
-                            placeholder="123456789012345678"
-                        >
                         <p class="text-gray-500 text-xs mt-1">
                             Text channel where the panel will be posted
                         </p>
@@ -1264,74 +1258,34 @@ def role_panel_create_page(
 
     <script>
     (function() {{
-        const guildChannels = {guild_channels_json};
+        const guildChannels = {channels_json};
         const guildSelect = document.getElementById('guild_select');
-        const guildIdInput = document.getElementById('guild_id');
         const channelSelect = document.getElementById('channel_select');
-        const channelIdInput = document.getElementById('channel_id');
 
         // 初期値を保存
-        const initialGuildId = guildIdInput.value;
-        const initialChannelId = channelIdInput.value;
+        const initialGuildId = "{escape(guild_id)}";
+        const initialChannelId = "{escape(channel_id)}";
 
         function updateChannelOptions(selectedGuildId) {{
             // チャンネル選択をリセット
             channelSelect.innerHTML = '<option value="">-- Select Channel --</option>';
 
-            if (selectedGuildId && selectedGuildId !== '__other__' && guildChannels[selectedGuildId]) {{
+            if (selectedGuildId && guildChannels[selectedGuildId]) {{
                 const channels = guildChannels[selectedGuildId];
                 channels.forEach(function(ch) {{
                     const option = document.createElement('option');
-                    option.value = ch;
-                    option.textContent = ch;
-                    if (ch === initialChannelId) {{
+                    option.value = ch.id;
+                    option.textContent = '#' + ch.name;
+                    if (ch.id === initialChannelId) {{
                         option.selected = true;
                     }}
                     channelSelect.appendChild(option);
                 }});
             }}
-
-            // 「その他」オプションを追加
-            const otherOption = document.createElement('option');
-            otherOption.value = '__other__';
-            otherOption.textContent = 'Other (enter manually)';
-            channelSelect.appendChild(otherOption);
-
-            // チャンネル入力欄の表示/非表示を更新
-            updateChannelInputVisibility();
-        }}
-
-        function updateGuildInputVisibility() {{
-            const selectedValue = guildSelect.value;
-            if (selectedValue === '__other__' || selectedValue === '') {{
-                guildIdInput.classList.remove('hidden');
-                if (selectedValue === '__other__') {{
-                    guildIdInput.value = '';
-                    guildIdInput.focus();
-                }}
-            }} else {{
-                guildIdInput.classList.add('hidden');
-                guildIdInput.value = selectedValue;
-            }}
-        }}
-
-        function updateChannelInputVisibility() {{
-            const selectedValue = channelSelect.value;
-            if (selectedValue === '__other__' || selectedValue === '') {{
-                channelIdInput.classList.remove('hidden');
-                if (selectedValue === '__other__') {{
-                    channelIdInput.value = '';
-                    channelIdInput.focus();
-                }}
-            }} else {{
-                channelIdInput.classList.add('hidden');
-                channelIdInput.value = selectedValue;
-            }}
         }}
 
         // ギルド選択変更時
         guildSelect.addEventListener('change', function() {{
-            updateGuildInputVisibility();
             updateChannelOptions(this.value);
             // ロール情報の更新は後で定義される関数を呼び出す
             if (typeof updateRolesInfo === 'function') {{
@@ -1339,38 +1293,12 @@ def role_panel_create_page(
             }}
         }});
 
-        // ギルドID手入力変更時もロール情報を更新
-        guildIdInput.addEventListener('input', function() {{
-            if (typeof updateRolesInfo === 'function') {{
-                updateRolesInfo();
-            }}
-        }});
-
-        // チャンネル選択変更時
-        channelSelect.addEventListener('change', function() {{
-            updateChannelInputVisibility();
-        }});
-
         // 初期状態を設定
-        if (initialGuildId) {{
-            // 既知のギルドかチェック
-            if (guildChannels[initialGuildId]) {{
-                guildSelect.value = initialGuildId;
-                guildIdInput.classList.add('hidden');
-            }} else {{
-                guildSelect.value = '__other__';
-                guildIdInput.classList.remove('hidden');
-            }}
+        if (initialGuildId && guildChannels[initialGuildId]) {{
+            guildSelect.value = initialGuildId;
             updateChannelOptions(initialGuildId);
-
-            // 既知のチャンネルかチェック
-            if (initialChannelId && guildChannels[initialGuildId] &&
-                guildChannels[initialGuildId].includes(initialChannelId)) {{
+            if (initialChannelId) {{
                 channelSelect.value = initialChannelId;
-                channelIdInput.classList.add('hidden');
-            }} else if (initialChannelId) {{
-                channelSelect.value = '__other__';
-                channelIdInput.classList.remove('hidden');
             }}
         }}
 
@@ -1385,7 +1313,8 @@ def role_panel_create_page(
 
         function updateSubmitButton() {{
             const itemCount = roleItemsContainer.querySelectorAll('.role-item-row').length;
-            submitBtn.disabled = itemCount === 0;
+            const hasGuild = guildSelect.value !== '';
+            submitBtn.disabled = itemCount === 0 || !hasGuild;
             noRolesWarning.classList.toggle('hidden', itemCount > 0);
         }}
 
@@ -1395,14 +1324,11 @@ def role_panel_create_page(
             noKnownRolesInfo.classList.toggle('hidden', hasRoles);
             // ロールがない場合は Add Role ボタンを非活性化
             addRoleItemBtn.disabled = !hasRoles;
+            updateSubmitButton();
         }}
 
         function getCurrentGuildId() {{
-            const selectValue = guildSelect.value;
-            if (selectValue === '__other__' || selectValue === '') {{
-                return guildIdInput.value;
-            }}
-            return selectValue;
+            return guildSelect.value;
         }}
 
         function getRolesForCurrentGuild() {{
@@ -1419,6 +1345,7 @@ def role_panel_create_page(
         function createRoleItemRow(index) {{
             const row = document.createElement('div');
             row.className = 'role-item-row bg-gray-700 p-4 rounded flex flex-wrap gap-3 items-end';
+            row.draggable = true;
 
             const availableRoles = getRolesForCurrentGuild();
             let roleSelectHtml = '';
@@ -1438,6 +1365,12 @@ def role_panel_create_page(
             }}
 
             row.innerHTML = `
+                <div class="drag-handle flex items-center justify-center w-8 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200" title="Drag to reorder">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16" />
+                    </svg>
+                </div>
+                <input type="hidden" name="item_position[]" class="position-input" value="${{index}}">
                 <div class="flex-1 min-w-[80px]">
                     <label class="block text-xs font-medium mb-1 text-gray-300">
                         Emoji <span class="text-red-400">*</span>
@@ -1478,20 +1411,6 @@ def role_panel_create_page(
                         placeholder="Gamer"
                     >
                 </div>
-                <div class="w-20">
-                    <label class="block text-xs font-medium mb-1 text-gray-300">
-                        Position
-                    </label>
-                    <input
-                        type="number"
-                        name="item_position[]"
-                        value="${{index}}"
-                        min="0"
-                        class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded
-                               focus:outline-none focus:ring-2 focus:ring-blue-500
-                               text-gray-100 text-sm"
-                    >
-                </div>
                 <div>
                     <button
                         type="button"
@@ -1527,12 +1446,70 @@ def role_panel_create_page(
         roleItemsContainer.addEventListener('click', function(e) {{
             if (e.target.classList.contains('remove-role-item')) {{
                 e.target.closest('.role-item-row').remove();
+                updatePositions();
                 updateSubmitButton();
             }}
         }});
 
-        // フォーム送信前に最低1つのロールアイテムがあることを確認
+        // --- Drag and Drop functionality ---
+        let draggedItem = null;
+
+        roleItemsContainer.addEventListener('dragstart', function(e) {{
+            const row = e.target.closest('.role-item-row');
+            if (!row) return;
+            draggedItem = row;
+            row.classList.add('opacity-50');
+            e.dataTransfer.effectAllowed = 'move';
+        }});
+
+        roleItemsContainer.addEventListener('dragend', function(e) {{
+            const row = e.target.closest('.role-item-row');
+            if (row) {{
+                row.classList.remove('opacity-50');
+            }}
+            draggedItem = null;
+            // Remove all drag-over styles
+            document.querySelectorAll('.role-item-row').forEach(r => {{
+                r.classList.remove('border-t-2', 'border-blue-500');
+            }});
+        }});
+
+        roleItemsContainer.addEventListener('dragover', function(e) {{
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const row = e.target.closest('.role-item-row');
+            if (!row || row === draggedItem) return;
+
+            // Show drop indicator
+            document.querySelectorAll('.role-item-row').forEach(r => {{
+                r.classList.remove('border-t-2', 'border-blue-500');
+            }});
+            row.classList.add('border-t-2', 'border-blue-500');
+        }});
+
+        roleItemsContainer.addEventListener('drop', function(e) {{
+            e.preventDefault();
+            const row = e.target.closest('.role-item-row');
+            if (!row || !draggedItem || row === draggedItem) return;
+
+            // Insert dragged item before the target row
+            roleItemsContainer.insertBefore(draggedItem, row);
+            updatePositions();
+        }});
+
+        function updatePositions() {{
+            const rows = roleItemsContainer.querySelectorAll('.role-item-row');
+            rows.forEach((row, index) => {{
+                const posInput = row.querySelector('.position-input');
+                if (posInput) {{
+                    posInput.value = index;
+                }}
+            }});
+        }}
+
+        // フォーム送信前に最低1つのロールアイテムがあることを確認し、position を更新
         document.getElementById('createPanelForm').addEventListener('submit', function(e) {{
+            updatePositions();
             const itemCount = roleItemsContainer.querySelectorAll('.role-item-row').length;
             if (itemCount === 0) {{
                 e.preventDefault();
@@ -1576,11 +1553,15 @@ def role_panel_detail_page(
     error: str | None = None,
     success: str | None = None,
     discord_roles: list[tuple[str, str, int]] | None = None,
+    guild_name: str | None = None,
+    channel_name: str | None = None,
 ) -> str:
     """Role panel detail page template with item management.
 
     Args:
         discord_roles: [(role_id, role_name, color), ...] のリスト
+        guild_name: ギルド名 (キャッシュから取得)
+        channel_name: チャンネル名 (キャッシュから取得)
     """
     if discord_roles is None:
         discord_roles = []
@@ -1678,12 +1659,20 @@ def role_panel_detail_page(
                     {panel_type_badge}
                 </div>
                 <div>
-                    <span class="text-gray-400">Guild ID:</span>
-                    <span class="font-mono">{escape(panel.guild_id)}</span>
+                    <span class="text-gray-400">Server:</span>
+                    {
+        f'<span class="font-medium">{escape(guild_name)}</span><br><span class="font-mono text-xs text-gray-500">{escape(panel.guild_id)}</span>'
+        if guild_name
+        else f'<span class="font-mono text-yellow-400">{escape(panel.guild_id)}</span>'
+    }
                 </div>
                 <div>
-                    <span class="text-gray-400">Channel ID:</span>
-                    <span class="font-mono">{escape(panel.channel_id)}</span>
+                    <span class="text-gray-400">Channel:</span>
+                    {
+        f'<span class="font-medium">#{escape(channel_name)}</span><br><span class="font-mono text-xs text-gray-500">{escape(panel.channel_id)}</span>'
+        if channel_name
+        else f'<span class="font-mono text-yellow-400">{escape(panel.channel_id)}</span>'
+    }
                 </div>
                 <div>
                     <span class="text-gray-400">Message ID:</span>

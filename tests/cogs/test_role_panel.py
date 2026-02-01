@@ -2518,7 +2518,7 @@ class TestRoleSyncEventListeners:
         mock_upsert.assert_called_once()
 
     async def test_on_ready_syncs_all_guilds(self, mock_bot: MagicMock) -> None:
-        """on_ready が全ギルドのロールを同期する。"""
+        """on_ready が全ギルドの情報を同期する。"""
         from src.cogs.role_panel import RolePanelCog
 
         # 複数のギルドを設定
@@ -2534,36 +2534,58 @@ class TestRoleSyncEventListeners:
 
         cog = RolePanelCog(mock_bot)
 
-        with patch.object(
-            cog, "_sync_guild_roles", new_callable=AsyncMock
-        ) as mock_sync:
-            mock_sync.return_value = 5
+        with (
+            patch.object(
+                cog, "_sync_guild_info", new_callable=AsyncMock
+            ) as mock_sync_info,
+            patch.object(
+                cog, "_sync_guild_roles", new_callable=AsyncMock
+            ) as mock_sync_roles,
+            patch.object(
+                cog, "_sync_guild_channels", new_callable=AsyncMock
+            ) as mock_sync_channels,
+        ):
+            mock_sync_roles.return_value = 5
+            mock_sync_channels.return_value = 3
 
             await cog.on_ready()
 
-        assert mock_sync.call_count == 2
+        assert mock_sync_info.call_count == 2
+        assert mock_sync_roles.call_count == 2
+        assert mock_sync_channels.call_count == 2
 
     async def test_on_guild_join_syncs_roles(
         self, mock_bot: MagicMock, mock_guild: MagicMock
     ) -> None:
-        """on_guild_join が新しいギルドのロールを同期する。"""
+        """on_guild_join が新しいギルドの情報を同期する。"""
         from src.cogs.role_panel import RolePanelCog
 
         cog = RolePanelCog(mock_bot)
 
-        with patch.object(
-            cog, "_sync_guild_roles", new_callable=AsyncMock
-        ) as mock_sync:
-            mock_sync.return_value = 3
+        with (
+            patch.object(
+                cog, "_sync_guild_info", new_callable=AsyncMock
+            ) as mock_sync_info,
+            patch.object(
+                cog, "_sync_guild_roles", new_callable=AsyncMock
+            ) as mock_sync_roles,
+            patch.object(
+                cog, "_sync_guild_channels", new_callable=AsyncMock
+            ) as mock_sync_channels,
+        ):
+            mock_sync_roles.return_value = 3
+            mock_sync_channels.return_value = 5
 
             await cog.on_guild_join(mock_guild)
 
-        mock_sync.assert_called_once_with(mock_guild)
+        mock_sync_info.assert_called_once_with(mock_guild)
+        mock_sync_roles.assert_called_once_with(mock_guild)
+        mock_sync_channels.assert_called_once_with(mock_guild)
 
     async def test_on_guild_remove_deletes_cached_roles(
         self, mock_bot: MagicMock, mock_guild: MagicMock
     ) -> None:
-        """on_guild_remove がキャッシュされたロールを削除する。"""
+        """on_guild_remove がキャッシュされたロールとギルド情報を削除する。"""
         from src.cogs.role_panel import RolePanelCog
 
         cog = RolePanelCog(mock_bot)
@@ -2572,14 +2594,26 @@ class TestRoleSyncEventListeners:
             mock_db = AsyncMock()
             mock_session.return_value.__aenter__.return_value = mock_db
 
-            with patch(
-                "src.cogs.role_panel.delete_discord_roles_by_guild"
-            ) as mock_delete:
-                mock_delete.return_value = 5
+            with (
+                patch(
+                    "src.cogs.role_panel.delete_discord_roles_by_guild"
+                ) as mock_delete_roles,
+                patch(
+                    "src.cogs.role_panel.delete_discord_channels_by_guild"
+                ) as mock_delete_channels,
+                patch(
+                    "src.cogs.role_panel.delete_discord_guild"
+                ) as mock_delete_guild,
+            ):
+                mock_delete_roles.return_value = 5
+                mock_delete_channels.return_value = 3
+                mock_delete_guild.return_value = True
 
                 await cog.on_guild_remove(mock_guild)
 
-        mock_delete.assert_called_once_with(mock_db, str(mock_guild.id))
+        mock_delete_roles.assert_called_once_with(mock_db, str(mock_guild.id))
+        mock_delete_channels.assert_called_once_with(mock_db, str(mock_guild.id))
+        mock_delete_guild.assert_called_once_with(mock_db, str(mock_guild.id))
 
     async def test_on_guild_role_create_adds_role(
         self, mock_bot: MagicMock, mock_role: MagicMock
@@ -2812,6 +2846,654 @@ class TestRoleSyncEventListeners:
 
         assert count == 3
         assert mock_upsert.call_count == 3
+
+
+# =============================================================================
+# Guild Info and Channel Sync Event Listener Tests
+# =============================================================================
+
+
+class TestGuildInfoAndChannelSyncEventListeners:
+    """ギルド情報・チャンネル同期イベントリスナーのテスト。"""
+
+    @pytest.fixture
+    def mock_bot(self) -> MagicMock:
+        """Mock Bot."""
+        bot = MagicMock(spec=commands.Bot)
+        bot.user = MagicMock()
+        bot.user.id = 999
+        bot.guilds = []
+        return bot
+
+    @pytest.fixture
+    def mock_guild(self) -> MagicMock:
+        """Mock Discord Guild."""
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 456
+        guild.name = "Test Guild"
+        guild.icon = MagicMock()
+        guild.icon.key = "abc123"
+        guild.member_count = 100
+        guild.me = MagicMock()  # Bot 自身
+        guild.channels = []
+        return guild
+
+    @pytest.fixture
+    def mock_text_channel(self, mock_guild: MagicMock) -> MagicMock:
+        """Mock Discord Text Channel."""
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.id = 123
+        channel.name = "general"
+        channel.type = discord.ChannelType.text
+        channel.position = 0
+        channel.category_id = None
+        channel.guild = mock_guild
+        # permissions_for を設定
+        perms = MagicMock()
+        perms.view_channel = True
+        channel.permissions_for.return_value = perms
+        return channel
+
+    # -------------------------------------------------------------------------
+    # _sync_guild_info テスト
+    # -------------------------------------------------------------------------
+
+    async def test_sync_guild_info_upserts_guild(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """_sync_guild_info がギルド情報を upsert する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_guild") as mock_upsert:
+                await cog._sync_guild_info(mock_guild)
+
+        mock_upsert.assert_called_once_with(
+            mock_db,
+            guild_id=str(mock_guild.id),
+            guild_name=mock_guild.name,
+            icon_hash=mock_guild.icon.key,
+            member_count=mock_guild.member_count,
+        )
+
+    async def test_sync_guild_info_with_no_icon(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """_sync_guild_info がアイコンなしのギルドを処理する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        mock_guild.icon = None  # アイコンなし
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_guild") as mock_upsert:
+                await cog._sync_guild_info(mock_guild)
+
+        mock_upsert.assert_called_once_with(
+            mock_db,
+            guild_id=str(mock_guild.id),
+            guild_name=mock_guild.name,
+            icon_hash=None,
+            member_count=mock_guild.member_count,
+        )
+
+    async def test_sync_guild_info_with_zero_member_count(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """_sync_guild_info が member_count が None の場合 0 を使用する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        mock_guild.member_count = None
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_guild") as mock_upsert:
+                await cog._sync_guild_info(mock_guild)
+
+        mock_upsert.assert_called_once_with(
+            mock_db,
+            guild_id=str(mock_guild.id),
+            guild_name=mock_guild.name,
+            icon_hash=mock_guild.icon.key,
+            member_count=0,
+        )
+
+    # -------------------------------------------------------------------------
+    # _sync_guild_channels テスト
+    # -------------------------------------------------------------------------
+
+    async def test_sync_guild_channels_syncs_text_channel(
+        self, mock_bot: MagicMock, mock_guild: MagicMock, mock_text_channel: MagicMock
+    ) -> None:
+        """_sync_guild_channels がテキストチャンネルを同期する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        mock_guild.channels = [mock_text_channel]
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
+                count = await cog._sync_guild_channels(mock_guild)
+
+        assert count == 1
+        mock_upsert.assert_called_once_with(
+            mock_db,
+            guild_id=str(mock_guild.id),
+            channel_id=str(mock_text_channel.id),
+            channel_name=mock_text_channel.name,
+            channel_type=mock_text_channel.type.value,
+            position=mock_text_channel.position,
+            category_id=None,
+        )
+
+    async def test_sync_guild_channels_syncs_news_channel(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """_sync_guild_channels がニュース (アナウンス) チャンネルを同期する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        news_channel = MagicMock()
+        news_channel.id = 456
+        news_channel.name = "announcements"
+        news_channel.type = discord.ChannelType.news
+        news_channel.position = 1
+        news_channel.category_id = 789
+        news_channel.guild = mock_guild
+        perms = MagicMock()
+        perms.view_channel = True
+        news_channel.permissions_for.return_value = perms
+
+        mock_guild.channels = [news_channel]
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
+                count = await cog._sync_guild_channels(mock_guild)
+
+        assert count == 1
+        mock_upsert.assert_called_once()
+        call_args = mock_upsert.call_args
+        assert call_args.kwargs["channel_type"] == discord.ChannelType.news.value
+        assert call_args.kwargs["category_id"] == "789"
+
+    async def test_sync_guild_channels_syncs_forum_channel(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """_sync_guild_channels がフォーラムチャンネルを同期する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        forum_channel = MagicMock()
+        forum_channel.id = 789
+        forum_channel.name = "help-forum"
+        forum_channel.type = discord.ChannelType.forum
+        forum_channel.position = 2
+        forum_channel.category_id = None
+        forum_channel.guild = mock_guild
+        perms = MagicMock()
+        perms.view_channel = True
+        forum_channel.permissions_for.return_value = perms
+
+        mock_guild.channels = [forum_channel]
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
+                count = await cog._sync_guild_channels(mock_guild)
+
+        assert count == 1
+        mock_upsert.assert_called_once()
+        call_args = mock_upsert.call_args
+        assert call_args.kwargs["channel_type"] == discord.ChannelType.forum.value
+
+    async def test_sync_guild_channels_skips_voice_channel(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """_sync_guild_channels がボイスチャンネルをスキップする。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        voice_channel = MagicMock()
+        voice_channel.id = 111
+        voice_channel.name = "Voice"
+        voice_channel.type = discord.ChannelType.voice
+        voice_channel.guild = mock_guild
+        perms = MagicMock()
+        perms.view_channel = True
+        voice_channel.permissions_for.return_value = perms
+
+        mock_guild.channels = [voice_channel]
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
+                count = await cog._sync_guild_channels(mock_guild)
+
+        assert count == 0
+        mock_upsert.assert_not_called()
+
+    async def test_sync_guild_channels_skips_category(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """_sync_guild_channels がカテゴリーをスキップする。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        category = MagicMock()
+        category.id = 222
+        category.name = "Category"
+        category.type = discord.ChannelType.category
+        category.guild = mock_guild
+        perms = MagicMock()
+        perms.view_channel = True
+        category.permissions_for.return_value = perms
+
+        mock_guild.channels = [category]
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
+                count = await cog._sync_guild_channels(mock_guild)
+
+        assert count == 0
+        mock_upsert.assert_not_called()
+
+    async def test_sync_guild_channels_skips_no_view_permission(
+        self, mock_bot: MagicMock, mock_guild: MagicMock, mock_text_channel: MagicMock
+    ) -> None:
+        """_sync_guild_channels が Bot に閲覧権限のないチャンネルをスキップする。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        # Bot に view_channel 権限がない
+        perms = MagicMock()
+        perms.view_channel = False
+        mock_text_channel.permissions_for.return_value = perms
+
+        mock_guild.channels = [mock_text_channel]
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
+                count = await cog._sync_guild_channels(mock_guild)
+
+        assert count == 0
+        mock_upsert.assert_not_called()
+
+    async def test_sync_guild_channels_with_multiple_channels(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """_sync_guild_channels が複数の対象チャンネルを同期する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        channels = []
+        for i, (name, ch_type) in enumerate(
+            [
+                ("general", discord.ChannelType.text),
+                ("announcements", discord.ChannelType.news),
+                ("voice", discord.ChannelType.voice),  # スキップ対象
+                ("help", discord.ChannelType.forum),
+            ]
+        ):
+            ch = MagicMock()
+            ch.id = 100 + i
+            ch.name = name
+            ch.type = ch_type
+            ch.position = i
+            ch.category_id = None
+            ch.guild = mock_guild
+            perms = MagicMock()
+            perms.view_channel = True
+            ch.permissions_for.return_value = perms
+            channels.append(ch)
+
+        mock_guild.channels = channels
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
+                count = await cog._sync_guild_channels(mock_guild)
+
+        # text, news, forum の 3 つ (voice はスキップ)
+        assert count == 3
+        assert mock_upsert.call_count == 3
+
+    async def test_sync_guild_channels_with_empty_guild(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """_sync_guild_channels が空のギルドで 0 を返す。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        mock_guild.channels = []
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            count = await cog._sync_guild_channels(mock_guild)
+
+        assert count == 0
+
+    # -------------------------------------------------------------------------
+    # on_guild_update テスト
+    # -------------------------------------------------------------------------
+
+    async def test_on_guild_update_syncs_when_name_changes(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """on_guild_update がギルド名変更時に同期する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        before = MagicMock(spec=discord.Guild)
+        before.name = "Old Name"
+        before.icon = mock_guild.icon
+
+        mock_guild.name = "New Name"
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch.object(
+            cog, "_sync_guild_info", new_callable=AsyncMock
+        ) as mock_sync:
+            await cog.on_guild_update(before, mock_guild)
+
+        mock_sync.assert_called_once_with(mock_guild)
+
+    async def test_on_guild_update_syncs_when_icon_changes(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """on_guild_update がアイコン変更時に同期する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        before = MagicMock(spec=discord.Guild)
+        before.name = mock_guild.name
+        before.icon = MagicMock()
+        before.icon.key = "old_icon"
+
+        # 新しいアイコン
+        mock_guild.icon.key = "new_icon"
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch.object(
+            cog, "_sync_guild_info", new_callable=AsyncMock
+        ) as mock_sync:
+            await cog.on_guild_update(before, mock_guild)
+
+        mock_sync.assert_called_once_with(mock_guild)
+
+    async def test_on_guild_update_skips_when_no_change(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """on_guild_update が名前もアイコンも変更なしの場合スキップする。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        before = MagicMock(spec=discord.Guild)
+        before.name = mock_guild.name
+        before.icon = mock_guild.icon  # 同じアイコン
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch.object(
+            cog, "_sync_guild_info", new_callable=AsyncMock
+        ) as mock_sync:
+            await cog.on_guild_update(before, mock_guild)
+
+        mock_sync.assert_not_called()
+
+    # -------------------------------------------------------------------------
+    # on_guild_channel_create テスト
+    # -------------------------------------------------------------------------
+
+    async def test_on_guild_channel_create_adds_text_channel(
+        self, mock_bot: MagicMock, mock_text_channel: MagicMock
+    ) -> None:
+        """on_guild_channel_create がテキストチャンネルを追加する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
+                await cog.on_guild_channel_create(mock_text_channel)
+
+        mock_upsert.assert_called_once_with(
+            mock_db,
+            guild_id=str(mock_text_channel.guild.id),
+            channel_id=str(mock_text_channel.id),
+            channel_name=mock_text_channel.name,
+            channel_type=mock_text_channel.type.value,
+            position=mock_text_channel.position,
+            category_id=None,
+        )
+
+    async def test_on_guild_channel_create_skips_voice_channel(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """on_guild_channel_create がボイスチャンネルをスキップする。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        voice_channel = MagicMock()
+        voice_channel.type = discord.ChannelType.voice
+        voice_channel.guild = mock_guild
+        perms = MagicMock()
+        perms.view_channel = True
+        voice_channel.permissions_for.return_value = perms
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
+            await cog.on_guild_channel_create(voice_channel)
+
+        mock_upsert.assert_not_called()
+
+    async def test_on_guild_channel_create_skips_no_view_permission(
+        self, mock_bot: MagicMock, mock_text_channel: MagicMock
+    ) -> None:
+        """on_guild_channel_create が閲覧権限なしチャンネルをスキップする。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        perms = MagicMock()
+        perms.view_channel = False
+        mock_text_channel.permissions_for.return_value = perms
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
+            await cog.on_guild_channel_create(mock_text_channel)
+
+        mock_upsert.assert_not_called()
+
+    async def test_on_guild_channel_create_with_category(
+        self, mock_bot: MagicMock, mock_text_channel: MagicMock
+    ) -> None:
+        """on_guild_channel_create がカテゴリー ID を保存する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        mock_text_channel.category_id = 999
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
+                await cog.on_guild_channel_create(mock_text_channel)
+
+        call_args = mock_upsert.call_args
+        assert call_args.kwargs["category_id"] == "999"
+
+    # -------------------------------------------------------------------------
+    # on_guild_channel_update テスト
+    # -------------------------------------------------------------------------
+
+    async def test_on_guild_channel_update_updates_channel(
+        self, mock_bot: MagicMock, mock_text_channel: MagicMock
+    ) -> None:
+        """on_guild_channel_update がチャンネルを更新する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        before = MagicMock()
+        before.name = "old-name"
+
+        mock_text_channel.name = "new-name"
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
+                await cog.on_guild_channel_update(before, mock_text_channel)
+
+        mock_upsert.assert_called_once()
+        call_args = mock_upsert.call_args
+        assert call_args.kwargs["channel_name"] == "new-name"
+
+    async def test_on_guild_channel_update_deletes_when_type_changes_to_voice(
+        self, mock_bot: MagicMock, mock_text_channel: MagicMock
+    ) -> None:
+        """on_guild_channel_update がタイプが非対象に変わった場合削除する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        before = MagicMock()
+        before.type = discord.ChannelType.text
+
+        # タイプがボイスに変更
+        after = MagicMock()
+        after.type = discord.ChannelType.voice
+        after.guild = mock_text_channel.guild
+        after.id = mock_text_channel.id
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.delete_discord_channel") as mock_delete:
+                await cog.on_guild_channel_update(before, after)
+
+        mock_delete.assert_called_once_with(
+            mock_db, str(after.guild.id), str(after.id)
+        )
+
+    async def test_on_guild_channel_update_deletes_when_view_permission_lost(
+        self, mock_bot: MagicMock, mock_text_channel: MagicMock
+    ) -> None:
+        """on_guild_channel_update が閲覧権限がなくなった場合削除する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        before = MagicMock()
+
+        # 権限がなくなった
+        perms = MagicMock()
+        perms.view_channel = False
+        mock_text_channel.permissions_for.return_value = perms
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.delete_discord_channel") as mock_delete:
+                await cog.on_guild_channel_update(before, mock_text_channel)
+
+        mock_delete.assert_called_once_with(
+            mock_db, str(mock_text_channel.guild.id), str(mock_text_channel.id)
+        )
+
+    # -------------------------------------------------------------------------
+    # on_guild_channel_delete テスト
+    # -------------------------------------------------------------------------
+
+    async def test_on_guild_channel_delete_removes_channel(
+        self, mock_bot: MagicMock, mock_text_channel: MagicMock
+    ) -> None:
+        """on_guild_channel_delete がチャンネルを削除する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.delete_discord_channel") as mock_delete:
+                await cog.on_guild_channel_delete(mock_text_channel)
+
+        mock_delete.assert_called_once_with(
+            mock_db, str(mock_text_channel.guild.id), str(mock_text_channel.id)
+        )
+
+    async def test_on_guild_channel_delete_works_for_any_channel_type(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """on_guild_channel_delete が全てのチャンネルタイプで削除を試みる。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        # ボイスチャンネルでも削除は試みる（キャッシュにあれば削除）
+        voice_channel = MagicMock()
+        voice_channel.id = 333
+        voice_channel.type = discord.ChannelType.voice
+        voice_channel.guild = mock_guild
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.delete_discord_channel") as mock_delete:
+                await cog.on_guild_channel_delete(voice_channel)
+
+        # on_guild_channel_delete は常に削除を試みる
+        mock_delete.assert_called_once()
 
 
 # =============================================================================

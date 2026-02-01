@@ -787,6 +787,150 @@ class DiscordRole(Base):
         )
 
 
+class DiscordGuild(Base):
+    """Discord ギルド情報のキャッシュテーブル。
+
+    Bot が参加しているサーバーの情報を保存し、
+    Web 管理画面でギルド名を表示できるようにする。
+    Bot 起動時、サーバー参加時、サーバー情報変更時に同期される。
+
+    Attributes:
+        guild_id (str): Discord サーバーの ID (主キー)。
+        guild_name (str): サーバー名。
+        icon_hash (str | None): サーバーアイコンのハッシュ。
+        member_count (int): メンバー数 (概算)。
+        updated_at (datetime): 最終更新日時 (UTC)。
+
+    Notes:
+        - テーブル名: ``discord_guilds``
+        - guild_id が主キー (1ギルド1レコード)
+        - Bot 起動時に全ギルドを同期
+        - ギルド更新イベントで自動更新
+
+    Examples:
+        ギルド情報保存::
+
+            guild = DiscordGuild(
+                guild_id="123456789",
+                guild_name="My Server",
+                member_count=100,
+            )
+
+    See Also:
+        - :mod:`src.cogs.role_panel`: ロールパネル Cog
+        - :mod:`src.web.app`: Web 管理画面
+    """
+
+    __tablename__ = "discord_guilds"
+
+    # guild_id: Discord サーバーの ID (主キー)
+    guild_id: Mapped[str] = mapped_column(String, primary_key=True)
+
+    # guild_name: サーバー名
+    guild_name: Mapped[str] = mapped_column(String, nullable=False)
+
+    # icon_hash: サーバーアイコンのハッシュ (URL 生成用、None ならデフォルト)
+    icon_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # member_count: メンバー数 (概算、正確ではない場合あり)
+    member_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # updated_at: 最終更新日時 (UTC)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return f"<DiscordGuild(guild_id={self.guild_id}, name={self.guild_name})>"
+
+
+class DiscordChannel(Base):
+    """Discord チャンネル情報のキャッシュテーブル。
+
+    Bot が参加しているサーバーのテキストチャンネル情報を保存し、
+    Web 管理画面でチャンネル名を表示できるようにする。
+    テキストチャンネルのみ同期 (VC やカテゴリは除外)。
+
+    Attributes:
+        id (int): 自動採番の主キー。
+        guild_id (str): Discord サーバーの ID。インデックス付き。
+        channel_id (str): Discord チャンネルの ID。
+        channel_name (str): チャンネル名。
+        channel_type (int): チャンネルタイプ (0=テキスト, 5=アナウンス, 15=フォーラム)。
+        position (int): チャンネルの表示順序。
+        category_id (str | None): 親カテゴリの ID。
+        updated_at (datetime): 最終更新日時 (UTC)。
+
+    Notes:
+        - テーブル名: ``discord_channels``
+        - (guild_id, channel_id) でユニーク制約
+        - テキストチャンネル (type 0, 5, 15) のみ同期
+        - チャンネル作成/更新/削除イベントで自動更新
+
+    Examples:
+        チャンネル情報保存::
+
+            channel = DiscordChannel(
+                guild_id="123456789",
+                channel_id="987654321",
+                channel_name="general",
+                channel_type=0,
+                position=1,
+            )
+
+    See Also:
+        - :mod:`src.cogs.role_panel`: ロールパネル Cog
+        - :mod:`src.web.app`: Web 管理画面
+    """
+
+    __tablename__ = "discord_channels"
+    __table_args__ = (
+        # 同じギルドに同じチャンネル ID は 1 件のみ
+        UniqueConstraint("guild_id", "channel_id", name="uq_guild_channel"),
+    )
+
+    # id: 自動採番の主キー
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    # guild_id: Discord サーバーの ID
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+
+    # channel_id: Discord チャンネルの ID
+    channel_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+
+    # channel_name: チャンネル名
+    channel_name: Mapped[str] = mapped_column(String, nullable=False)
+
+    # channel_type: チャンネルタイプ (discord.ChannelType の値)
+    # 0=text, 5=news, 15=forum
+    channel_type: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # position: チャンネルの表示順序
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # category_id: 親カテゴリの ID (None ならカテゴリなし)
+    category_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # updated_at: 最終更新日時 (UTC)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return (
+            f"<DiscordChannel(id={self.id}, guild_id={self.guild_id}, "
+            f"channel_id={self.channel_id}, name={self.channel_name})>"
+        )
+
+
 class RolePanelItem(Base):
     """ロールパネルに設定されたロールのテーブル。
 

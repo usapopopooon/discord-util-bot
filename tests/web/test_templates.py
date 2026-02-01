@@ -490,6 +490,31 @@ class TestRolePanelCreatePage:
         assert '"name": "Gamer"' in result
         assert '"name": "Member"' in result
 
+    def test_contains_drag_handle_for_role_items(self) -> None:
+        """Role Items にドラッグハンドルが含まれる。"""
+        result = role_panel_create_page()
+        assert "drag-handle" in result
+        assert "cursor-grab" in result
+
+    def test_contains_hidden_position_input(self) -> None:
+        """Role Items に hidden の position 入力フィールドがある。"""
+        result = role_panel_create_page()
+        assert 'name="item_position[]"' in result
+        assert "position-input" in result
+
+    def test_contains_drag_and_drop_javascript(self) -> None:
+        """ドラッグ&ドロップ用の JavaScript が含まれる。"""
+        result = role_panel_create_page()
+        assert "dragstart" in result
+        assert "dragend" in result
+        assert "dragover" in result
+        assert "updatePositions" in result
+
+    def test_role_item_row_is_draggable(self) -> None:
+        """Role Item の行が draggable に設定される JavaScript が含まれる。"""
+        result = role_panel_create_page()
+        assert "row.draggable = true" in result
+
 
 class TestRolePanelDetailPage:
     """role_panel_detail_page テンプレートのテスト。"""
