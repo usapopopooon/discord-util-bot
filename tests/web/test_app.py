@@ -13,6 +13,8 @@ from src.database.models import (
     BumpConfig,
     BumpReminder,
     Lobby,
+    RolePanel,
+    RolePanelItem,
     StickyMessage,
 )
 from src.web.app import hash_password
@@ -2526,3 +2528,146 @@ class TestResendVerificationEmailFailure:
         response = await client.post("/resend-verification")
         assert response.status_code == 200
         assert "Failed to send verification email" in response.text
+
+
+# ===========================================================================
+# ロールパネルルート
+# ===========================================================================
+
+
+class TestRolePanelsRoutes:
+    """/rolepanels ルートのテスト。"""
+
+    async def test_rolepanels_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.get("/rolepanels", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_rolepanels_list_empty(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """ロールパネルがない場合は空メッセージが表示される。"""
+        response = await authenticated_client.get("/rolepanels")
+        assert response.status_code == 200
+        assert "No role panels" in response.text
+
+    async def test_rolepanels_list_with_data(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ロールパネルがある場合は一覧が表示される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Role Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/rolepanels")
+        assert response.status_code == 200
+        assert "Test Role Panel" in response.text
+        assert "123456789012345678" in response.text
+
+    async def test_rolepanels_list_with_items(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ロールパネルにアイテムがある場合は表示される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Panel with Items",
+        )
+        db_session.add(panel)
+        await db_session.flush()
+
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="111111111111111111",
+            emoji="🎮",
+            label="Gamer",
+            style="primary",
+        )
+        db_session.add(item)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/rolepanels")
+        assert response.status_code == 200
+        assert "Panel with Items" in response.text
+        assert "🎮" in response.text
+        assert "Gamer" in response.text
+
+    async def test_delete_rolepanel(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ロールパネルを削除できる。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="To Delete",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/rolepanels"
+
+    async def test_delete_nonexistent_rolepanel(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """存在しないロールパネルの削除はリダイレクトで返る。"""
+        response = await authenticated_client.post(
+            "/rolepanels/99999/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/rolepanels"
+
+    async def test_rolepanels_delete_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでロールパネル削除は /login にリダイレクトされる。"""
+        response = await client.post("/rolepanels/1/delete", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_rolepanels_shows_reaction_type(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """リアクション式パネルのバッジが表示される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Reaction Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/rolepanels")
+        assert response.status_code == 200
+        assert "Reaction Panel" in response.text
+        assert "Reaction" in response.text
+
+    async def test_rolepanels_shows_auto_remove_badge(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """リアクション自動削除バッジが表示される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Auto Remove Panel",
+            remove_reaction=True,
+        )
+        db_session.add(panel)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/rolepanels")
+        assert response.status_code == 200
+        assert "Auto-remove" in response.text

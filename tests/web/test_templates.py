@@ -11,6 +11,7 @@ from src.web.templates import (
     dashboard_page,
     lobbies_list_page,
     login_page,
+    role_panels_list_page,
     settings_page,
     sticky_list_page,
 )
@@ -310,3 +311,33 @@ class TestXSSProtection:
         """設定ページのメールアドレスで XSS がエスケープされる。"""
         result = settings_page(current_email=malicious_input)
         assert "<script>" not in result
+
+
+# ===========================================================================
+# ロールパネル一覧ページ
+# ===========================================================================
+
+
+class TestRolePanelsListPage:
+    """role_panels_list_page テンプレートのテスト。"""
+
+    def test_empty_list_message(self) -> None:
+        """空リストの場合はメッセージが表示される。"""
+        result = role_panels_list_page([], {})
+        assert "No role panels" in result
+
+    def test_contains_table_headers(self) -> None:
+        """テーブルヘッダーが含まれる。"""
+        result = role_panels_list_page([], {})
+        assert "Title" in result
+        assert "Type" in result
+        assert "Guild ID" in result
+        assert "Channel ID" in result
+        assert "Roles" in result
+        assert "Created" in result
+        assert "Actions" in result
+
+    def test_contains_rolepanels_link_in_dashboard(self) -> None:
+        """ダッシュボードに Role Panels リンクが含まれる。"""
+        result = dashboard_page()
+        assert "/rolepanels" in result

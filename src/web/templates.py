@@ -4,7 +4,14 @@ from html import escape
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.database.models import BumpConfig, BumpReminder, Lobby, StickyMessage
+    from src.database.models import (
+        BumpConfig,
+        BumpReminder,
+        Lobby,
+        RolePanel,
+        RolePanelItem,
+        StickyMessage,
+    )
 
 
 def _base(title: str, content: str) -> str:
@@ -280,6 +287,10 @@ def dashboard_page(email: str = "Admin") -> str:
             <a href="/bump" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
                 <h2 class="text-lg font-semibold mb-2">Bump Reminders</h2>
                 <p class="text-gray-400 text-sm">Manage bump settings</p>
+            </a>
+            <a href="/rolepanels" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
+                <h2 class="text-lg font-semibold mb-2">Role Panels</h2>
+                <p class="text-gray-400 text-sm">View role assignment panels</p>
             </a>
         </div>
     </div>
@@ -889,3 +900,110 @@ def bump_list_page(configs: list["BumpConfig"], reminders: list["BumpReminder"])
     </div>
     """
     return _base("Bump Reminders", content)
+
+
+def role_panels_list_page(
+    panels: list["RolePanel"],
+    items_by_panel: dict[int, list["RolePanelItem"]],
+) -> str:
+    """Role panels list page template."""
+    panel_rows = ""
+    for panel in panels:
+        panel_type_badge = (
+            '<span class="bg-blue-600 px-2 py-1 rounded text-xs">Button</span>'
+            if panel.panel_type == "button"
+            else '<span class="bg-purple-600 px-2 py-1 rounded text-xs">Reaction</span>'
+        )
+        remove_reaction_badge = ""
+        if panel.panel_type == "reaction" and panel.remove_reaction:
+            remove_reaction_badge = (
+                '<span class="bg-yellow-600 px-2 py-1 rounded text-xs ml-1">'
+                "Auto-remove</span>"
+            )
+
+        items = items_by_panel.get(panel.id, [])
+        items_html = ""
+        if items:
+            items_html = '<div class="flex flex-wrap gap-1 mt-2">'
+            for item in items:
+                label = escape(item.label) if item.label else ""
+                items_html += f"""
+                <span class="bg-gray-700 px-2 py-1 rounded text-xs">
+                    {escape(item.emoji)} {label}
+                </span>
+                """
+            items_html += "</div>"
+        else:
+            items_html = '<p class="text-gray-500 text-xs mt-2">No roles configured</p>'
+
+        created_at = (
+            panel.created_at.strftime("%Y-%m-%d %H:%M") if panel.created_at else "-"
+        )
+
+        panel_rows += f"""
+        <tr class="border-b border-gray-700">
+            <td class="py-3 px-4">
+                <div class="font-medium">{escape(panel.title)}</div>
+                <div class="text-gray-500 text-xs mt-1">
+                    {escape(panel.description or "")}
+                </div>
+            </td>
+            <td class="py-3 px-4">
+                {panel_type_badge}{remove_reaction_badge}
+            </td>
+            <td class="py-3 px-4 font-mono text-sm">{escape(panel.guild_id)}</td>
+            <td class="py-3 px-4 font-mono text-sm">{escape(panel.channel_id)}</td>
+            <td class="py-3 px-4">
+                <div class="text-sm">{len(items)} role(s)</div>
+                {items_html}
+            </td>
+            <td class="py-3 px-4 text-gray-400 text-sm">{created_at}</td>
+            <td class="py-3 px-4">
+                <form method="POST" action="/rolepanels/{panel.id}/delete"
+                      onsubmit="return confirm('Delete this role panel?');">
+                    <button type="submit"
+                            class="text-red-400 hover:text-red-300 text-sm">
+                        Delete
+                    </button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    if not panels:
+        panel_rows = """
+        <tr>
+            <td colspan="7" class="py-8 text-center text-gray-500">
+                No role panels. Create one with /rolepanel create in Discord.
+            </td>
+        </tr>
+        """
+
+    content = f"""
+    <div class="p-6">
+        {_nav("Role Panels")}
+
+        <div class="bg-gray-800 rounded-lg overflow-hidden">
+            <table class="w-full">
+                <thead class="bg-gray-700">
+                    <tr>
+                        <th class="py-3 px-4 text-left">Title</th>
+                        <th class="py-3 px-4 text-left">Type</th>
+                        <th class="py-3 px-4 text-left">Guild ID</th>
+                        <th class="py-3 px-4 text-left">Channel ID</th>
+                        <th class="py-3 px-4 text-left">Roles</th>
+                        <th class="py-3 px-4 text-left">Created</th>
+                        <th class="py-3 px-4 text-left">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {panel_rows}
+                </tbody>
+            </table>
+        </div>
+        <p class="mt-4 text-gray-500 text-sm">
+            Role panels are created via Discord command: /rolepanel create
+        </p>
+    </div>
+    """
+    return _base("Role Panels", content)

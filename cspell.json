@@ -67,7 +67,8 @@
     "nohup",
     "Reposted",
     "capsys",
-    "rolepanel"
+    "rolepanel",
+    "rolepanels"
   ],
   "ignorePaths": [
     ".venv",

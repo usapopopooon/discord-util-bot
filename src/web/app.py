@@ -36,6 +36,8 @@ from src.database.models import (
     BumpConfig,
     BumpReminder,
     Lobby,
+    RolePanel,
+    RolePanelItem,
     StickyMessage,
 )
 from src.web.email_service import (
@@ -53,6 +55,7 @@ from src.web.templates import (
     login_page,
     password_change_page,
     reset_password_page,
+    role_panels_list_page,
     settings_page,
     sticky_list_page,
 )
@@ -1179,3 +1182,51 @@ async def bump_reminder_toggle(
         reminder.is_enabled = not reminder.is_enabled
         await db.commit()
     return RedirectResponse(url="/bump", status_code=302)
+
+
+# -----------------------------------------------------------------------------
+# Role Panels 管理
+# -----------------------------------------------------------------------------
+
+
+@app.get("/rolepanels", response_model=None)
+async def rolepanels_list(
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """List all role panels."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # パネル一覧を取得 (アイテムも一緒に取得)
+    result = await db.execute(
+        select(RolePanel)
+        .options(selectinload(RolePanel.items))
+        .order_by(RolePanel.created_at.desc())
+    )
+    panels = list(result.scalars().all())
+
+    # パネルID -> アイテムリストのマップを作成
+    items_by_panel: dict[int, list[RolePanelItem]] = {}
+    for panel in panels:
+        items_by_panel[panel.id] = sorted(panel.items, key=lambda x: x.position)
+
+    return HTMLResponse(content=role_panels_list_page(panels, items_by_panel))
+
+
+@app.post("/rolepanels/{panel_id}/delete", response_model=None)
+async def rolepanel_delete(
+    panel_id: int,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Delete a role panel."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    result = await db.execute(select(RolePanel).where(RolePanel.id == panel_id))
+    panel = result.scalar_one_or_none()
+    if panel:
+        await db.delete(panel)
+        await db.commit()
+    return RedirectResponse(url="/rolepanels", status_code=302)
