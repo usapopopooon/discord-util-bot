@@ -943,7 +943,10 @@ def role_panels_list_page(
         panel_rows += f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4">
-                <div class="font-medium">{escape(panel.title)}</div>
+                <a href="/rolepanels/{panel.id}"
+                   class="font-medium text-blue-400 hover:text-blue-300">
+                    {escape(panel.title)}
+                </a>
                 <div class="text-gray-500 text-xs mt-1">
                     {escape(panel.description or "")}
                 </div>
@@ -959,13 +962,19 @@ def role_panels_list_page(
             </td>
             <td class="py-3 px-4 text-gray-400 text-sm">{created_at}</td>
             <td class="py-3 px-4">
-                <form method="POST" action="/rolepanels/{panel.id}/delete"
-                      onsubmit="return confirm('Delete this role panel?');">
-                    <button type="submit"
-                            class="text-red-400 hover:text-red-300 text-sm">
-                        Delete
-                    </button>
-                </form>
+                <div class="flex gap-2">
+                    <a href="/rolepanels/{panel.id}"
+                       class="text-blue-400 hover:text-blue-300 text-sm">
+                        Edit
+                    </a>
+                    <form method="POST" action="/rolepanels/{panel.id}/delete"
+                          onsubmit="return confirm('Delete this role panel?');">
+                        <button type="submit"
+                                class="text-red-400 hover:text-red-300 text-sm">
+                            Delete
+                        </button>
+                    </form>
+                </div>
             </td>
         </tr>
         """
@@ -1010,7 +1019,7 @@ def role_panels_list_page(
             </table>
         </div>
         <p class="mt-4 text-gray-500 text-sm">
-            After creating a panel, add roles using /rolepanel add in Discord.
+            Click on a panel title to add/manage roles, or use /rolepanel add in Discord.
         </p>
     </div>
     """
@@ -1024,8 +1033,19 @@ def role_panel_create_page(
     panel_type: str = "button",
     title: str = "",
     description: str = "",
+    guild_channels: dict[str, list[str]] | None = None,
+    discord_roles: dict[str, list[tuple[str, str, int]]] | None = None,
 ) -> str:
-    """Role panel create page template."""
+    """Role panel create page template.
+
+    Args:
+        discord_roles: ギルドID -> [(role_id, role_name, color), ...] のマッピング
+    """
+    if guild_channels is None:
+        guild_channels = {}
+    if discord_roles is None:
+        discord_roles = {}
+
     message_html = ""
     if error:
         message_html = f"""
@@ -1038,17 +1058,52 @@ def role_panel_create_page(
     button_selected = "checked" if panel_type == "button" else ""
     reaction_selected = "checked" if panel_type == "reaction" else ""
 
+    # Guild select options
+    guild_options = ""
+    for gid in guild_channels:
+        selected = "selected" if gid == guild_id else ""
+        guild_options += (
+            f'<option value="{escape(gid)}" {selected}>{escape(gid)}</option>\n'
+        )
+
+    # 既知のギルド以外が指定されている場合は「その他」を選択
+    guild_is_other = guild_id and guild_id not in guild_channels
+    other_selected = "selected" if guild_is_other else ""
+
+    # Channel/Role データを JavaScript 用に JSON 化
+    import json
+
+    guild_channels_json = json.dumps(guild_channels)
+    # discord_roles は {guild_id: [(role_id, role_name, color), ...]} なので
+    # JavaScript で使いやすい形式に変換: {guild_id: [{id, name, color}, ...]}
+    discord_roles_for_js: dict[str, list[dict[str, str | int]]] = {}
+    for gid, roles in discord_roles.items():
+        discord_roles_for_js[gid] = [
+            {"id": r[0], "name": r[1], "color": r[2]} for r in roles
+        ]
+    discord_roles_json = json.dumps(discord_roles_for_js)
+
     content = f"""
     <div class="p-6">
         {_nav("Create Role Panel")}
         <div class="max-w-lg">
             <div class="bg-gray-800 p-6 rounded-lg">
                 {message_html}
-                <form method="POST" action="/rolepanels/new">
+                <form method="POST" action="/rolepanels/new" id="createPanelForm">
                     <div class="mb-4">
-                        <label for="guild_id" class="block text-sm font-medium mb-2">
+                        <label for="guild_select" class="block text-sm font-medium mb-2">
                             Guild ID <span class="text-red-400">*</span>
                         </label>
+                        <select
+                            id="guild_select"
+                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500
+                                   text-gray-100 font-mono mb-2"
+                        >
+                            <option value="">-- Select Guild --</option>
+                            {guild_options}
+                            <option value="__other__" {other_selected}>Other (enter manually)</option>
+                        </select>
                         <input
                             type="text"
                             id="guild_id"
@@ -1058,8 +1113,9 @@ def role_panel_create_page(
                             pattern="[0-9]+"
                             class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
                                    focus:outline-none focus:ring-2 focus:ring-blue-500
-                                   text-gray-100 font-mono"
+                                   text-gray-100 font-mono {"hidden" if not guild_is_other and guild_id in guild_channels else ""}"
                             placeholder="123456789012345678"
+                            id="guild_id_input"
                         >
                         <p class="text-gray-500 text-xs mt-1">
                             Discord server ID (enable Developer Mode in Discord settings)
@@ -1067,9 +1123,18 @@ def role_panel_create_page(
                     </div>
 
                     <div class="mb-4">
-                        <label for="channel_id" class="block text-sm font-medium mb-2">
+                        <label for="channel_select" class="block text-sm font-medium mb-2">
                             Channel ID <span class="text-red-400">*</span>
                         </label>
+                        <select
+                            id="channel_select"
+                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500
+                                   text-gray-100 font-mono mb-2"
+                        >
+                            <option value="">-- Select Channel --</option>
+                            <option value="__other__">Other (enter manually)</option>
+                        </select>
                         <input
                             type="text"
                             id="channel_id"
@@ -1144,16 +1209,49 @@ def role_panel_create_page(
                         >{escape(description)}</textarea>
                     </div>
 
+                    <!-- Role Items Section -->
+                    <div class="mb-6 border-t border-gray-600 pt-6">
+                        <div class="flex justify-between items-center mb-4">
+                            <label class="block text-sm font-medium">
+                                Role Items <span class="text-red-400">*</span>
+                            </label>
+                            <button
+                                type="button"
+                                id="addRoleItemBtn"
+                                class="bg-green-600 hover:bg-green-700 text-white text-sm
+                                       py-1 px-3 rounded transition-colors disabled:opacity-50
+                                       disabled:cursor-not-allowed disabled:hover:bg-green-600"
+                            >
+                                + Add Role
+                            </button>
+                        </div>
+                        <p class="text-gray-500 text-xs mb-4">
+                            Add at least one role for users to select.
+                        </p>
+                        <p id="noKnownRolesInfo" class="text-red-400 text-xs mb-4 hidden">
+                            No roles found for this guild. Please sync roles by starting the Bot first.
+                        </p>
+                        <div id="roleItemsContainer" class="space-y-3">
+                            <!-- Role item rows will be added here by JavaScript -->
+                        </div>
+                        <p id="noRolesWarning" class="text-yellow-400 text-sm mt-2">
+                            Please add at least one role item before creating the panel.
+                        </p>
+                    </div>
+
                     <button
                         type="submit"
+                        id="submitBtn"
                         class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium
-                               py-2 px-4 rounded transition-colors"
+                               py-2 px-4 rounded transition-colors disabled:opacity-50
+                               disabled:cursor-not-allowed"
+                        disabled
                     >
                         Create Panel
                     </button>
                 </form>
                 <p class="mt-4 text-gray-500 text-sm">
-                    After creating the panel, add roles using /rolepanel add in Discord.
+                    The panel will be created with the roles you add above.
                 </p>
                 <div class="mt-4">
                     <a href="/rolepanels" class="text-gray-400 hover:text-white text-sm">
@@ -1163,5 +1261,584 @@ def role_panel_create_page(
             </div>
         </div>
     </div>
+
+    <script>
+    (function() {{
+        const guildChannels = {guild_channels_json};
+        const guildSelect = document.getElementById('guild_select');
+        const guildIdInput = document.getElementById('guild_id');
+        const channelSelect = document.getElementById('channel_select');
+        const channelIdInput = document.getElementById('channel_id');
+
+        // 初期値を保存
+        const initialGuildId = guildIdInput.value;
+        const initialChannelId = channelIdInput.value;
+
+        function updateChannelOptions(selectedGuildId) {{
+            // チャンネル選択をリセット
+            channelSelect.innerHTML = '<option value="">-- Select Channel --</option>';
+
+            if (selectedGuildId && selectedGuildId !== '__other__' && guildChannels[selectedGuildId]) {{
+                const channels = guildChannels[selectedGuildId];
+                channels.forEach(function(ch) {{
+                    const option = document.createElement('option');
+                    option.value = ch;
+                    option.textContent = ch;
+                    if (ch === initialChannelId) {{
+                        option.selected = true;
+                    }}
+                    channelSelect.appendChild(option);
+                }});
+            }}
+
+            // 「その他」オプションを追加
+            const otherOption = document.createElement('option');
+            otherOption.value = '__other__';
+            otherOption.textContent = 'Other (enter manually)';
+            channelSelect.appendChild(otherOption);
+
+            // チャンネル入力欄の表示/非表示を更新
+            updateChannelInputVisibility();
+        }}
+
+        function updateGuildInputVisibility() {{
+            const selectedValue = guildSelect.value;
+            if (selectedValue === '__other__' || selectedValue === '') {{
+                guildIdInput.classList.remove('hidden');
+                if (selectedValue === '__other__') {{
+                    guildIdInput.value = '';
+                    guildIdInput.focus();
+                }}
+            }} else {{
+                guildIdInput.classList.add('hidden');
+                guildIdInput.value = selectedValue;
+            }}
+        }}
+
+        function updateChannelInputVisibility() {{
+            const selectedValue = channelSelect.value;
+            if (selectedValue === '__other__' || selectedValue === '') {{
+                channelIdInput.classList.remove('hidden');
+                if (selectedValue === '__other__') {{
+                    channelIdInput.value = '';
+                    channelIdInput.focus();
+                }}
+            }} else {{
+                channelIdInput.classList.add('hidden');
+                channelIdInput.value = selectedValue;
+            }}
+        }}
+
+        // ギルド選択変更時
+        guildSelect.addEventListener('change', function() {{
+            updateGuildInputVisibility();
+            updateChannelOptions(this.value);
+            // ロール情報の更新は後で定義される関数を呼び出す
+            if (typeof updateRolesInfo === 'function') {{
+                updateRolesInfo();
+            }}
+        }});
+
+        // ギルドID手入力変更時もロール情報を更新
+        guildIdInput.addEventListener('input', function() {{
+            if (typeof updateRolesInfo === 'function') {{
+                updateRolesInfo();
+            }}
+        }});
+
+        // チャンネル選択変更時
+        channelSelect.addEventListener('change', function() {{
+            updateChannelInputVisibility();
+        }});
+
+        // 初期状態を設定
+        if (initialGuildId) {{
+            // 既知のギルドかチェック
+            if (guildChannels[initialGuildId]) {{
+                guildSelect.value = initialGuildId;
+                guildIdInput.classList.add('hidden');
+            }} else {{
+                guildSelect.value = '__other__';
+                guildIdInput.classList.remove('hidden');
+            }}
+            updateChannelOptions(initialGuildId);
+
+            // 既知のチャンネルかチェック
+            if (initialChannelId && guildChannels[initialGuildId] &&
+                guildChannels[initialGuildId].includes(initialChannelId)) {{
+                channelSelect.value = initialChannelId;
+                channelIdInput.classList.add('hidden');
+            }} else if (initialChannelId) {{
+                channelSelect.value = '__other__';
+                channelIdInput.classList.remove('hidden');
+            }}
+        }}
+
+        // --- Role Items Management ---
+        const discordRoles = {discord_roles_json};
+        const roleItemsContainer = document.getElementById('roleItemsContainer');
+        const addRoleItemBtn = document.getElementById('addRoleItemBtn');
+        const submitBtn = document.getElementById('submitBtn');
+        const noRolesWarning = document.getElementById('noRolesWarning');
+        const noKnownRolesInfo = document.getElementById('noKnownRolesInfo');
+        let roleItemIndex = 0;
+
+        function updateSubmitButton() {{
+            const itemCount = roleItemsContainer.querySelectorAll('.role-item-row').length;
+            submitBtn.disabled = itemCount === 0;
+            noRolesWarning.classList.toggle('hidden', itemCount > 0);
+        }}
+
+        function updateRolesInfo() {{
+            const availableRoles = getRolesForCurrentGuild();
+            const hasRoles = availableRoles.length > 0;
+            noKnownRolesInfo.classList.toggle('hidden', hasRoles);
+            // ロールがない場合は Add Role ボタンを非活性化
+            addRoleItemBtn.disabled = !hasRoles;
+        }}
+
+        function getCurrentGuildId() {{
+            const selectValue = guildSelect.value;
+            if (selectValue === '__other__' || selectValue === '') {{
+                return guildIdInput.value;
+            }}
+            return selectValue;
+        }}
+
+        function getRolesForCurrentGuild() {{
+            const currentGuildId = getCurrentGuildId();
+            return discordRoles[currentGuildId] || [];
+        }}
+
+        // ロールの色を CSS 色文字列に変換
+        function colorToHex(color) {{
+            if (!color) return '#99aab5';  // デフォルトグレー
+            return '#' + color.toString(16).padStart(6, '0');
+        }}
+
+        function createRoleItemRow(index) {{
+            const row = document.createElement('div');
+            row.className = 'role-item-row bg-gray-700 p-4 rounded flex flex-wrap gap-3 items-end';
+
+            const availableRoles = getRolesForCurrentGuild();
+            let roleSelectHtml = '';
+            if (availableRoles.length > 0) {{
+                const roleOptions = availableRoles.map(r => {{
+                    const colorStyle = r.color ? `style="color: ${{colorToHex(r.color)}}"` : '';
+                    return `<option value="${{r.id}}" ${{colorStyle}}>@${{r.name}}</option>`;
+                }}).join('');
+                roleSelectHtml = `
+                    <select class="role-select w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500
+                                   text-gray-100 text-sm" required>
+                        <option value="">-- Select Role --</option>
+                        ${{roleOptions}}
+                    </select>
+                `;
+            }}
+
+            row.innerHTML = `
+                <div class="flex-1 min-w-[80px]">
+                    <label class="block text-xs font-medium mb-1 text-gray-300">
+                        Emoji <span class="text-red-400">*</span>
+                    </label>
+                    <input
+                        type="text"
+                        name="item_emoji[]"
+                        required
+                        maxlength="64"
+                        class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded
+                               focus:outline-none focus:ring-2 focus:ring-blue-500
+                               text-gray-100 text-sm"
+                        placeholder="🎮"
+                    >
+                </div>
+                <div class="flex-[2] min-w-[160px]">
+                    <label class="block text-xs font-medium mb-1 text-gray-300">
+                        Role <span class="text-red-400">*</span>
+                    </label>
+                    ${{roleSelectHtml}}
+                    <input
+                        type="hidden"
+                        name="item_role_id[]"
+                        class="role-id-input"
+                    >
+                </div>
+                <div class="label-field flex-[2] min-w-[120px]">
+                    <label class="block text-xs font-medium mb-1 text-gray-300">
+                        Label
+                    </label>
+                    <input
+                        type="text"
+                        name="item_label[]"
+                        maxlength="80"
+                        class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded
+                               focus:outline-none focus:ring-2 focus:ring-blue-500
+                               text-gray-100 text-sm"
+                        placeholder="Gamer"
+                    >
+                </div>
+                <div class="w-20">
+                    <label class="block text-xs font-medium mb-1 text-gray-300">
+                        Position
+                    </label>
+                    <input
+                        type="number"
+                        name="item_position[]"
+                        value="${{index}}"
+                        min="0"
+                        class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded
+                               focus:outline-none focus:ring-2 focus:ring-blue-500
+                               text-gray-100 text-sm"
+                    >
+                </div>
+                <div>
+                    <button
+                        type="button"
+                        class="remove-role-item bg-red-600 hover:bg-red-700 text-white
+                               py-2 px-3 rounded transition-colors text-sm"
+                        title="Remove"
+                    >
+                        &times;
+                    </button>
+                </div>
+            `;
+
+            // ロールセレクト変更時のイベント
+            const roleSelect = row.querySelector('.role-select');
+            const roleIdInput = row.querySelector('.role-id-input');
+            if (roleSelect) {{
+                roleSelect.addEventListener('change', function() {{
+                    roleIdInput.value = this.value;
+                }});
+            }}
+
+            return row;
+        }}
+
+        addRoleItemBtn.addEventListener('click', function() {{
+            const row = createRoleItemRow(roleItemIndex++);
+            roleItemsContainer.appendChild(row);
+            updateSubmitButton();
+            // Focus the emoji input of the new row
+            row.querySelector('input[name="item_emoji[]"]').focus();
+        }});
+
+        roleItemsContainer.addEventListener('click', function(e) {{
+            if (e.target.classList.contains('remove-role-item')) {{
+                e.target.closest('.role-item-row').remove();
+                updateSubmitButton();
+            }}
+        }});
+
+        // フォーム送信前に最低1つのロールアイテムがあることを確認
+        document.getElementById('createPanelForm').addEventListener('submit', function(e) {{
+            const itemCount = roleItemsContainer.querySelectorAll('.role-item-row').length;
+            if (itemCount === 0) {{
+                e.preventDefault();
+                alert('Please add at least one role item before creating the panel.');
+                return false;
+            }}
+        }});
+
+        // --- Label フィールドの表示/非表示 (reaction の場合は非表示) ---
+        function isButtonType() {{
+            const panelTypeRadio = document.querySelector('input[name="panel_type"]:checked');
+            return panelTypeRadio && panelTypeRadio.value === 'button';
+        }}
+
+        function updateLabelFieldsVisibility() {{
+            const showLabel = isButtonType();
+            const labelFields = document.querySelectorAll('.label-field');
+            labelFields.forEach(field => {{
+                field.style.display = showLabel ? '' : 'none';
+            }});
+        }}
+
+        // panel_type が変更されたときにラベルフィールドの表示を更新
+        document.querySelectorAll('input[name="panel_type"]').forEach(radio => {{
+            radio.addEventListener('change', updateLabelFieldsVisibility);
+        }});
+
+        // 初期状態を設定
+        updateSubmitButton();
+        updateRolesInfo();
+        updateLabelFieldsVisibility();
+    }})();
+    </script>
     """
     return _base("Create Role Panel", content)
+
+
+def role_panel_detail_page(
+    panel: "RolePanel",
+    items: list["RolePanelItem"],
+    error: str | None = None,
+    success: str | None = None,
+    discord_roles: list[tuple[str, str, int]] | None = None,
+) -> str:
+    """Role panel detail page template with item management.
+
+    Args:
+        discord_roles: [(role_id, role_name, color), ...] のリスト
+    """
+    if discord_roles is None:
+        discord_roles = []
+
+    message_html = ""
+    if error:
+        message_html = f"""
+        <div class="bg-red-500/20 border border-red-500 text-red-300 px-4 py-3 rounded mb-4">
+            {escape(error)}
+        </div>
+        """
+    elif success:
+        message_html = f"""
+        <div class="bg-green-500/20 border border-green-500 text-green-300 px-4 py-3 rounded mb-4">
+            {escape(success)}
+        </div>
+        """
+
+    panel_type_badge = (
+        '<span class="bg-blue-600 px-2 py-1 rounded text-xs">Button</span>'
+        if panel.panel_type == "button"
+        else '<span class="bg-purple-600 px-2 py-1 rounded text-xs">Reaction</span>'
+    )
+
+    # ロールID -> ロール情報のマップを作成
+    role_info_map: dict[str, tuple[str, int]] = {
+        r[0]: (r[1], r[2]) for r in discord_roles
+    }
+
+    # ボタン式の場合のみラベルを表示
+    is_button_type = panel.panel_type == "button"
+
+    # Build items table
+    items_rows = ""
+    for item in items:
+        label_display = escape(item.label) if item.label else "(no label)"
+        # ロール名を表示（存在する場合）
+        role_info = role_info_map.get(item.role_id)
+        if role_info:
+            role_name, role_color = role_info
+            color_hex = f"#{role_color:06x}" if role_color else "#99aab5"
+            role_display = (
+                f'<span style="color: {color_hex}">@{escape(role_name)}</span>'
+            )
+            role_id_display = f'{role_display}<br><span class="font-mono text-xs text-gray-500">{escape(item.role_id)}</span>'
+        else:
+            role_id_display = f'<span class="font-mono">{escape(item.role_id)}</span>'
+
+        label_cell = (
+            f'<td class="py-3 px-4">{label_display}</td>' if is_button_type else ""
+        )
+        items_rows += f"""
+        <tr class="border-b border-gray-700">
+            <td class="py-3 px-4 text-xl">{escape(item.emoji)}</td>
+            <td class="py-3 px-4">{role_id_display}</td>
+            {label_cell}
+            <td class="py-3 px-4">{item.position}</td>
+            <td class="py-3 px-4">
+                <form method="POST" action="/rolepanels/{panel.id}/items/{item.id}/delete"
+                      onsubmit="return confirm('Delete this role item?');">
+                    <button type="submit"
+                            class="text-red-400 hover:text-red-300 text-sm">
+                        Delete
+                    </button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    col_count = 5 if is_button_type else 4
+    if not items:
+        items_rows = f"""
+        <tr>
+            <td colspan="{col_count}" class="py-8 text-center text-gray-500">
+                No roles configured. Add roles below.
+            </td>
+        </tr>
+        """
+
+    # Next position for new item
+    next_position = max((item.position for item in items), default=-1) + 1
+
+    content = f"""
+    <div class="p-6">
+        {_nav(f"Panel: {escape(panel.title)}")}
+
+        {message_html}
+
+        <!-- Panel Info -->
+        <div class="bg-gray-800 p-6 rounded-lg mb-6">
+            <h2 class="text-lg font-semibold mb-4">Panel Information</h2>
+            <div class="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                    <span class="text-gray-400">Type:</span>
+                    {panel_type_badge}
+                </div>
+                <div>
+                    <span class="text-gray-400">Guild ID:</span>
+                    <span class="font-mono">{escape(panel.guild_id)}</span>
+                </div>
+                <div>
+                    <span class="text-gray-400">Channel ID:</span>
+                    <span class="font-mono">{escape(panel.channel_id)}</span>
+                </div>
+                <div>
+                    <span class="text-gray-400">Message ID:</span>
+                    <span class="font-mono">{
+        escape(panel.message_id or "(not posted)")
+    }</span>
+                </div>
+            </div>
+            <div class="mt-4">
+                <span class="text-gray-400">Description:</span>
+                <p class="mt-1">{escape(panel.description or "(no description)")}</p>
+            </div>
+        </div>
+
+        <!-- Role Items -->
+        <div class="bg-gray-800 p-6 rounded-lg mb-6">
+            <h2 class="text-lg font-semibold mb-4">Role Items ({len(items)})</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-700">
+                        <tr>
+                            <th class="py-3 px-4 text-left">Emoji</th>
+                            <th class="py-3 px-4 text-left">Role</th>
+                            {
+        "" if not is_button_type else '<th class="py-3 px-4 text-left">Label</th>'
+    }
+                            <th class="py-3 px-4 text-left">Position</th>
+                            <th class="py-3 px-4 text-left">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {items_rows}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Add Role Item Form -->
+        <div class="bg-gray-800 p-6 rounded-lg">
+            <h2 class="text-lg font-semibold mb-4">Add Role Item</h2>
+            <form method="POST" action="/rolepanels/{panel.id}/items/add">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                    <div>
+                        <label for="emoji" class="block text-sm font-medium mb-2">
+                            Emoji <span class="text-red-400">*</span>
+                        </label>
+                        <input
+                            type="text"
+                            id="emoji"
+                            name="emoji"
+                            required
+                            maxlength="64"
+                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500
+                                   text-gray-100"
+                            placeholder="🎮 or custom emoji"
+                        >
+                    </div>
+                    <div>
+                        <label for="role_select" class="block text-sm font-medium mb-2">
+                            Role <span class="text-red-400">*</span>
+                        </label>
+                        {
+        ""
+        if not discord_roles
+        else f'''
+                        <select
+                            id="role_select"
+                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500
+                                   text-gray-100"
+                            required
+                        >
+                            <option value="">-- Select Role --</option>
+                            {"".join(f'<option value="{escape(r[0])}" style="color: #{r[2] if r[2] else 0x99AAB5:06x}">@{escape(r[1])}</option>' for r in discord_roles)}
+                        </select>
+                        <input type="hidden" id="role_id" name="role_id">
+                        '''
+    }
+                    </div>
+                    {
+        '''<div>
+                        <label for="label" class="block text-sm font-medium mb-2">
+                            Label (for buttons)
+                        </label>
+                        <input
+                            type="text"
+                            id="label"
+                            name="label"
+                            maxlength="80"
+                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500
+                                   text-gray-100"
+                            placeholder="Gamer"
+                        >
+                    </div>'''
+        if is_button_type
+        else ""
+    }
+                    <div>
+                        <label for="position" class="block text-sm font-medium mb-2">
+                            Position
+                        </label>
+                        <input
+                            type="number"
+                            id="position"
+                            name="position"
+                            value="{next_position}"
+                            min="0"
+                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500
+                                   text-gray-100"
+                        >
+                    </div>
+                </div>
+                <button
+                    type="submit"
+                    class="bg-green-600 hover:bg-green-700 text-white font-medium
+                           py-2 px-4 rounded transition-colors disabled:opacity-50
+                           disabled:cursor-not-allowed disabled:hover:bg-green-600"
+                    {"disabled" if not discord_roles else ""}
+                >
+                    Add Role Item
+                </button>
+            </form>
+            {
+        ""
+        if discord_roles
+        else '<p class="mt-2 text-red-400 text-sm">No roles found for this guild. Please sync roles by starting the Bot first.</p>'
+    }
+        </div>
+
+        <div class="mt-6">
+            <a href="/rolepanels" class="text-gray-400 hover:text-white text-sm">
+                &larr; Back to role panels
+            </a>
+        </div>
+    </div>
+    {
+        ""
+        if not discord_roles
+        else '''
+    <script>
+    (function() {
+        const roleSelect = document.getElementById("role_select");
+        const roleIdInput = document.getElementById("role_id");
+
+        if (roleSelect) {
+            roleSelect.addEventListener("change", function() {
+                roleIdInput.value = this.value;
+            });
+        }
+    })();
+    </script>
+    '''
+    }
+    """
+    return _base(f"Panel: {panel.title}", content)

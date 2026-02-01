@@ -13,6 +13,7 @@ from src.database.models import (
     AdminUser,
     BumpConfig,
     BumpReminder,
+    DiscordRole,
     Lobby,
     RolePanel,
     RolePanelItem,
@@ -2728,19 +2729,25 @@ class TestRolePanelCreateRoutes:
         self, authenticated_client: AsyncClient, db_session: AsyncSession
     ) -> None:
         """パネルを正常に作成できる。"""
+        # Form data with array fields
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "button",
+            "title": "New Test Panel",
+            "description": "Test description",
+            "item_emoji[]": "🎮",
+            "item_role_id[]": "111222333444555666",
+            "item_label[]": "Gamer",
+            "item_position[]": "0",
+        }
         response = await authenticated_client.post(
             "/rolepanels/new",
-            data={
-                "guild_id": "123456789012345678",
-                "channel_id": "987654321098765432",
-                "panel_type": "button",
-                "title": "New Test Panel",
-                "description": "Test description",
-            },
+            data=form_data,
             follow_redirects=False,
         )
         assert response.status_code == 302
-        assert response.headers["location"] == "/rolepanels"
+        assert "/rolepanels/" in response.headers["location"]
 
         # DB にパネルが作成されていることを確認
         result = await db_session.execute(
@@ -2753,18 +2760,33 @@ class TestRolePanelCreateRoutes:
         assert panel.panel_type == "button"
         assert panel.description == "Test description"
 
+        # ロールアイテムも作成されていることを確認
+        items_result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == panel.id)
+        )
+        items = list(items_result.scalars().all())
+        assert len(items) == 1
+        assert items[0].emoji == "🎮"
+        assert items[0].role_id == "111222333444555666"
+        assert items[0].label == "Gamer"
+
     async def test_create_reaction_type(
         self, authenticated_client: AsyncClient, db_session: AsyncSession
     ) -> None:
         """リアクション式パネルを作成できる。"""
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "reaction",
+            "title": "Reaction Panel",
+            "item_emoji[]": "⭐",
+            "item_role_id[]": "222333444555666777",
+            "item_label[]": "",
+            "item_position[]": "0",
+        }
         response = await authenticated_client.post(
             "/rolepanels/new",
-            data={
-                "guild_id": "123456789012345678",
-                "channel_id": "987654321098765432",
-                "panel_type": "reaction",
-                "title": "Reaction Panel",
-            },
+            data=form_data,
             follow_redirects=False,
         )
         assert response.status_code == 302
@@ -2928,15 +2950,20 @@ class TestRolePanelCreateRoutes:
         self, authenticated_client: AsyncClient, db_session: AsyncSession
     ) -> None:
         """description なしでパネルを作成できる。"""
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "button",
+            "title": "No Description Panel",
+            "description": "",
+            "item_emoji[]": "🎉",
+            "item_role_id[]": "333444555666777888",
+            "item_label[]": "",
+            "item_position[]": "0",
+        }
         response = await authenticated_client.post(
             "/rolepanels/new",
-            data={
-                "guild_id": "123456789012345678",
-                "channel_id": "987654321098765432",
-                "panel_type": "button",
-                "title": "No Description Panel",
-                "description": "",
-            },
+            data=form_data,
             follow_redirects=False,
         )
         assert response.status_code == 302
@@ -2947,3 +2974,1175 @@ class TestRolePanelCreateRoutes:
         panel = result.scalar_one_or_none()
         assert panel is not None
         assert panel.description is None
+
+
+# ===========================================================================
+# Discord ロールキャッシュ関連
+# ===========================================================================
+
+
+class TestGetDiscordRolesByGuild:
+    """_get_discord_roles_by_guild ヘルパー関数のテスト。"""
+
+    async def test_returns_empty_dict_when_no_roles(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ロールがない場合は空の辞書を返す。"""
+        from src.web.app import _get_discord_roles_by_guild
+
+        result = await _get_discord_roles_by_guild(db_session)
+        assert result == {}
+
+    async def test_returns_roles_grouped_by_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ロールがギルドごとにグループ化される。"""
+        from src.web.app import _get_discord_roles_by_guild
+
+        # ギルド1のロール
+        db_session.add(
+            DiscordRole(
+                guild_id="111",
+                role_id="1",
+                role_name="Role A",
+                color=0xFF0000,
+                position=10,
+            )
+        )
+        db_session.add(
+            DiscordRole(
+                guild_id="111",
+                role_id="2",
+                role_name="Role B",
+                color=0x00FF00,
+                position=5,
+            )
+        )
+        # ギルド2のロール
+        db_session.add(
+            DiscordRole(
+                guild_id="222",
+                role_id="3",
+                role_name="Role C",
+                color=0x0000FF,
+                position=1,
+            )
+        )
+        await db_session.commit()
+
+        result = await _get_discord_roles_by_guild(db_session)
+
+        assert "111" in result
+        assert "222" in result
+        assert len(result["111"]) == 2
+        assert len(result["222"]) == 1
+
+    async def test_roles_sorted_by_position_descending(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ロールが position 降順でソートされる。"""
+        from src.web.app import _get_discord_roles_by_guild
+
+        # 位置順序がバラバラなロールを追加
+        db_session.add(
+            DiscordRole(
+                guild_id="123",
+                role_id="1",
+                role_name="Low",
+                position=1,
+            )
+        )
+        db_session.add(
+            DiscordRole(
+                guild_id="123",
+                role_id="2",
+                role_name="High",
+                position=10,
+            )
+        )
+        db_session.add(
+            DiscordRole(
+                guild_id="123",
+                role_id="3",
+                role_name="Medium",
+                position=5,
+            )
+        )
+        await db_session.commit()
+
+        result = await _get_discord_roles_by_guild(db_session)
+
+        roles = result["123"]
+        # position 降順 (High > Medium > Low)
+        assert roles[0][1] == "High"
+        assert roles[1][1] == "Medium"
+        assert roles[2][1] == "Low"
+
+    async def test_returns_correct_tuple_format(self, db_session: AsyncSession) -> None:
+        """(role_id, role_name, color) のタプル形式で返される。"""
+        from src.web.app import _get_discord_roles_by_guild
+
+        db_session.add(
+            DiscordRole(
+                guild_id="123",
+                role_id="456",
+                role_name="Gamer",
+                color=0xFF00FF,
+                position=5,
+            )
+        )
+        await db_session.commit()
+
+        result = await _get_discord_roles_by_guild(db_session)
+
+        role_tuple = result["123"][0]
+        assert role_tuple == ("456", "Gamer", 0xFF00FF)
+
+
+class TestRolePanelCreatePageWithDiscordRoles:
+    """Discord ロールを含むパネル作成ページのテスト。"""
+
+    async def test_create_page_includes_discord_roles(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """パネル作成ページに Discord ロール情報が含まれる。"""
+        # ロールを追加
+        db_session.add(
+            DiscordRole(
+                guild_id="123456789012345678",
+                role_id="111222333444555666",
+                role_name="Test Role",
+                color=0xFF0000,
+                position=5,
+            )
+        )
+        await db_session.commit()
+
+        response = await authenticated_client.get("/rolepanels/new")
+        assert response.status_code == 200
+        # JavaScript 用 JSON にロール情報が含まれる
+        assert '"name": "Test Role"' in response.text
+
+
+class TestRolePanelDetailPageWithDiscordRoles:
+    """Discord ロールを含むパネル詳細ページのテスト。"""
+
+    async def test_detail_page_shows_role_names(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """パネル詳細ページでロール名が表示される。"""
+        # パネルを作成
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        # ロールアイテムを追加
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="111222333444555666",
+            emoji="🎮",
+            label="Gamer",
+            position=0,
+        )
+        db_session.add(item)
+
+        # ロールキャッシュを追加
+        role = DiscordRole(
+            guild_id="123456789012345678",
+            role_id="111222333444555666",
+            role_name="Gamer Role",
+            color=0x00FF00,
+            position=5,
+        )
+        db_session.add(role)
+        await db_session.commit()
+
+        response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert response.status_code == 200
+        # ロール名が表示される
+        assert "@Gamer Role" in response.text
+
+    async def test_detail_page_shows_role_select(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """パネル詳細ページでロール選択セレクトボックスが表示される。"""
+        # パネルを作成
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+
+        # ロールキャッシュを追加
+        role = DiscordRole(
+            guild_id="123456789012345678",
+            role_id="111222333444555666",
+            role_name="Available Role",
+            color=0xFF0000,
+            position=5,
+        )
+        db_session.add(role)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert response.status_code == 200
+        # セレクトボックスにロールが表示される
+        assert "@Available Role" in response.text
+        assert 'id="role_select"' in response.text
+
+    async def test_detail_page_disables_add_button_when_no_roles(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """ロールがない場合は Add Role Item ボタンが非活性。"""
+        # パネルのみ作成 (ロールキャッシュなし)
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert response.status_code == 200
+        # ボタンが非活性
+        assert "disabled" in response.text
+        assert "No roles found for this guild" in response.text
+
+    async def test_detail_page_shows_role_id_when_not_in_cache(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュにないロールはロール ID のみ表示される。"""
+        # パネルを作成
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        # キャッシュにないロール ID でアイテムを追加
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="999888777666555444",  # キャッシュにない ID
+            emoji="🎮",
+            label="Unknown Role",
+            position=0,
+        )
+        db_session.add(item)
+        await db_session.commit()
+
+        response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert response.status_code == 200
+        # ロール ID がそのまま表示される（ロール名ではなく）
+        assert "999888777666555444" in response.text
+
+    async def test_detail_page_shows_role_with_zero_color(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """color=0 のロールが正しく表示される。"""
+        # パネルを作成
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+
+        # color=0 のロール
+        role = DiscordRole(
+            guild_id="123456789012345678",
+            role_id="111222333444555666",
+            role_name="Default Color Role",
+            color=0,  # デフォルト色
+            position=5,
+        )
+        db_session.add(role)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert response.status_code == 200
+        assert "@Default Color Role" in response.text
+
+
+class TestGetDiscordRolesByGuildEdgeCases:
+    """_get_discord_roles_by_guild のエッジケーステスト。"""
+
+    async def test_returns_roles_with_zero_color(
+        self, db_session: AsyncSession
+    ) -> None:
+        """color=0 のロールが正しく取得される。"""
+        from src.web.app import _get_discord_roles_by_guild
+
+        db_session.add(
+            DiscordRole(
+                guild_id="123",
+                role_id="456",
+                role_name="No Color",
+                color=0,
+                position=5,
+            )
+        )
+        await db_session.commit()
+
+        result = await _get_discord_roles_by_guild(db_session)
+
+        role_tuple = result["123"][0]
+        assert role_tuple == ("456", "No Color", 0)
+
+    async def test_returns_multiple_guilds_independently(
+        self, db_session: AsyncSession
+    ) -> None:
+        """複数ギルドのロールが独立して取得される。"""
+        from src.web.app import _get_discord_roles_by_guild
+
+        # ギルド1
+        db_session.add(
+            DiscordRole(
+                guild_id="111",
+                role_id="1",
+                role_name="Guild1 Role",
+                position=10,
+            )
+        )
+        # ギルド2
+        db_session.add(
+            DiscordRole(
+                guild_id="222",
+                role_id="2",
+                role_name="Guild2 Role",
+                position=5,
+            )
+        )
+        await db_session.commit()
+
+        result = await _get_discord_roles_by_guild(db_session)
+
+        assert len(result) == 2
+        assert len(result["111"]) == 1
+        assert len(result["222"]) == 1
+        assert result["111"][0][1] == "Guild1 Role"
+        assert result["222"][0][1] == "Guild2 Role"
+
+    async def test_handles_unicode_role_names(self, db_session: AsyncSession) -> None:
+        """Unicode 文字を含むロール名が正しく取得される。"""
+        from src.web.app import _get_discord_roles_by_guild
+
+        db_session.add(
+            DiscordRole(
+                guild_id="123",
+                role_id="456",
+                role_name="日本語ロール 🎮",
+                position=5,
+            )
+        )
+        await db_session.commit()
+
+        result = await _get_discord_roles_by_guild(db_session)
+
+        assert result["123"][0][1] == "日本語ロール 🎮"
+
+
+class TestRolePanelReactionTypeEdgeCases:
+    """リアクション式パネルのエッジケーステスト。"""
+
+    async def test_reaction_panel_hides_label_column(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """リアクション式パネルでは Label カラムが表示されない。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",  # リアクション式
+            title="Reaction Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="111222333444555666",
+            emoji="🎮",
+            label="This should not show",
+            position=0,
+        )
+        db_session.add(item)
+        await db_session.commit()
+
+        response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert response.status_code == 200
+        # Label カラムヘッダーがない
+        assert '<th class="py-3 px-4 text-left">Label</th>' not in response.text
+        # Add Role フォームにも Label フィールドがない
+        assert 'for="label"' not in response.text
+
+    async def test_reaction_panel_shows_purple_badge(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """リアクション式パネルには紫色のバッジが表示される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Reaction Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert response.status_code == 200
+        assert "bg-purple-600" in response.text
+        assert "Reaction" in response.text
+
+    async def test_button_panel_shows_blue_badge(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """ボタン式パネルには青色のバッジが表示される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Button Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert response.status_code == 200
+        assert "bg-blue-600" in response.text
+        assert "Button" in response.text
+
+
+# ===========================================================================
+# Role Panel Item Add ルート 結合テスト
+# ===========================================================================
+
+
+class TestRolePanelItemAddRoutes:
+    """/rolepanels/{panel_id}/items/add ルートの結合テスト。"""
+
+    async def test_add_item_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.post(
+            "/rolepanels/1/items/add",
+            data={"emoji": "🎮", "role_id": "123", "label": "Test"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_add_item_to_nonexistent_panel(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """存在しないパネルへのアイテム追加はリダイレクト。"""
+        response = await authenticated_client.post(
+            "/rolepanels/99999/items/add",
+            data={"emoji": "🎮", "role_id": "123", "label": "Test"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/rolepanels"
+
+    async def test_add_item_success(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ロールアイテムを正常に追加できる。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={
+                "emoji": "🎮",
+                "role_id": "111222333444555666",
+                "label": "Gamer",
+                "position": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert f"/rolepanels/{panel.id}" in response.headers["location"]
+        assert "success=Role+item+added" in response.headers["location"]
+
+        # DB にアイテムが追加されていることを確認
+        result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == panel.id)
+        )
+        items = list(result.scalars().all())
+        assert len(items) == 1
+        assert items[0].emoji == "🎮"
+        assert items[0].role_id == "111222333444555666"
+        assert items[0].label == "Gamer"
+
+    async def test_add_item_missing_emoji(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Emoji が空の場合はエラー。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={"emoji": "", "role_id": "123", "label": "Test"},
+        )
+        assert response.status_code == 200
+        assert "Emoji is required" in response.text
+
+    async def test_add_item_invalid_emoji(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """不正な Emoji の場合はエラー。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={"emoji": "invalid", "role_id": "123", "label": "Test"},
+        )
+        assert response.status_code == 200
+        assert "Invalid emoji" in response.text
+
+    async def test_add_item_missing_role_id(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Role ID が空の場合はエラー。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={"emoji": "🎮", "role_id": "", "label": "Test"},
+        )
+        assert response.status_code == 200
+        assert "Role ID is required" in response.text
+
+    async def test_add_item_invalid_role_id(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Role ID が数字でない場合はエラー。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={"emoji": "🎮", "role_id": "not_a_number", "label": "Test"},
+        )
+        assert response.status_code == 200
+        assert "Role ID must be a number" in response.text
+
+    async def test_add_item_duplicate_emoji(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """重複する Emoji の場合はエラー。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        # 既存のアイテムを追加
+        existing_item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="111222333444555666",
+            emoji="🎮",
+            label="Existing",
+            position=0,
+        )
+        db_session.add(existing_item)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={"emoji": "🎮", "role_id": "999888777", "label": "New"},
+        )
+        assert response.status_code == 200
+        assert "already used" in response.text
+
+    async def test_add_item_emoji_too_long(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Emoji が長すぎる場合はエラー。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={"emoji": "x" * 65, "role_id": "123", "label": "Test"},
+        )
+        assert response.status_code == 200
+        assert "64 characters or less" in response.text
+
+    async def test_add_item_label_too_long(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Label が長すぎる場合はエラー。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={"emoji": "🎮", "role_id": "123", "label": "x" * 81},
+        )
+        assert response.status_code == 200
+        assert "80 characters or less" in response.text
+
+    async def test_add_item_without_label(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Label なしでアイテムを追加できる。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Reaction Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={
+                "emoji": "⭐",
+                "role_id": "111222333444555666",
+                "label": "",
+                "position": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == panel.id)
+        )
+        item = result.scalar_one()
+        assert item.label is None
+
+
+# ===========================================================================
+# Role Panel Item Delete ルート 結合テスト
+# ===========================================================================
+
+
+class TestRolePanelItemDeleteRoutes:
+    """/rolepanels/{panel_id}/items/{item_id}/delete ルートの結合テスト。"""
+
+    async def test_delete_item_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.post(
+            "/rolepanels/1/items/1/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_delete_item_from_nonexistent_panel(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """存在しないパネルからの削除はリダイレクト。"""
+        response = await authenticated_client.post(
+            "/rolepanels/99999/items/1/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/rolepanels"
+
+    async def test_delete_nonexistent_item(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """存在しないアイテムの削除はリダイレクト (エラーなし)。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/99999/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert f"/rolepanels/{panel.id}" in response.headers["location"]
+
+    async def test_delete_item_success(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ロールアイテムを正常に削除できる。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="111222333444555666",
+            emoji="🎮",
+            label="Gamer",
+            position=0,
+        )
+        db_session.add(item)
+        await db_session.commit()
+        await db_session.refresh(item)
+        item_id = item.id
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/{item_id}/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert f"/rolepanels/{panel.id}" in response.headers["location"]
+        assert "success=Role+item+deleted" in response.headers["location"]
+
+        # DB からアイテムが削除されていることを確認
+        result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.id == item_id)
+        )
+        assert result.scalar_one_or_none() is None
+
+    async def test_delete_item_from_wrong_panel(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """異なるパネルのアイテム削除は無視される。"""
+        # パネル1を作成
+        panel1 = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Panel 1",
+        )
+        db_session.add(panel1)
+        # パネル2を作成
+        panel2 = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="111222333444555666",
+            panel_type="button",
+            title="Panel 2",
+        )
+        db_session.add(panel2)
+        await db_session.commit()
+        await db_session.refresh(panel1)
+        await db_session.refresh(panel2)
+
+        # パネル1にアイテムを追加
+        item = RolePanelItem(
+            panel_id=panel1.id,
+            role_id="111222333444555666",
+            emoji="🎮",
+            label="Gamer",
+            position=0,
+        )
+        db_session.add(item)
+        await db_session.commit()
+        await db_session.refresh(item)
+        item_id = item.id
+
+        # パネル2のURLでパネル1のアイテムを削除しようとする
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel2.id}/items/{item_id}/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        # アイテムは削除されていないことを確認
+        result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.id == item_id)
+        )
+        assert result.scalar_one_or_none() is not None
+
+
+# ===========================================================================
+# Role Panel エンドツーエンド 結合テスト
+# ===========================================================================
+
+
+class TestRolePanelEndToEnd:
+    """ロールパネルのエンドツーエンド結合テスト。"""
+
+    async def test_create_panel_then_add_item(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """パネル作成後にアイテムを追加できる。"""
+        # パネルを作成 (最低1つのアイテムが必要)
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "button",
+            "title": "Test Panel",
+            "item_emoji[]": "⭐",
+            "item_role_id[]": "000111222333444555",
+            "item_label[]": "Initial",
+            "item_position[]": "0",
+        }
+        create_response = await authenticated_client.post(
+            "/rolepanels/new",
+            data=form_data,
+            follow_redirects=False,
+        )
+        assert create_response.status_code == 302
+
+        # 作成されたパネルを取得
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Test Panel")
+        )
+        panel = result.scalar_one()
+
+        # アイテムを追加
+        add_response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={
+                "emoji": "🎮",
+                "role_id": "111222333444555666",
+                "label": "Gamer",
+                "position": "1",
+            },
+            follow_redirects=False,
+        )
+        assert add_response.status_code == 302
+
+        # アイテムが追加されたことを確認 (作成時の1つ + 追加の1つ = 2つ)
+        items_result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == panel.id)
+        )
+        items = list(items_result.scalars().all())
+        assert len(items) == 2
+        assert any(item.emoji == "🎮" for item in items)
+
+    async def test_add_then_delete_item(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """アイテムを追加してから削除できる。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        # アイテムを追加
+        add_response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={
+                "emoji": "🎮",
+                "role_id": "111222333444555666",
+                "label": "Gamer",
+                "position": "0",
+            },
+            follow_redirects=False,
+        )
+        assert add_response.status_code == 302
+
+        # 追加されたアイテムを取得
+        items_result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == panel.id)
+        )
+        item = items_result.scalar_one()
+
+        # アイテムを削除
+        delete_response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/{item.id}/delete",
+            follow_redirects=False,
+        )
+        assert delete_response.status_code == 302
+
+        # アイテムが削除されたことを確認
+        items_result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == panel.id)
+        )
+        items = list(items_result.scalars().all())
+        assert len(items) == 0
+
+    async def test_create_panel_with_multiple_items_delete_one(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """複数アイテム付きパネル作成後、1つだけ削除できる。"""
+        # パネルを直接 DB に作成
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Multi-item Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        # 3つのアイテムを追加
+        items_data = [
+            ("🎮", "111222333444555666", "Gamer", 0),
+            ("⭐", "222333444555666777", "Star", 1),
+            ("🎵", "333444555666777888", "Music", 2),
+        ]
+        for emoji, role_id, label, pos in items_data:
+            item = RolePanelItem(
+                panel_id=panel.id,
+                role_id=role_id,
+                emoji=emoji,
+                label=label,
+                position=pos,
+            )
+            db_session.add(item)
+        await db_session.commit()
+
+        # 3つのアイテムがあることを確認
+        items_result = await db_session.execute(
+            select(RolePanelItem)
+            .where(RolePanelItem.panel_id == panel.id)
+            .order_by(RolePanelItem.position)
+        )
+        items = list(items_result.scalars().all())
+        assert len(items) == 3
+
+        # 真ん中のアイテム (Star) を削除
+        star_item = next(i for i in items if i.emoji == "⭐")
+        delete_response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/{star_item.id}/delete",
+            follow_redirects=False,
+        )
+        assert delete_response.status_code == 302
+
+        # 2つのアイテムが残っていることを確認
+        items_result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == panel.id)
+        )
+        remaining_items = list(items_result.scalars().all())
+        assert len(remaining_items) == 2
+        remaining_emojis = {i.emoji for i in remaining_items}
+        assert remaining_emojis == {"🎮", "🎵"}
+
+    async def test_delete_panel_cascades_items(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """パネル削除時にアイテムもカスケード削除される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Cascade Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        # アイテムを追加
+        item1 = RolePanelItem(panel_id=panel.id, role_id="111", emoji="🎮", position=0)
+        item2 = RolePanelItem(panel_id=panel.id, role_id="222", emoji="⭐", position=1)
+        db_session.add(item1)
+        db_session.add(item2)
+        await db_session.commit()
+
+        panel_id = panel.id
+
+        # パネルを削除
+        delete_response = await authenticated_client.post(
+            f"/rolepanels/{panel_id}/delete",
+            follow_redirects=False,
+        )
+        assert delete_response.status_code == 302
+
+        # アイテムも削除されていることを確認
+        items_result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == panel_id)
+        )
+        items = list(items_result.scalars().all())
+        assert len(items) == 0
+
+    async def test_detail_page_shows_added_item(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """詳細ページに追加したアイテムが表示される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        # アイテムを追加
+        add_response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={
+                "emoji": "🎮",
+                "role_id": "111222333444555666",
+                "label": "Gamer",
+                "position": "0",
+            },
+            follow_redirects=False,
+        )
+        assert add_response.status_code == 302
+
+        # 詳細ページを取得
+        detail_response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert detail_response.status_code == 200
+        assert "🎮" in detail_response.text
+        assert "Gamer" in detail_response.text
+
+    async def test_list_page_shows_item_count(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """一覧ページにアイテム数が表示される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Itemized Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        # アイテムを3つ追加
+        for i, emoji in enumerate(["🎮", "⭐", "🎵"]):
+            item = RolePanelItem(
+                panel_id=panel.id,
+                role_id=f"11122233344455566{i}",
+                emoji=emoji,
+                position=i,
+            )
+            db_session.add(item)
+        await db_session.commit()
+
+        # 一覧ページを取得
+        list_response = await authenticated_client.get("/rolepanels")
+        assert list_response.status_code == 200
+        assert "Itemized Panel" in list_response.text
+        # アイテム数 (絵文字) が表示される
+        assert "🎮" in list_response.text
+
+    async def test_add_custom_discord_emoji(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Discord カスタム絵文字でアイテムを追加できる。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        custom_emoji = "<:custom:123456789012345678>"
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={
+                "emoji": custom_emoji,
+                "role_id": "111222333444555666",
+                "label": "Custom Role",
+                "position": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        # アイテムが追加されたことを確認
+        result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == panel.id)
+        )
+        item = result.scalar_one()
+        assert item.emoji == custom_emoji

@@ -709,6 +709,84 @@ class RolePanel(Base):
         )
 
 
+class DiscordRole(Base):
+    """Discord ロール情報のキャッシュテーブル。
+
+    Bot が参加しているサーバーのロール情報を保存し、
+    Web 管理画面でロール名をセレクトボックスで選択できるようにする。
+    Bot 起動時、サーバー参加時、ロール変更時に同期される。
+
+    Attributes:
+        id (int): 自動採番の主キー。
+        guild_id (str): Discord サーバーの ID。インデックス付き。
+        role_id (str): Discord ロールの ID。
+        role_name (str): ロール名。
+        color (int): ロールの色 (16進数の整数値)。
+        position (int): ロールの表示順序 (高いほど上)。
+        updated_at (datetime): 最終更新日時 (UTC)。
+
+    Notes:
+        - テーブル名: ``discord_roles``
+        - (guild_id, role_id) でユニーク制約
+        - Bot が起動時に全ギルドのロールを同期
+        - ロール作成/更新/削除イベントで自動更新
+
+    Examples:
+        ロール情報保存::
+
+            role = DiscordRole(
+                guild_id="123456789",
+                role_id="987654321",
+                role_name="Member",
+                color=0x00FF00,
+                position=5,
+            )
+
+    See Also:
+        - :mod:`src.cogs.role_panel`: ロールパネル Cog
+        - :mod:`src.web.app`: Web 管理画面
+    """
+
+    __tablename__ = "discord_roles"
+    __table_args__ = (
+        # 同じギルドに同じロール ID は 1 件のみ
+        UniqueConstraint("guild_id", "role_id", name="uq_guild_role"),
+    )
+
+    # id: 自動採番の主キー
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    # guild_id: Discord サーバーの ID
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+
+    # role_id: Discord ロールの ID
+    role_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+
+    # role_name: ロール名
+    role_name: Mapped[str] = mapped_column(String, nullable=False)
+
+    # color: ロールの色 (16進数の整数値)
+    color: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # position: ロールの表示順序 (高いほど上)
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # updated_at: 最終更新日時 (UTC)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return (
+            f"<DiscordRole(id={self.id}, guild_id={self.guild_id}, "
+            f"role_id={self.role_id}, name={self.role_name})>"
+        )
+
+
 class RolePanelItem(Base):
     """ロールパネルに設定されたロールのテーブル。
 

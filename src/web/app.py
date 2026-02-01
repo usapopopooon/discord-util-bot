@@ -35,6 +35,7 @@ from src.database.models import (
     AdminUser,
     BumpConfig,
     BumpReminder,
+    DiscordRole,
     Lobby,
     RolePanel,
     RolePanelItem,
@@ -56,6 +57,7 @@ from src.web.templates import (
     password_change_page,
     reset_password_page,
     role_panel_create_page,
+    role_panel_detail_page,
     role_panels_list_page,
     settings_page,
     sticky_list_page,
@@ -108,6 +110,52 @@ LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 
 # メールアドレス検証パターン
 EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+
+# Discord カスタム絵文字パターン: <:name:id> または <a:name:id> (アニメーション)
+DISCORD_CUSTOM_EMOJI_PATTERN = re.compile(r"^<a?:\w+:\d+>$")
+
+# Unicode 絵文字の範囲 (主要な絵文字ブロック)
+# 参考: https://unicode.org/emoji/charts/full-emoji-list.html
+UNICODE_EMOJI_PATTERN = re.compile(
+    r"^["
+    r"\U0001F300-\U0001F9FF"  # Misc Symbols, Emoticons, Dingbats, etc.
+    r"\U0001FA00-\U0001FAFF"  # Extended-A symbols
+    r"\U00002702-\U000027B0"  # Dingbats
+    r"\U0001F600-\U0001F64F"  # Emoticons
+    r"\U0001F680-\U0001F6FF"  # Transport/Map symbols
+    r"\U0001F1E0-\U0001F1FF"  # Flags (regional indicators)
+    r"\U00002600-\U000026FF"  # Misc symbols (sun, cloud, etc.)
+    r"\U00002700-\U000027BF"  # Dingbats
+    r"\U0000FE00-\U0000FE0F"  # Variation selectors
+    r"\U0001F900-\U0001F9FF"  # Supplemental symbols
+    r"\U0001FA70-\U0001FAFF"  # Symbols and Pictographs Extended-A
+    r"\U00002300-\U000023FF"  # Misc Technical (⌚ etc.)
+    r"\U00002B50"  # Star
+    r"\U0000200D"  # Zero Width Joiner (for combined emojis)
+    r"\U0000203C-\U00003299"  # Various symbols
+    r"]+$"
+)
+
+
+def is_valid_emoji(text: str) -> bool:
+    """絵文字として有効かどうかを検証する.
+
+    Args:
+        text: 検証する文字列
+
+    Returns:
+        Discordカスタム絵文字またはUnicode絵文字の場合True
+    """
+    if not text:
+        return False
+
+    # Discord カスタム絵文字 (<:name:id> or <a:name:id>)
+    if DISCORD_CUSTOM_EMOJI_PATTERN.match(text):
+        return True
+
+    # Unicode 絵文字
+    return bool(UNICODE_EMOJI_PATTERN.match(text))
+
 
 serializer = URLSafeTimedSerializer(SECRET_KEY)
 
@@ -1233,18 +1281,121 @@ async def rolepanel_delete(
     return RedirectResponse(url="/rolepanels", status_code=302)
 
 
+async def _get_known_guilds_and_channels(
+    db: AsyncSession,
+) -> dict[str, list[str]]:
+    """データベースから既知のギルドとチャンネルを取得する.
+
+    Returns:
+        ギルドID -> チャンネルIDリストのマッピング
+    """
+    guild_channels: dict[str, set[str]] = {}
+
+    # Lobby からチャンネルを取得
+    lobbies = await db.execute(select(Lobby))
+    for lobby in lobbies.scalars():
+        if lobby.guild_id not in guild_channels:
+            guild_channels[lobby.guild_id] = set()
+        guild_channels[lobby.guild_id].add(lobby.lobby_channel_id)
+
+    # BumpConfig からチャンネルを取得
+    bump_configs = await db.execute(select(BumpConfig))
+    for config in bump_configs.scalars():
+        if config.guild_id not in guild_channels:
+            guild_channels[config.guild_id] = set()
+        guild_channels[config.guild_id].add(config.channel_id)
+
+    # StickyMessage からチャンネルを取得
+    stickies = await db.execute(select(StickyMessage))
+    for sticky in stickies.scalars():
+        if sticky.guild_id not in guild_channels:
+            guild_channels[sticky.guild_id] = set()
+        guild_channels[sticky.guild_id].add(sticky.channel_id)
+
+    # RolePanel からチャンネルを取得
+    panels = await db.execute(select(RolePanel))
+    for panel in panels.scalars():
+        if panel.guild_id not in guild_channels:
+            guild_channels[panel.guild_id] = set()
+        guild_channels[panel.guild_id].add(panel.channel_id)
+
+    # set を list に変換してソート
+    return {
+        guild_id: sorted(channels)
+        for guild_id, channels in sorted(guild_channels.items())
+    }
+
+
+async def _get_known_roles_by_guild(
+    db: AsyncSession,
+) -> dict[str, list[str]]:
+    """既存のRolePanelItemからギルドごとのロールIDを取得する.
+
+    Returns:
+        ギルドID -> ロールIDリストのマッピング
+    """
+    guild_roles: dict[str, set[str]] = {}
+
+    # RolePanelItem と RolePanel を結合してギルドごとのロールを取得
+    result = await db.execute(
+        select(RolePanel.guild_id, RolePanelItem.role_id).join(
+            RolePanelItem, RolePanel.id == RolePanelItem.panel_id
+        )
+    )
+
+    for guild_id, role_id in result:
+        if guild_id not in guild_roles:
+            guild_roles[guild_id] = set()
+        guild_roles[guild_id].add(role_id)
+
+    # set を list に変換してソート
+    return {guild_id: sorted(roles) for guild_id, roles in sorted(guild_roles.items())}
+
+
+async def _get_discord_roles_by_guild(
+    db: AsyncSession,
+) -> dict[str, list[tuple[str, str, int]]]:
+    """DBにキャッシュされているDiscordロール情報を取得する.
+
+    Returns:
+        ギルドID -> [(role_id, role_name, color), ...] のマッピング
+        ロールは position 降順（上位ロールから）でソート
+    """
+    result = await db.execute(
+        select(DiscordRole).order_by(DiscordRole.guild_id, DiscordRole.position.desc())
+    )
+
+    guild_roles: dict[str, list[tuple[str, str, int]]] = {}
+    for role in result.scalars():
+        if role.guild_id not in guild_roles:
+            guild_roles[role.guild_id] = []
+        guild_roles[role.guild_id].append((role.role_id, role.role_name, role.color))
+
+    return guild_roles
+
+
 @app.get("/rolepanels/new", response_model=None)
 async def rolepanel_create_get(
     user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Show role panel create form."""
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    return HTMLResponse(content=role_panel_create_page())
+
+    guild_channels = await _get_known_guilds_and_channels(db)
+    discord_roles = await _get_discord_roles_by_guild(db)
+    return HTMLResponse(
+        content=role_panel_create_page(
+            guild_channels=guild_channels,
+            discord_roles=discord_roles,
+        )
+    )
 
 
 @app.post("/rolepanels/new", response_model=None)
 async def rolepanel_create_post(
+    request: Request,
     user: dict[str, Any] | None = Depends(get_current_user),
     guild_id: Annotated[str, Form()] = "",
     channel_id: Annotated[str, Form()] = "",
@@ -1253,9 +1404,13 @@ async def rolepanel_create_post(
     description: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    """Create a new role panel."""
+    """Create a new role panel with role items."""
     if not user:
         return RedirectResponse(url="/login", status_code=302)
+
+    # エラー時にも選択肢を表示するためにギルド/チャンネル/ロール情報を取得
+    guild_channels = await _get_known_guilds_and_channels(db)
+    discord_roles = await _get_discord_roles_by_guild(db)
 
     # Trim input values
     guild_id = guild_id.strip()
@@ -1264,101 +1419,107 @@ async def rolepanel_create_post(
     title = title.strip()
     description = description.strip()
 
+    # Validation helper
+    def error_response(error: str) -> HTMLResponse:
+        return HTMLResponse(
+            content=role_panel_create_page(
+                error=error,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                panel_type=panel_type,
+                title=title,
+                description=description,
+                guild_channels=guild_channels,
+                discord_roles=discord_roles,
+            )
+        )
+
     # Validation
     if not guild_id:
-        return HTMLResponse(
-            content=role_panel_create_page(
-                error="Guild ID is required",
-                guild_id=guild_id,
-                channel_id=channel_id,
-                panel_type=panel_type,
-                title=title,
-                description=description,
-            )
-        )
+        return error_response("Guild ID is required")
 
     if not guild_id.isdigit():
-        return HTMLResponse(
-            content=role_panel_create_page(
-                error="Guild ID must be a number",
-                guild_id=guild_id,
-                channel_id=channel_id,
-                panel_type=panel_type,
-                title=title,
-                description=description,
-            )
-        )
+        return error_response("Guild ID must be a number")
 
     if not channel_id:
-        return HTMLResponse(
-            content=role_panel_create_page(
-                error="Channel ID is required",
-                guild_id=guild_id,
-                channel_id=channel_id,
-                panel_type=panel_type,
-                title=title,
-                description=description,
-            )
-        )
+        return error_response("Channel ID is required")
 
     if not channel_id.isdigit():
-        return HTMLResponse(
-            content=role_panel_create_page(
-                error="Channel ID must be a number",
-                guild_id=guild_id,
-                channel_id=channel_id,
-                panel_type=panel_type,
-                title=title,
-                description=description,
-            )
-        )
+        return error_response("Channel ID must be a number")
 
     if panel_type not in ("button", "reaction"):
-        return HTMLResponse(
-            content=role_panel_create_page(
-                error="Invalid panel type",
-                guild_id=guild_id,
-                channel_id=channel_id,
-                panel_type=panel_type,
-                title=title,
-                description=description,
-            )
-        )
+        return error_response("Invalid panel type")
 
     if not title:
-        return HTMLResponse(
-            content=role_panel_create_page(
-                error="Title is required",
-                guild_id=guild_id,
-                channel_id=channel_id,
-                panel_type=panel_type,
-                title=title,
-                description=description,
-            )
-        )
+        return error_response("Title is required")
 
     if len(title) > 256:
-        return HTMLResponse(
-            content=role_panel_create_page(
-                error="Title must be 256 characters or less",
-                guild_id=guild_id,
-                channel_id=channel_id,
-                panel_type=panel_type,
-                title=title,
-                description=description,
-            )
-        )
+        return error_response("Title must be 256 characters or less")
 
     if len(description) > 4096:
-        return HTMLResponse(
-            content=role_panel_create_page(
-                error="Description must be 4096 characters or less",
-                guild_id=guild_id,
-                channel_id=channel_id,
-                panel_type=panel_type,
-                title=title,
-                description=description,
+        return error_response("Description must be 4096 characters or less")
+
+    # Parse role items from form data
+    form_data = await request.form()
+    item_emojis = form_data.getlist("item_emoji[]")
+    item_role_ids = form_data.getlist("item_role_id[]")
+    item_labels = form_data.getlist("item_label[]")
+    item_positions = form_data.getlist("item_position[]")
+
+    # Validate at least one role item
+    if not item_emojis:
+        return error_response("At least one role item is required")
+
+    # Validate and collect role items
+    role_items_data: list[dict[str, str | int | None]] = []
+    seen_emojis: set[str] = set()
+
+    for i, (emoji, role_id, label, position) in enumerate(
+        zip(item_emojis, item_role_ids, item_labels, item_positions, strict=False)
+    ):
+        # Trim values
+        emoji = str(emoji).strip()
+        role_id = str(role_id).strip()
+        label = str(label).strip()
+        position_str = str(position).strip()
+
+        # Validate emoji
+        if not emoji:
+            return error_response(f"Role item {i + 1}: Emoji is required")
+        if len(emoji) > 64:
+            return error_response(f"Role item {i + 1}: Emoji must be 64 chars or less")
+        if not is_valid_emoji(emoji):
+            return error_response(
+                f"Role item {i + 1}: Invalid emoji. Use a Unicode emoji (🎮) "
+                "or Discord custom emoji (<:name:id>)"
             )
+        if emoji in seen_emojis:
+            return error_response(f"Role item {i + 1}: Duplicate emoji '{emoji}'")
+        seen_emojis.add(emoji)
+
+        # Validate role_id
+        if not role_id:
+            return error_response(f"Role item {i + 1}: Role ID is required")
+        if not role_id.isdigit():
+            return error_response(f"Role item {i + 1}: Role ID must be a number")
+
+        # Validate label
+        if label and len(label) > 80:
+            return error_response(f"Role item {i + 1}: Label must be 80 chars or less")
+
+        # Parse position
+        try:
+            pos = int(position_str) if position_str else i
+        except ValueError:
+            pos = i
+
+        role_items_data.append(
+            {
+                "emoji": emoji,
+                "role_id": role_id,
+                "label": label if label else None,
+                "position": pos,
+            }
         )
 
     # Create the role panel
@@ -1370,6 +1531,175 @@ async def rolepanel_create_post(
         description=description if description else None,
     )
     db.add(panel)
+    await db.flush()  # Get the panel ID without committing
+
+    # Create role items
+    for item_data in role_items_data:
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id=str(item_data["role_id"]),
+            emoji=str(item_data["emoji"]),
+            label=item_data["label"] if item_data["label"] else None,
+            style="secondary",
+            position=int(item_data["position"]) if item_data["position"] else 0,
+        )
+        db.add(item)
+
+    await db.commit()
+    await db.refresh(panel)
+
+    # 作成後は詳細ページにリダイレクト
+    return RedirectResponse(url=f"/rolepanels/{panel.id}", status_code=302)
+
+
+@app.get("/rolepanels/{panel_id}", response_model=None)
+async def rolepanel_detail(
+    panel_id: int,
+    success: str | None = None,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Show role panel detail page."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    result = await db.execute(
+        select(RolePanel)
+        .options(selectinload(RolePanel.items))
+        .where(RolePanel.id == panel_id)
+    )
+    panel = result.scalar_one_or_none()
+    if not panel:
+        return RedirectResponse(url="/rolepanels", status_code=302)
+
+    items = sorted(panel.items, key=lambda x: x.position)
+
+    # このギルドのDiscordロール情報を取得
+    discord_roles = await _get_discord_roles_by_guild(db)
+    guild_discord_roles = discord_roles.get(panel.guild_id, [])
+
+    return HTMLResponse(
+        content=role_panel_detail_page(
+            panel, items, success=success, discord_roles=guild_discord_roles
+        )
+    )
+
+
+@app.post("/rolepanels/{panel_id}/items/add", response_model=None)
+async def rolepanel_add_item(
+    panel_id: int,
+    emoji: Annotated[str, Form()] = "",
+    role_id: Annotated[str, Form()] = "",
+    label: Annotated[str, Form()] = "",
+    position: Annotated[int, Form()] = 0,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Add a role item to a panel."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # Get the panel
+    result = await db.execute(
+        select(RolePanel)
+        .options(selectinload(RolePanel.items))
+        .where(RolePanel.id == panel_id)
+    )
+    panel = result.scalar_one_or_none()
+    if not panel:
+        return RedirectResponse(url="/rolepanels", status_code=302)
+
+    # Trim inputs
+    emoji = emoji.strip()
+    role_id = role_id.strip()
+    label = label.strip()
+
+    items = sorted(panel.items, key=lambda x: x.position)
+
+    # このギルドのDiscordロール情報を取得
+    discord_roles = await _get_discord_roles_by_guild(db)
+    guild_discord_roles = discord_roles.get(panel.guild_id, [])
+
+    # Validation helper
+    def error_response(error: str) -> HTMLResponse:
+        return HTMLResponse(
+            content=role_panel_detail_page(
+                panel, items, error=error, discord_roles=guild_discord_roles
+            )
+        )
+
+    # Validation
+    if not emoji:
+        return error_response("Emoji is required")
+
+    if len(emoji) > 64:
+        return error_response("Emoji must be 64 characters or less")
+
+    if not is_valid_emoji(emoji):
+        return error_response(
+            "Invalid emoji. Use a Unicode emoji (🎮) "
+            "or Discord custom emoji (<:name:id>)"
+        )
+
+    if not role_id:
+        return error_response("Role ID is required")
+
+    if not role_id.isdigit():
+        return error_response("Role ID must be a number")
+
+    if label and len(label) > 80:
+        return error_response("Label must be 80 characters or less")
+
+    # Check for duplicate emoji
+    for item in items:
+        if item.emoji == emoji:
+            return error_response(f"Emoji '{emoji}' is already used in this panel")
+
+    # Create the item
+    item = RolePanelItem(
+        panel_id=panel_id,
+        role_id=role_id,
+        emoji=emoji,
+        label=label if label else None,
+        style="secondary",
+        position=position,
+    )
+    db.add(item)
     await db.commit()
 
-    return RedirectResponse(url="/rolepanels", status_code=302)
+    return RedirectResponse(
+        url=f"/rolepanels/{panel_id}?success=Role+item+added", status_code=302
+    )
+
+
+@app.post("/rolepanels/{panel_id}/items/{item_id}/delete", response_model=None)
+async def rolepanel_delete_item(
+    panel_id: int,
+    item_id: int,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Delete a role item from a panel."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # Check panel exists
+    panel_result = await db.execute(select(RolePanel).where(RolePanel.id == panel_id))
+    panel = panel_result.scalar_one_or_none()
+    if not panel:
+        return RedirectResponse(url="/rolepanels", status_code=302)
+
+    # Get and delete the item
+    result = await db.execute(
+        select(RolePanelItem).where(
+            RolePanelItem.id == item_id, RolePanelItem.panel_id == panel_id
+        )
+    )
+    item = result.scalar_one_or_none()
+    if item:
+        await db.delete(item)
+        await db.commit()
+
+    return RedirectResponse(
+        url=f"/rolepanels/{panel_id}?success=Role+item+deleted", status_code=302
+    )

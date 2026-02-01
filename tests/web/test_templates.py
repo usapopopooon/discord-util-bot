@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.database.models import RolePanel, RolePanelItem
 from src.web.templates import (
     _base,
     _nav,
@@ -12,6 +13,7 @@ from src.web.templates import (
     lobbies_list_page,
     login_page,
     role_panel_create_page,
+    role_panel_detail_page,
     role_panels_list_page,
     settings_page,
     sticky_list_page,
@@ -324,8 +326,12 @@ class TestXSSProtection:
     def test_role_panel_create_error_escapes_xss(self, malicious_input: str) -> None:
         """ロールパネル作成ページのエラーで XSS がエスケープされる。"""
         result = role_panel_create_page(error=malicious_input)
-        assert "<script>" not in result
-        assert "<img " not in result
+        # 悪意のある入力がそのまま含まれていないことを確認
+        # (正当な <script> タグは JavaScript 用に存在するため、
+        # エスケープ後の文字列をチェック)
+        assert malicious_input not in result
+        # エスケープされた形式で含まれていることを確認
+        assert "&lt;script&gt;" in result or "&lt;img " in result
 
     @pytest.mark.parametrize(
         "malicious_input",
@@ -342,7 +348,8 @@ class TestXSSProtection:
             title=malicious_input,
             description=malicious_input,
         )
-        assert "<script>" not in result
+        # 悪意のある入力がそのまま含まれていないことを確認
+        assert malicious_input not in result
 
 
 # ===========================================================================
@@ -455,3 +462,274 @@ class TestRolePanelCreatePage:
         )
         assert "&lt;script&gt;" in result
         assert "<script>xss</script>" not in result
+
+    def test_label_field_class_exists(self) -> None:
+        """Label フィールドに label-field クラスが設定されている。"""
+        result = role_panel_create_page()
+        assert 'class="label-field' in result
+
+    def test_panel_type_change_javascript_exists(self) -> None:
+        """panel_type 変更時の JavaScript が含まれる。"""
+        result = role_panel_create_page()
+        assert "updateLabelFieldsVisibility" in result
+        assert "isButtonType" in result
+
+    def test_discord_roles_json_included(self) -> None:
+        """Discord ロール情報が JavaScript 用 JSON として含まれる。"""
+        discord_roles = {
+            "123": [
+                ("456", "Gamer", 0xFF0000),
+                ("789", "Member", 0x00FF00),
+            ]
+        }
+        result = role_panel_create_page(
+            guild_id="123",
+            discord_roles=discord_roles,
+        )
+        # JavaScript 用 JSON にロール名が含まれていることを確認
+        assert '"name": "Gamer"' in result
+        assert '"name": "Member"' in result
+
+
+class TestRolePanelDetailPage:
+    """role_panel_detail_page テンプレートのテスト。"""
+
+    @pytest.fixture
+    def button_panel(self) -> RolePanel:
+        """ボタン式のパネル。"""
+        return RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Button Panel",
+            description="Test Description",
+        )
+
+    @pytest.fixture
+    def reaction_panel(self) -> RolePanel:
+        """リアクション式のパネル。"""
+        return RolePanel(
+            id=2,
+            guild_id="123",
+            channel_id="456",
+            panel_type="reaction",
+            title="Test Reaction Panel",
+            description="Test Description",
+        )
+
+    @pytest.fixture
+    def panel_items(self) -> list[RolePanelItem]:
+        """パネルアイテムのリスト。"""
+        return [
+            RolePanelItem(
+                id=1,
+                panel_id=1,
+                role_id="789",
+                emoji="🎮",
+                label="Gamer",
+                position=0,
+            ),
+        ]
+
+    def test_contains_panel_title(self, button_panel: RolePanel) -> None:
+        """パネルタイトルが含まれる。"""
+        result = role_panel_detail_page(button_panel, [])
+        assert "Test Button Panel" in result
+
+    def test_button_panel_shows_label_column(
+        self, button_panel: RolePanel, panel_items: list[RolePanelItem]
+    ) -> None:
+        """ボタン式パネルでは Label カラムが表示される。"""
+        result = role_panel_detail_page(button_panel, panel_items)
+        assert '<th class="py-3 px-4 text-left">Label</th>' in result
+
+    def test_reaction_panel_hides_label_column(
+        self, reaction_panel: RolePanel, panel_items: list[RolePanelItem]
+    ) -> None:
+        """リアクション式パネルでは Label カラムが非表示。"""
+        result = role_panel_detail_page(reaction_panel, panel_items)
+        assert '<th class="py-3 px-4 text-left">Label</th>' not in result
+
+    def test_button_panel_shows_label_field_in_form(
+        self, button_panel: RolePanel
+    ) -> None:
+        """ボタン式パネルでは Add Role フォームに Label フィールドが表示される。"""
+        result = role_panel_detail_page(button_panel, [])
+        assert 'for="label"' in result
+        assert "Label (for buttons)" in result
+
+    def test_reaction_panel_hides_label_field_in_form(
+        self, reaction_panel: RolePanel
+    ) -> None:
+        """リアクション式パネルでは Add Role フォームに Label フィールドが非表示。"""
+        result = role_panel_detail_page(reaction_panel, [])
+        # Label フィールドが存在しないことを確認
+        assert "Label (for buttons)" not in result
+
+    def test_discord_roles_select_rendered(self, button_panel: RolePanel) -> None:
+        """Discord ロールがセレクトボックスに表示される。"""
+        discord_roles = [
+            ("456", "Gamer", 0xFF0000),
+            ("789", "Member", 0x00FF00),
+        ]
+        result = role_panel_detail_page(button_panel, [], discord_roles=discord_roles)
+        assert "@Gamer" in result
+        assert "@Member" in result
+
+    def test_no_roles_shows_warning(self, button_panel: RolePanel) -> None:
+        """ロールがない場合に警告が表示される。"""
+        result = role_panel_detail_page(button_panel, [], discord_roles=[])
+        assert "No roles found for this guild" in result
+
+    def test_add_button_disabled_when_no_roles(self, button_panel: RolePanel) -> None:
+        """ロールがない場合に Add Role Item ボタンが非活性。"""
+        result = role_panel_detail_page(button_panel, [], discord_roles=[])
+        assert "disabled" in result
+
+    def test_empty_items_shows_no_roles_message(self, button_panel: RolePanel) -> None:
+        """アイテムがない場合に「No roles configured」メッセージが表示される。"""
+        result = role_panel_detail_page(button_panel, [])
+        assert "No roles configured" in result
+
+    def test_reaction_panel_empty_items_has_correct_colspan(
+        self, reaction_panel: RolePanel
+    ) -> None:
+        """リアクション式パネルの空テーブルは colspan=4 (Label カラムなし)。"""
+        result = role_panel_detail_page(reaction_panel, [])
+        assert 'colspan="4"' in result
+
+    def test_button_panel_empty_items_has_correct_colspan(
+        self, button_panel: RolePanel
+    ) -> None:
+        """ボタン式パネルの空テーブルは colspan=5 (Label カラムあり)。"""
+        result = role_panel_detail_page(button_panel, [])
+        assert 'colspan="5"' in result
+
+    def test_role_with_zero_color_uses_default(self, button_panel: RolePanel) -> None:
+        """color=0 のロールはデフォルト色で表示される。"""
+        discord_roles = [
+            ("456", "No Color Role", 0),  # color=0
+        ]
+        result = role_panel_detail_page(button_panel, [], discord_roles=discord_roles)
+        # デフォルトグレー #99aab5 が使用される
+        assert "#99aab5" in result or "#0099aab5" in result or "99aab5" in result
+
+    def test_role_item_without_cache_shows_id_only(
+        self, button_panel: RolePanel, panel_items: list[RolePanelItem]
+    ) -> None:
+        """キャッシュにないロールは ID のみ表示される。"""
+        # discord_roles を空にして、キャッシュにない状態をシミュレート
+        result = role_panel_detail_page(button_panel, panel_items, discord_roles=[])
+        # ロール ID がそのまま表示される
+        assert "789" in result  # panel_items[0].role_id
+
+    def test_panel_title_is_escaped(self) -> None:
+        """パネルタイトルがエスケープされる。"""
+        panel = RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="<script>alert('xss')</script>",
+        )
+        result = role_panel_detail_page(panel, [])
+        assert "&lt;script&gt;" in result
+        assert "<script>alert" not in result
+
+    def test_item_emoji_is_escaped(self, button_panel: RolePanel) -> None:
+        """アイテムの絵文字がエスケープされる。"""
+        item = RolePanelItem(
+            id=1,
+            panel_id=button_panel.id,
+            role_id="789",
+            emoji="<script>",
+            label="Test",
+            position=0,
+        )
+        result = role_panel_detail_page(button_panel, [item])
+        assert "&lt;script&gt;" in result
+
+    def test_item_label_is_escaped(self, button_panel: RolePanel) -> None:
+        """アイテムのラベルがエスケープされる。"""
+        item = RolePanelItem(
+            id=1,
+            panel_id=button_panel.id,
+            role_id="789",
+            emoji="🎮",
+            label="<script>xss</script>",
+            position=0,
+        )
+        result = role_panel_detail_page(button_panel, [item])
+        assert "&lt;script&gt;" in result
+
+    def test_item_without_label_shows_placeholder(
+        self, button_panel: RolePanel
+    ) -> None:
+        """ラベルがないアイテムは「(no label)」と表示される。"""
+        item = RolePanelItem(
+            id=1,
+            panel_id=button_panel.id,
+            role_id="789",
+            emoji="🎮",
+            label=None,
+            position=0,
+        )
+        result = role_panel_detail_page(button_panel, [item])
+        assert "(no label)" in result
+
+
+class TestRolePanelCreatePageEdgeCases:
+    """role_panel_create_page のエッジケーステスト。"""
+
+    def test_empty_discord_roles_dict(self) -> None:
+        """空の discord_roles 辞書でもエラーにならない。"""
+        result = role_panel_create_page(discord_roles={})
+        assert "Create Role Panel" in result
+
+    def test_discord_roles_with_zero_color(self) -> None:
+        """color=0 のロールが JSON に正しく含まれる。"""
+        discord_roles = {"123": [("456", "No Color", 0)]}
+        result = role_panel_create_page(discord_roles=discord_roles)
+        assert '"color": 0' in result
+
+    def test_discord_roles_with_unicode_name(self) -> None:
+        """Unicode ロール名が JSON に正しく含まれる (エスケープまたはそのまま)。"""
+        discord_roles = {"123": [("456", "日本語ロール", 0xFF0000)]}
+        result = role_panel_create_page(discord_roles=discord_roles)
+        # JSON エンコードでは ensure_ascii=True がデフォルトなので
+        # Unicode はエスケープされる場合がある
+        # "日本語ロール" または "\\u65e5\\u672c\\u8a9e\\u30ed\\u30fc\\u30eb" のいずれか
+        assert "日本語ロール" in result or "\\u65e5\\u672c\\u8a9e" in result
+
+    def test_multiple_guilds_discord_roles(self) -> None:
+        """複数ギルドのロールが JSON に正しく含まれる。"""
+        discord_roles = {
+            "111": [("1", "Guild1 Role", 0xFF0000)],
+            "222": [("2", "Guild2 Role", 0x00FF00)],
+        }
+        result = role_panel_create_page(discord_roles=discord_roles)
+        assert "Guild1 Role" in result
+        assert "Guild2 Role" in result
+
+    def test_guild_id_preserved_on_error(self) -> None:
+        """エラー時に guild_id が保持される。"""
+        result = role_panel_create_page(
+            error="Test error",
+            guild_id="123456789",
+        )
+        assert "123456789" in result
+
+    def test_channel_id_preserved_on_error(self) -> None:
+        """エラー時に channel_id が保持される。"""
+        result = role_panel_create_page(
+            error="Test error",
+            channel_id="987654321",
+        )
+        assert "987654321" in result
+
+    def test_panel_type_reaction_selected(self) -> None:
+        """reaction タイプが選択状態で表示される。"""
+        result = role_panel_create_page(panel_type="reaction")
+        # reaction ラジオボタンが checked
+        assert 'value="reaction"' in result

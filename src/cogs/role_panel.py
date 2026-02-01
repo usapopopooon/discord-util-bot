@@ -24,6 +24,8 @@ from discord.ext import commands
 from src.database.engine import async_session
 from src.services.db_service import (
     add_role_panel_item,
+    delete_discord_role,
+    delete_discord_roles_by_guild,
     delete_role_panel,
     get_all_role_panels,
     get_role_panel_by_message_id,
@@ -31,6 +33,7 @@ from src.services.db_service import (
     get_role_panel_items,
     get_role_panels_by_channel,
     remove_role_panel_item,
+    upsert_discord_role,
 )
 from src.ui.role_panel_view import (
     RolePanelCreateModal,
@@ -418,6 +421,100 @@ class RolePanelCog(commands.Cog):
             logger.warning("No permission to modify role %s", role.name)
         except discord.HTTPException as e:
             logger.error("Failed to modify role: %s", e)
+
+    # -------------------------------------------------------------------------
+    # ロール同期イベント
+    # -------------------------------------------------------------------------
+
+    async def _sync_guild_roles(self, guild: discord.Guild) -> int:
+        """ギルドのロール情報を DB に同期する。
+
+        Args:
+            guild: Discord ギルド
+
+        Returns:
+            同期したロール数
+        """
+        count = 0
+        async with async_session() as db_session:
+            for role in guild.roles:
+                # @everyone ロールとマネージドロール (Bot ロール等) は除外
+                if role.is_default() or role.managed:
+                    continue
+                await upsert_discord_role(
+                    db_session,
+                    guild_id=str(guild.id),
+                    role_id=str(role.id),
+                    role_name=role.name,
+                    color=role.color.value,
+                    position=role.position,
+                )
+                count += 1
+        return count
+
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        """Bot 起動時に全ギルドのロールを同期する。"""
+        total = 0
+        for guild in self.bot.guilds:
+            count = await self._sync_guild_roles(guild)
+            total += count
+            logger.debug("Synced %d roles for guild %s", count, guild.name)
+        logger.info("Synced %d roles across %d guilds", total, len(self.bot.guilds))
+
+    @commands.Cog.listener()
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        """新しいギルドに参加したときにロールを同期する。"""
+        count = await self._sync_guild_roles(guild)
+        logger.info("Synced %d roles for new guild %s", count, guild.name)
+
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        """ギルドから退出したときにキャッシュを削除する。"""
+        async with async_session() as db_session:
+            count = await delete_discord_roles_by_guild(db_session, str(guild.id))
+            logger.info("Deleted %d cached roles for guild %s", count, guild.name)
+
+    @commands.Cog.listener()
+    async def on_guild_role_create(self, role: discord.Role) -> None:
+        """ロールが作成されたときに DB に追加する。"""
+        if role.is_default() or role.managed:
+            return
+        async with async_session() as db_session:
+            await upsert_discord_role(
+                db_session,
+                guild_id=str(role.guild.id),
+                role_id=str(role.id),
+                role_name=role.name,
+                color=role.color.value,
+                position=role.position,
+            )
+            logger.debug("Added role %s to cache", role.name)
+
+    @commands.Cog.listener()
+    async def on_guild_role_update(
+        self, _before: discord.Role, after: discord.Role
+    ) -> None:
+        """ロールが更新されたときに DB を更新する。"""
+        if after.is_default() or after.managed:
+            return
+        async with async_session() as db_session:
+            await upsert_discord_role(
+                db_session,
+                guild_id=str(after.guild.id),
+                role_id=str(after.id),
+                role_name=after.name,
+                color=after.color.value,
+                position=after.position,
+            )
+            logger.debug("Updated role %s in cache", after.name)
+
+    @commands.Cog.listener()
+    async def on_guild_role_delete(self, role: discord.Role) -> None:
+        """ロールが削除されたときに DB から削除する。"""
+        async with async_session() as db_session:
+            await delete_discord_role(db_session, str(role.guild.id), str(role.id))
+            logger.debug("Deleted role %s from cache", role.name)
 
 
 async def setup(bot: commands.Bot) -> None:

@@ -45,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.models import (
     BumpConfig,
     BumpReminder,
+    DiscordRole,
     Lobby,
     RolePanel,
     RolePanelItem,
@@ -1264,3 +1265,138 @@ async def remove_role_panel_item(
         await session.commit()
         return True
     return False
+
+
+# =============================================================================
+# DiscordRole (Discord ロールキャッシュ) 操作
+# =============================================================================
+
+
+async def upsert_discord_role(
+    session: AsyncSession,
+    guild_id: str,
+    role_id: str,
+    role_name: str,
+    color: int = 0,
+    position: int = 0,
+) -> DiscordRole:
+    """Discord ロール情報を作成または更新する。
+
+    同じ guild_id + role_id の組み合わせが既に存在する場合は上書きする。
+
+    Args:
+        session: DB セッション
+        guild_id: Discord サーバーの ID
+        role_id: Discord ロールの ID
+        role_name: ロール名
+        color: ロールの色 (16進数の整数値)
+        position: ロールの表示順序
+
+    Returns:
+        作成または更新された DiscordRole オブジェクト
+    """
+    result = await session.execute(
+        select(DiscordRole).where(
+            DiscordRole.guild_id == guild_id,
+            DiscordRole.role_id == role_id,
+        )
+    )
+    existing = result.scalar_one_or_none()
+
+    if existing:
+        existing.role_name = role_name
+        existing.color = color
+        existing.position = position
+        await session.commit()
+        await session.refresh(existing)
+        return existing
+
+    role = DiscordRole(
+        guild_id=guild_id,
+        role_id=role_id,
+        role_name=role_name,
+        color=color,
+        position=position,
+    )
+    session.add(role)
+    await session.commit()
+    await session.refresh(role)
+    return role
+
+
+async def delete_discord_role(
+    session: AsyncSession,
+    guild_id: str,
+    role_id: str,
+) -> bool:
+    """Discord ロール情報を削除する。
+
+    Args:
+        session: DB セッション
+        guild_id: Discord サーバーの ID
+        role_id: Discord ロールの ID
+
+    Returns:
+        削除できたら True、見つからなければ False
+    """
+    result = await session.execute(
+        select(DiscordRole).where(
+            DiscordRole.guild_id == guild_id,
+            DiscordRole.role_id == role_id,
+        )
+    )
+    role = result.scalar_one_or_none()
+    if role:
+        await session.delete(role)
+        await session.commit()
+        return True
+    return False
+
+
+async def delete_discord_roles_by_guild(
+    session: AsyncSession,
+    guild_id: str,
+) -> int:
+    """サーバーの全ロール情報を削除する。
+
+    Bot がサーバーから退出したときに呼ばれる。
+
+    Args:
+        session: DB セッション
+        guild_id: Discord サーバーの ID
+
+    Returns:
+        削除したレコード数
+    """
+    result = await session.execute(
+        select(DiscordRole).where(DiscordRole.guild_id == guild_id)
+    )
+    roles = list(result.scalars().all())
+    count = len(roles)
+    for role in roles:
+        await session.delete(role)
+    await session.commit()
+    return count
+
+
+async def get_discord_roles_by_guild(
+    session: AsyncSession,
+    guild_id: str,
+) -> list[DiscordRole]:
+    """サーバーの全ロール情報を取得する。
+
+    position の降順 (上位ロールから) でソートして返す。
+
+    Args:
+        session: DB セッション
+        guild_id: Discord サーバーの ID
+
+    Returns:
+        DiscordRole のリスト (position 降順)
+    """
+    result = await session.execute(
+        select(DiscordRole)
+        .where(DiscordRole.guild_id == guild_id)
+        .order_by(DiscordRole.position.desc())
+    )
+    return list(result.scalars().all())

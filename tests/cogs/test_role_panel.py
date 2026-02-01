@@ -7,7 +7,7 @@ import pytest
 from discord.ext import commands
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models import RolePanel, RolePanelItem
+from src.database.models import DiscordRole, RolePanel, RolePanelItem
 
 # =============================================================================
 # Database Model Tests
@@ -45,6 +45,40 @@ class TestRolePanelItemModel:
         assert "RolePanelItem" in repr(item)
         assert "id=1" in repr(item)
         assert "emoji=🎮" in repr(item)
+
+
+class TestDiscordRoleModel:
+    """DiscordRole モデルのテスト。"""
+
+    def test_discord_role_repr(self) -> None:
+        """__repr__ が正しくフォーマットされる。"""
+        role = DiscordRole(
+            id=1,
+            guild_id="123456789",
+            role_id="987654321",
+            role_name="Gamer",
+            color=0xFF0000,
+            position=5,
+        )
+        assert "DiscordRole" in repr(role)
+        assert "id=1" in repr(role)
+        assert "guild_id=123456789" in repr(role)
+        assert "role_id=987654321" in repr(role)
+        assert "name=Gamer" in repr(role)
+
+    def test_discord_role_accepts_optional_fields(self) -> None:
+        """オプションフィールドなしでもインスタンス化できる。"""
+        # color と position を省略してインスタンス化
+        role = DiscordRole(
+            guild_id="123",
+            role_id="456",
+            role_name="Test",
+        )
+        # インスタンス化できることを確認
+        # (デフォルト値は DB 挿入時に適用される)
+        assert role.guild_id == "123"
+        assert role.role_id == "456"
+        assert role.role_name == "Test"
 
 
 # =============================================================================
@@ -2407,6 +2441,377 @@ class TestReactionEventListeners:
 
         # Bot 自身のリアクションは無視されるので、_handle_reaction は実質何もしない
         await cog.on_raw_reaction_remove(payload)
+
+
+# =============================================================================
+# Role Sync Event Listener Tests
+# =============================================================================
+
+
+class TestRoleSyncEventListeners:
+    """ロール同期イベントリスナーのテスト。"""
+
+    @pytest.fixture
+    def mock_bot(self) -> MagicMock:
+        """Mock Bot."""
+        bot = MagicMock(spec=commands.Bot)
+        bot.user = MagicMock()
+        bot.user.id = 999
+        bot.guilds = []
+        return bot
+
+    @pytest.fixture
+    def mock_role(self) -> MagicMock:
+        """Mock Discord Role."""
+        role = MagicMock(spec=discord.Role)
+        role.id = 123
+        role.name = "Test Role"
+        role.color = MagicMock()
+        role.color.value = 0xFF0000
+        role.position = 5
+        role.is_default.return_value = False
+        role.managed = False
+        role.guild = MagicMock(spec=discord.Guild)
+        role.guild.id = 456
+        return role
+
+    @pytest.fixture
+    def mock_guild(self, mock_role: MagicMock) -> MagicMock:
+        """Mock Discord Guild with roles."""
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 456
+        guild.name = "Test Guild"
+
+        # @everyone ロール (is_default=True)
+        everyone_role = MagicMock(spec=discord.Role)
+        everyone_role.is_default.return_value = True
+        everyone_role.managed = False
+
+        # Bot ロール (managed=True)
+        bot_role = MagicMock(spec=discord.Role)
+        bot_role.is_default.return_value = False
+        bot_role.managed = True
+
+        # 通常のロール
+        mock_role.guild = guild
+
+        guild.roles = [everyone_role, bot_role, mock_role]
+        return guild
+
+    async def test_sync_guild_roles_excludes_default_and_managed(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """_sync_guild_roles が @everyone とマネージドロールを除外する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_role") as mock_upsert:
+                count = await cog._sync_guild_roles(mock_guild)
+
+        # 通常のロールのみ (1件) が同期される
+        assert count == 1
+        mock_upsert.assert_called_once()
+
+    async def test_on_ready_syncs_all_guilds(self, mock_bot: MagicMock) -> None:
+        """on_ready が全ギルドのロールを同期する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        # 複数のギルドを設定
+        guild1 = MagicMock(spec=discord.Guild)
+        guild1.name = "Guild 1"
+        guild1.roles = []
+
+        guild2 = MagicMock(spec=discord.Guild)
+        guild2.name = "Guild 2"
+        guild2.roles = []
+
+        mock_bot.guilds = [guild1, guild2]
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch.object(
+            cog, "_sync_guild_roles", new_callable=AsyncMock
+        ) as mock_sync:
+            mock_sync.return_value = 5
+
+            await cog.on_ready()
+
+        assert mock_sync.call_count == 2
+
+    async def test_on_guild_join_syncs_roles(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """on_guild_join が新しいギルドのロールを同期する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch.object(
+            cog, "_sync_guild_roles", new_callable=AsyncMock
+        ) as mock_sync:
+            mock_sync.return_value = 3
+
+            await cog.on_guild_join(mock_guild)
+
+        mock_sync.assert_called_once_with(mock_guild)
+
+    async def test_on_guild_remove_deletes_cached_roles(
+        self, mock_bot: MagicMock, mock_guild: MagicMock
+    ) -> None:
+        """on_guild_remove がキャッシュされたロールを削除する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch(
+                "src.cogs.role_panel.delete_discord_roles_by_guild"
+            ) as mock_delete:
+                mock_delete.return_value = 5
+
+                await cog.on_guild_remove(mock_guild)
+
+        mock_delete.assert_called_once_with(mock_db, str(mock_guild.id))
+
+    async def test_on_guild_role_create_adds_role(
+        self, mock_bot: MagicMock, mock_role: MagicMock
+    ) -> None:
+        """on_guild_role_create がロールをキャッシュに追加する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_role") as mock_upsert:
+                await cog.on_guild_role_create(mock_role)
+
+        mock_upsert.assert_called_once_with(
+            mock_db,
+            guild_id=str(mock_role.guild.id),
+            role_id=str(mock_role.id),
+            role_name=mock_role.name,
+            color=mock_role.color.value,
+            position=mock_role.position,
+        )
+
+    async def test_on_guild_role_create_skips_default_role(
+        self, mock_bot: MagicMock, mock_role: MagicMock
+    ) -> None:
+        """on_guild_role_create が @everyone ロールをスキップする。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        mock_role.is_default.return_value = True
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.upsert_discord_role") as mock_upsert:
+            await cog.on_guild_role_create(mock_role)
+
+        mock_upsert.assert_not_called()
+
+    async def test_on_guild_role_create_skips_managed_role(
+        self, mock_bot: MagicMock, mock_role: MagicMock
+    ) -> None:
+        """on_guild_role_create がマネージドロールをスキップする。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        mock_role.managed = True
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.upsert_discord_role") as mock_upsert:
+            await cog.on_guild_role_create(mock_role)
+
+        mock_upsert.assert_not_called()
+
+    async def test_on_guild_role_update_updates_role(
+        self, mock_bot: MagicMock, mock_role: MagicMock
+    ) -> None:
+        """on_guild_role_update がロールを更新する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+
+        before_role = MagicMock(spec=discord.Role)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_role") as mock_upsert:
+                await cog.on_guild_role_update(before_role, mock_role)
+
+        mock_upsert.assert_called_once()
+
+    async def test_on_guild_role_update_skips_default_role(
+        self, mock_bot: MagicMock, mock_role: MagicMock
+    ) -> None:
+        """on_guild_role_update が @everyone ロールをスキップする。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        mock_role.is_default.return_value = True
+
+        cog = RolePanelCog(mock_bot)
+        before_role = MagicMock(spec=discord.Role)
+
+        with patch("src.cogs.role_panel.upsert_discord_role") as mock_upsert:
+            await cog.on_guild_role_update(before_role, mock_role)
+
+        mock_upsert.assert_not_called()
+
+    async def test_on_guild_role_delete_removes_role(
+        self, mock_bot: MagicMock, mock_role: MagicMock
+    ) -> None:
+        """on_guild_role_delete がロールをキャッシュから削除する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.delete_discord_role") as mock_delete:
+                await cog.on_guild_role_delete(mock_role)
+
+        mock_delete.assert_called_once_with(
+            mock_db, str(mock_role.guild.id), str(mock_role.id)
+        )
+
+    async def test_sync_guild_roles_with_empty_guild(self, mock_bot: MagicMock) -> None:
+        """_sync_guild_roles が空のギルドで 0 を返す。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        empty_guild = MagicMock(spec=discord.Guild)
+        empty_guild.id = 123
+        empty_guild.roles = []
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            count = await cog._sync_guild_roles(empty_guild)
+
+        assert count == 0
+
+    async def test_sync_guild_roles_skips_all_special_roles(
+        self, mock_bot: MagicMock
+    ) -> None:
+        """_sync_guild_roles が @everyone と Bot ロールのみの場合 0 を返す。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        # @everyone ロール
+        everyone = MagicMock(spec=discord.Role)
+        everyone.is_default.return_value = True
+        everyone.managed = False
+
+        # Bot ロール
+        bot_role = MagicMock(spec=discord.Role)
+        bot_role.is_default.return_value = False
+        bot_role.managed = True
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 123
+        guild.roles = [everyone, bot_role]
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_role") as mock_upsert:
+                count = await cog._sync_guild_roles(guild)
+
+        assert count == 0
+        mock_upsert.assert_not_called()
+
+    async def test_on_guild_role_update_with_managed_role(
+        self, mock_bot: MagicMock
+    ) -> None:
+        """on_guild_role_update がマネージドロールをスキップする。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        before = MagicMock(spec=discord.Role)
+        after = MagicMock(spec=discord.Role)
+        after.is_default.return_value = False
+        after.managed = True  # Bot ロールなど
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.upsert_discord_role") as mock_upsert:
+            await cog.on_guild_role_update(before, after)
+
+        mock_upsert.assert_not_called()
+
+    async def test_on_guild_role_delete_for_any_role(
+        self, mock_bot: MagicMock, mock_role: MagicMock
+    ) -> None:
+        """on_guild_role_delete は managed ロールでも削除を試みる。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        # managed ロールでもキャッシュからは削除する
+        mock_role.managed = True
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.delete_discord_role") as mock_delete:
+                await cog.on_guild_role_delete(mock_role)
+
+        # managed ロールでも削除は呼ばれる（キャッシュにあれば削除）
+        mock_delete.assert_called_once()
+
+    async def test_sync_guild_roles_with_multiple_normal_roles(
+        self, mock_bot: MagicMock
+    ) -> None:
+        """_sync_guild_roles が複数の通常ロールを同期する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        # 通常のロール 3 つ
+        roles = []
+        for i in range(3):
+            role = MagicMock(spec=discord.Role)
+            role.id = 100 + i
+            role.name = f"Role {i}"
+            role.color = MagicMock()
+            role.color.value = 0xFF0000
+            role.position = i
+            role.is_default.return_value = False
+            role.managed = False
+            roles.append(role)
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 123
+        guild.roles = roles
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.upsert_discord_role") as mock_upsert:
+                count = await cog._sync_guild_roles(guild)
+
+        assert count == 3
+        assert mock_upsert.call_count == 3
 
 
 # =============================================================================

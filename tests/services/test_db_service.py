@@ -21,6 +21,8 @@ from src.services.db_service import (
     create_sticky_message,
     create_voice_session,
     delete_bump_config,
+    delete_discord_role,
+    delete_discord_roles_by_guild,
     delete_lobby,
     delete_sticky_message,
     delete_voice_session,
@@ -28,6 +30,7 @@ from src.services.db_service import (
     get_all_voice_sessions,
     get_bump_config,
     get_bump_reminder,
+    get_discord_roles_by_guild,
     get_due_bump_reminders,
     get_lobbies_by_guild,
     get_lobby_by_channel_id,
@@ -41,6 +44,7 @@ from src.services.db_service import (
     update_voice_session,
     upsert_bump_config,
     upsert_bump_reminder,
+    upsert_discord_role,
 )
 
 if TYPE_CHECKING:
@@ -1068,3 +1072,308 @@ class TestStickyMessageOperations:
 
         assert sticky.message_type == "text"
         assert sticky.description == "Updated text content"
+
+
+class TestDiscordRoleOperations:
+    """Tests for Discord role cache database operations."""
+
+    async def test_upsert_discord_role_create(self, db_session: AsyncSession) -> None:
+        """Test creating a new Discord role."""
+        role = await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="456",
+            role_name="Test Role",
+            color=0xFF0000,
+            position=5,
+        )
+
+        assert role.id is not None
+        assert role.guild_id == "123"
+        assert role.role_id == "456"
+        assert role.role_name == "Test Role"
+        assert role.color == 0xFF0000
+        assert role.position == 5
+
+    async def test_upsert_discord_role_update(self, db_session: AsyncSession) -> None:
+        """Test updating an existing Discord role."""
+        # Create first
+        await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="456",
+            role_name="Original Name",
+            color=0xFF0000,
+            position=5,
+        )
+
+        # Update
+        role = await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="456",
+            role_name="Updated Name",
+            color=0x00FF00,
+            position=10,
+        )
+
+        assert role.role_name == "Updated Name"
+        assert role.color == 0x00FF00
+        assert role.position == 10
+
+    async def test_upsert_discord_role_different_guilds(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that same role_id in different guilds are separate records."""
+        role1 = await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="456",
+            role_name="Role in Guild 1",
+        )
+
+        role2 = await upsert_discord_role(
+            db_session,
+            guild_id="789",
+            role_id="456",
+            role_name="Role in Guild 2",
+        )
+
+        assert role1.id != role2.id
+        assert role1.guild_id != role2.guild_id
+
+    async def test_delete_discord_role(self, db_session: AsyncSession) -> None:
+        """Test deleting a Discord role."""
+        await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="456",
+            role_name="Test Role",
+        )
+
+        result = await delete_discord_role(db_session, "123", "456")
+        assert result is True
+
+        # Verify role is deleted
+        roles = await get_discord_roles_by_guild(db_session, "123")
+        assert len(roles) == 0
+
+    async def test_delete_discord_role_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test deleting a non-existent Discord role."""
+        result = await delete_discord_role(db_session, "nonexistent", "456")
+        assert result is False
+
+    async def test_delete_discord_roles_by_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test deleting all roles for a guild."""
+        # Create multiple roles for a guild
+        await upsert_discord_role(
+            db_session, guild_id="123", role_id="1", role_name="Role 1"
+        )
+        await upsert_discord_role(
+            db_session, guild_id="123", role_id="2", role_name="Role 2"
+        )
+        await upsert_discord_role(
+            db_session, guild_id="123", role_id="3", role_name="Role 3"
+        )
+        # Create a role in a different guild
+        await upsert_discord_role(
+            db_session, guild_id="999", role_id="4", role_name="Other Guild Role"
+        )
+
+        count = await delete_discord_roles_by_guild(db_session, "123")
+        assert count == 3
+
+        # Verify all roles for guild 123 are deleted
+        roles = await get_discord_roles_by_guild(db_session, "123")
+        assert len(roles) == 0
+
+        # Verify role in other guild still exists
+        other_roles = await get_discord_roles_by_guild(db_session, "999")
+        assert len(other_roles) == 1
+
+    async def test_delete_discord_roles_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test deleting roles for a guild with no roles."""
+        count = await delete_discord_roles_by_guild(db_session, "nonexistent")
+        assert count == 0
+
+    async def test_get_discord_roles_by_guild(self, db_session: AsyncSession) -> None:
+        """Test getting all roles for a guild sorted by position."""
+        # Create roles with different positions
+        await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="1",
+            role_name="Low Role",
+            position=1,
+        )
+        await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="2",
+            role_name="High Role",
+            position=10,
+        )
+        await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="3",
+            role_name="Medium Role",
+            position=5,
+        )
+
+        roles = await get_discord_roles_by_guild(db_session, "123")
+
+        assert len(roles) == 3
+        # Should be sorted by position descending (highest first)
+        assert roles[0].role_name == "High Role"
+        assert roles[1].role_name == "Medium Role"
+        assert roles[2].role_name == "Low Role"
+
+    async def test_get_discord_roles_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting roles for a guild with no roles."""
+        roles = await get_discord_roles_by_guild(db_session, "nonexistent")
+        assert roles == []
+
+    async def test_upsert_discord_role_with_default_values(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a role with default color and position."""
+        role = await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="456",
+            role_name="Default Role",
+            # color と position は省略（デフォルト値 0）
+        )
+
+        assert role.color == 0
+        assert role.position == 0
+
+    async def test_upsert_discord_role_preserves_id_on_update(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that updating a role preserves the same ID."""
+        role1 = await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="456",
+            role_name="Original",
+        )
+        original_id = role1.id
+
+        role2 = await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="456",
+            role_name="Updated",
+        )
+
+        assert role2.id == original_id
+
+    async def test_delete_discord_role_wrong_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test deleting a role with wrong guild_id returns False."""
+        await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="456",
+            role_name="Test Role",
+        )
+
+        # 異なるギルド ID で削除を試みる
+        result = await delete_discord_role(db_session, "999", "456")
+        assert result is False
+
+        # 元のロールはまだ存在する
+        roles = await get_discord_roles_by_guild(db_session, "123")
+        assert len(roles) == 1
+
+    async def test_get_discord_roles_by_guild_with_same_position(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting roles with same position (deterministic ordering)."""
+        await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="1",
+            role_name="Role A",
+            position=5,
+        )
+        await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="2",
+            role_name="Role B",
+            position=5,
+        )
+
+        roles = await get_discord_roles_by_guild(db_session, "123")
+        assert len(roles) == 2
+        # position が同じ場合でも両方取得できる
+
+    async def test_upsert_discord_role_with_zero_color(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a role with color=0 (black/default)."""
+        role = await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="456",
+            role_name="No Color Role",
+            color=0,
+            position=5,
+        )
+
+        assert role.color == 0
+
+    async def test_upsert_discord_role_with_max_color(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a role with maximum color value."""
+        role = await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="456",
+            role_name="White Role",
+            color=0xFFFFFF,
+            position=5,
+        )
+
+        assert role.color == 0xFFFFFF
+
+    async def test_upsert_discord_role_with_unicode_name(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a role with unicode characters in name."""
+        role = await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="456",
+            role_name="日本語ロール 🎮",
+        )
+
+        assert role.role_name == "日本語ロール 🎮"
+
+    async def test_upsert_discord_role_with_long_name(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a role with a long name."""
+        long_name = "A" * 100  # Discord allows up to 100 chars
+        role = await upsert_discord_role(
+            db_session,
+            guild_id="123",
+            role_id="456",
+            role_name=long_name,
+        )
+
+        assert role.role_name == long_name
+        assert len(role.role_name) == 100
