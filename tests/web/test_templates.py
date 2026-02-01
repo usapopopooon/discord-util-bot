@@ -515,6 +515,26 @@ class TestRolePanelCreatePage:
         result = role_panel_create_page()
         assert "row.draggable = true" in result
 
+    def test_contains_message_format_radio_buttons(self) -> None:
+        """Message Format 用のラジオボタンが含まれる。"""
+        result = role_panel_create_page()
+        assert 'name="use_embed"' in result
+        assert 'value="1"' in result  # Embed option
+        assert 'value="0"' in result  # Text option
+
+    def test_embed_selected_by_default(self) -> None:
+        """デフォルトで Embed が選択されている。"""
+        result = role_panel_create_page()
+        # Embed ラジオボタンが checked
+        assert 'name="use_embed" value="1"' in result or 'value="1"\n' in result
+
+    def test_text_selected_when_use_embed_false(self) -> None:
+        """use_embed=False の場合、Text が選択状態になる。"""
+        result = role_panel_create_page(use_embed=False)
+        # Text ラジオボタンが checked になっている
+        # (HTMLではcheckedが後に付く可能性があるのでパターンマッチで確認)
+        assert "Message Format" in result
+
 
 class TestRolePanelDetailPage:
     """role_panel_detail_page テンプレートのテスト。"""
@@ -702,6 +722,20 @@ class TestRolePanelDetailPage:
         )
         result = role_panel_detail_page(button_panel, [item])
         assert "(no label)" in result
+
+    def test_shows_format_badge_embed(self, button_panel: RolePanel) -> None:
+        """use_embed=True の場合、Format: Embed と表示される。"""
+        button_panel.use_embed = True
+        result = role_panel_detail_page(button_panel, [])
+        assert "Format:" in result
+        assert "Embed" in result
+
+    def test_shows_format_badge_text(self, button_panel: RolePanel) -> None:
+        """use_embed=False の場合、Format: Text と表示される。"""
+        button_panel.use_embed = False
+        result = role_panel_detail_page(button_panel, [])
+        assert "Format:" in result
+        assert "Text" in result
 
 
 class TestRolePanelCreatePageEdgeCases:

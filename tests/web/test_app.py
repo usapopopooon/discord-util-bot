@@ -2761,6 +2761,7 @@ class TestRolePanelCreateRoutes:
         assert panel.channel_id == "987654321098765432"
         assert panel.panel_type == "button"
         assert panel.description == "Test description"
+        assert panel.use_embed is True  # Default value
 
         # ロールアイテムも作成されていることを確認
         items_result = await db_session.execute(
@@ -2799,6 +2800,64 @@ class TestRolePanelCreateRoutes:
         panel = result.scalar_one_or_none()
         assert panel is not None
         assert panel.panel_type == "reaction"
+
+    async def test_create_with_use_embed_true(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """use_embed=1 でパネルを作成するとuse_embed=Trueになる。"""
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "button",
+            "title": "Embed Panel",
+            "use_embed": "1",
+            "item_emoji[]": "🎮",
+            "item_role_id[]": "111222333444555666",
+            "item_label[]": "Test",
+            "item_position[]": "0",
+        }
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data=form_data,
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Embed Panel")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is not None
+        assert panel.use_embed is True
+
+    async def test_create_with_use_embed_false(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """use_embed=0 でパネルを作成するとuse_embed=Falseになる。"""
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "button",
+            "title": "Text Panel",
+            "use_embed": "0",
+            "item_emoji[]": "🎵",
+            "item_role_id[]": "222333444555666777",
+            "item_label[]": "Music",
+            "item_position[]": "0",
+        }
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data=form_data,
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Text Panel")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is not None
+        assert panel.use_embed is False
 
     async def test_create_missing_guild_id(
         self, authenticated_client: AsyncClient

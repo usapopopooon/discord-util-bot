@@ -86,6 +86,7 @@ class RolePanelCog(commands.Cog):
         panel_type="パネルの種類 (button: ボタン式, reaction: リアクション式)",
         channel="パネルを送信するチャンネル (省略時: 現在のチャンネル)",
         remove_reaction="リアクション自動削除 (カウントを常に 1 に保つ)",
+        use_embed="メッセージ形式 (True: Embed, False: テキスト)",
     )
     async def create(
         self,
@@ -93,6 +94,7 @@ class RolePanelCog(commands.Cog):
         panel_type: Literal["button", "reaction"],
         channel: discord.TextChannel | None = None,
         remove_reaction: bool = False,
+        use_embed: bool = True,
     ) -> None:
         """ロールパネルを作成する。"""
         target_channel = channel or interaction.channel
@@ -102,7 +104,9 @@ class RolePanelCog(commands.Cog):
             )
             return
 
-        modal = RolePanelCreateModal(panel_type, target_channel.id, remove_reaction)
+        modal = RolePanelCreateModal(
+            panel_type, target_channel.id, remove_reaction, use_embed
+        )
         await interaction.response.send_modal(modal)
 
     @rolepanel.command(name="add", description="ロールパネルにロールを追加する")

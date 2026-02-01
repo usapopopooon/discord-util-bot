@@ -964,6 +964,7 @@ async def create_role_panel(
     description: str | None = None,
     color: int | None = None,
     remove_reaction: bool = False,
+    use_embed: bool = True,
 ) -> RolePanel:
     """ロールパネルを作成する。
 
@@ -976,6 +977,7 @@ async def create_role_panel(
         description: パネルの説明文
         color: Embed の色
         remove_reaction: リアクション自動削除フラグ (リアクション式のみ)
+        use_embed: メッセージ形式フラグ (True: Embed, False: テキスト)
 
     Returns:
         作成された RolePanel オブジェクト
@@ -988,6 +990,7 @@ async def create_role_panel(
         description=description,
         color=color,
         remove_reaction=remove_reaction,
+        use_embed=use_embed,
     )
     session.add(panel)
     await session.commit()

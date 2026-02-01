@@ -631,6 +631,8 @@ class RolePanel(Base):
         remove_reaction (bool): リアクション自動削除フラグ (リアクション式のみ)。
             True の場合、ユーザーがリアクションするとロールをトグルし、
             リアクションを自動削除してカウントを 1 に保つ。
+        use_embed (bool): メッセージ形式フラグ。
+            True の場合は Embed 形式、False の場合は通常テキストメッセージ。
         created_at (datetime): 作成日時 (UTC)。
         items (list[RolePanelItem]): このパネルに設定されたロール一覧。
 
@@ -688,6 +690,13 @@ class RolePanel(Base):
     # False: リアクション追加で付与、削除で解除 (通常動作)
     remove_reaction: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
+    )
+
+    # use_embed: メッセージ形式フラグ
+    # True: Embed 形式 (カラー、フィールド付き)
+    # False: 通常テキストメッセージ形式
+    use_embed: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="1"
     )
 
     # created_at: 作成日時 (UTC)

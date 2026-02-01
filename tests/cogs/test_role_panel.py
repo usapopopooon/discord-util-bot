@@ -30,6 +30,41 @@ class TestRolePanelModel:
         assert "id=1" in repr(panel)
         assert "title=Test Panel" in repr(panel)
 
+    def test_role_panel_use_embed_field_exists(self) -> None:
+        """use_embed フィールドが存在し、値を設定できる。"""
+        # use_embed を明示的に設定して動作を確認
+        # DB デフォルト値は tests/services/test_db_service.py でテスト済み
+        panel = RolePanel(
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+            use_embed=True,
+        )
+        assert panel.use_embed is True
+
+    def test_role_panel_use_embed_false(self) -> None:
+        """use_embed=False を設定できる。"""
+        panel = RolePanel(
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Text Panel",
+            use_embed=False,
+        )
+        assert panel.use_embed is False
+
+    def test_role_panel_use_embed_true(self) -> None:
+        """use_embed=True を設定できる。"""
+        panel = RolePanel(
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Embed Panel",
+            use_embed=True,
+        )
+        assert panel.use_embed is True
+
 
 class TestRolePanelItemModel:
     """RolePanelItem モデルのテスト。"""

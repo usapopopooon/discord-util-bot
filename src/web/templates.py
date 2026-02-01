@@ -1033,6 +1033,7 @@ def role_panel_create_page(
     panel_type: str = "button",
     title: str = "",
     description: str = "",
+    use_embed: bool = True,
     guilds_map: dict[str, str] | None = None,
     channels_map: dict[str, list[tuple[str, str]]] | None = None,
     discord_roles: dict[str, list[tuple[str, str, int]]] | None = None,
@@ -1040,6 +1041,7 @@ def role_panel_create_page(
     """Role panel create page template.
 
     Args:
+        use_embed: メッセージ形式 (True: Embed, False: テキスト)
         guilds_map: ギルドID -> ギルド名 のマッピング
         channels_map: ギルドID -> [(channel_id, channel_name), ...] のマッピング
         discord_roles: ギルドID -> [(role_id, role_name, color), ...] のマッピング
@@ -1071,6 +1073,10 @@ def role_panel_create_page(
     # Panel type selection
     button_selected = "checked" if panel_type == "button" else ""
     reaction_selected = "checked" if panel_type == "reaction" else ""
+
+    # Message format selection
+    embed_selected = "checked" if use_embed else ""
+    text_selected = "" if use_embed else "checked"
 
     # Guild select options (名前で表示)
     guild_options = ""
@@ -1167,6 +1173,28 @@ def role_panel_create_page(
                         <p class="text-gray-500 text-xs mt-1">
                             Button: users click buttons. Reaction: users add/remove emoji reactions.
                         </p>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium mb-2">
+                            Message Format
+                        </label>
+                        <div class="flex gap-4">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name="use_embed" value="1"
+                                       {embed_selected}
+                                       class="text-blue-500 focus:ring-blue-500">
+                                <span>Embed</span>
+                                <span class="text-gray-400 text-xs">(with color and formatting)</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name="use_embed" value="0"
+                                       {text_selected}
+                                       class="text-blue-500 focus:ring-blue-500">
+                                <span>Text</span>
+                                <span class="text-gray-400 text-xs">(simple plain text)</span>
+                            </label>
+                        </div>
                     </div>
 
                     <div class="mb-4">
@@ -1586,6 +1614,12 @@ def role_panel_detail_page(
         else '<span class="bg-purple-600 px-2 py-1 rounded text-xs">Reaction</span>'
     )
 
+    format_badge = (
+        '<span class="text-blue-400">Embed</span>'
+        if panel.use_embed
+        else '<span class="text-gray-300">Text</span>'
+    )
+
     # ロールID -> ロール情報のマップを作成
     role_info_map: dict[str, tuple[str, int]] = {
         r[0]: (r[1], r[2]) for r in discord_roles
@@ -1657,6 +1691,10 @@ def role_panel_detail_page(
                 <div>
                     <span class="text-gray-400">Type:</span>
                     {panel_type_badge}
+                </div>
+                <div>
+                    <span class="text-gray-400">Format:</span>
+                    {format_badge}
                 </div>
                 <div>
                     <span class="text-gray-400">Server:</span>

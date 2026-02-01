@@ -7,6 +7,7 @@ UI の構成:
   - RolePanelView: ロールボタン群 (永続 View)
   - RolePanelCreateModal: パネル作成時のタイトル入力
   - create_role_panel_embed(): Embed 生成関数
+  - create_role_panel_content(): 通常テキスト生成関数
 """
 
 import logging
@@ -52,6 +53,36 @@ def create_role_panel_embed(
         )
 
     return embed
+
+
+def create_role_panel_content(
+    panel: RolePanel,
+    items: list[RolePanelItem],
+) -> str:
+    """ロールパネルの通常テキストメッセージを作成する。
+
+    use_embed=False の場合に使用する。
+
+    Args:
+        panel: RolePanel オブジェクト
+        items: パネルに設定されたロールアイテムのリスト
+
+    Returns:
+        組み立てたテキストメッセージ
+    """
+    lines = [f"**{panel.title}**"]
+
+    if panel.description:
+        lines.append(panel.description)
+
+    # リアクション式の場合はロール一覧を表示
+    if panel.panel_type == "reaction" and items:
+        lines.append("")  # 空行
+        lines.append("**ロール一覧**")
+        for item in items:
+            lines.append(f"{item.emoji} → <@&{item.role_id}>")
+
+    return "\n".join(lines)
 
 
 class RoleButton(discord.ui.Button[Any]):
@@ -181,12 +212,17 @@ class RolePanelCreateModal(discord.ui.Modal, title="ロールパネル作成"):
     )
 
     def __init__(
-        self, panel_type: str, channel_id: int, remove_reaction: bool = False
+        self,
+        panel_type: str,
+        channel_id: int,
+        remove_reaction: bool = False,
+        use_embed: bool = True,
     ) -> None:
         super().__init__()
         self.panel_type = panel_type
         self.channel_id = channel_id
         self.remove_reaction = remove_reaction
+        self.use_embed = use_embed
         # 作成後のコールバック用 (Cog 側で設定)
         self.created_panel: RolePanel | None = None
 
@@ -212,10 +248,8 @@ class RolePanelCreateModal(discord.ui.Modal, title="ロールパネル作成"):
                 if self.description.value
                 else None,
                 remove_reaction=self.remove_reaction,
+                use_embed=self.use_embed,
             )
-
-            # Embed を作成
-            embed = create_role_panel_embed(panel, [])
 
             # パネルを送信
             channel = interaction.guild.get_channel(self.channel_id)
@@ -225,13 +259,22 @@ class RolePanelCreateModal(discord.ui.Modal, title="ロールパネル作成"):
                 )
                 return
 
-            if self.panel_type == "button":
-                # ボタン式: 空の View を送信 (ロール追加後に更新)
-                view = RolePanelView(panel.id, [])
-                msg = await channel.send(embed=embed, view=view)
+            if panel.use_embed:
+                # Embed 形式
+                embed = create_role_panel_embed(panel, [])
+                if self.panel_type == "button":
+                    view = RolePanelView(panel.id, [])
+                    msg = await channel.send(embed=embed, view=view)
+                else:
+                    msg = await channel.send(embed=embed)
             else:
-                # リアクション式: Embed のみ送信
-                msg = await channel.send(embed=embed)
+                # テキスト形式
+                content = create_role_panel_content(panel, [])
+                if self.panel_type == "button":
+                    view = RolePanelView(panel.id, [])
+                    msg = await channel.send(content=content, view=view)
+                else:
+                    msg = await channel.send(content=content)
 
             # メッセージ ID を保存
             await update_role_panel(
@@ -255,7 +298,7 @@ async def refresh_role_panel(
     items: list[RolePanelItem],
     bot: discord.Client,
 ) -> bool:
-    """ロールパネルの Embed とボタンを更新する。
+    """ロールパネルのメッセージを更新する。
 
     Args:
         channel: パネルがあるテキストチャンネル
@@ -278,22 +321,38 @@ async def refresh_role_panel(
         logger.error("Failed to fetch role panel message: %s", e)
         return False
 
-    embed = create_role_panel_embed(panel, items)
-
-    if panel.panel_type == "button":
-        view = RolePanelView(panel.id, items)
-        bot.add_view(view)
-        await msg.edit(embed=embed, view=view)
+    if panel.use_embed:
+        # Embed 形式
+        embed = create_role_panel_embed(panel, items)
+        if panel.panel_type == "button":
+            view = RolePanelView(panel.id, items)
+            bot.add_view(view)
+            await msg.edit(content=None, embed=embed, view=view)
+        else:
+            # リアクション式: リアクションを更新
+            await msg.edit(content=None, embed=embed)
+            await msg.clear_reactions()
+            for item in items:
+                try:
+                    await msg.add_reaction(item.emoji)
+                except discord.HTTPException as e:
+                    logger.warning("Failed to add reaction %s: %s", item.emoji, e)
     else:
-        # リアクション式: リアクションを更新
-        await msg.edit(embed=embed)
-        # 既存のリアクションをクリアして再追加
-        await msg.clear_reactions()
-        for item in items:
-            try:
-                await msg.add_reaction(item.emoji)
-            except discord.HTTPException as e:
-                logger.warning("Failed to add reaction %s: %s", item.emoji, e)
+        # テキスト形式
+        content = create_role_panel_content(panel, items)
+        if panel.panel_type == "button":
+            view = RolePanelView(panel.id, items)
+            bot.add_view(view)
+            await msg.edit(content=content, embed=None, view=view)
+        else:
+            # リアクション式: リアクションを更新
+            await msg.edit(content=content, embed=None)
+            await msg.clear_reactions()
+            for item in items:
+                try:
+                    await msg.add_reaction(item.emoji)
+                except discord.HTTPException as e:
+                    logger.warning("Failed to add reaction %s: %s", item.emoji, e)
 
     return True
 

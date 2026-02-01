@@ -15,9 +15,11 @@ from sqlalchemy.ext.asyncio import (
 from src.constants import DEFAULT_TEST_DATABASE_URL
 from src.database.models import Base
 from src.services.db_service import (
+    add_role_panel_item,
     add_voice_session_member,
     clear_bump_reminder,
     create_lobby,
+    create_role_panel,
     create_sticky_message,
     create_voice_session,
     delete_bump_config,
@@ -27,9 +29,11 @@ from src.services.db_service import (
     delete_discord_role,
     delete_discord_roles_by_guild,
     delete_lobby,
+    delete_role_panel,
     delete_sticky_message,
     delete_voice_session,
     get_all_discord_guilds,
+    get_all_role_panels,
     get_all_sticky_messages,
     get_all_voice_sessions,
     get_bump_config,
@@ -39,12 +43,20 @@ from src.services.db_service import (
     get_due_bump_reminders,
     get_lobbies_by_guild,
     get_lobby_by_channel_id,
+    get_role_panel,
+    get_role_panel_by_message_id,
+    get_role_panel_item_by_emoji,
+    get_role_panel_items,
+    get_role_panels_by_channel,
+    get_role_panels_by_guild,
     get_sticky_message,
     get_voice_session,
     get_voice_session_members_ordered,
+    remove_role_panel_item,
     remove_voice_session_member,
     toggle_bump_reminder,
     update_bump_reminder_role,
+    update_role_panel,
     update_sticky_message_id,
     update_voice_session,
     upsert_bump_config,
@@ -1830,3 +1842,653 @@ class TestDiscordGuildSortingAndTimestamps:
         )
 
         assert channel2.updated_at >= original_timestamp
+
+
+class TestRolePanelOperations:
+    """Tests for role panel database operations."""
+
+    async def test_create_role_panel_with_defaults(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a role panel with default values."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123456789",
+            channel_id="987654321",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        assert panel.id is not None
+        assert panel.guild_id == "123456789"
+        assert panel.channel_id == "987654321"
+        assert panel.panel_type == "button"
+        assert panel.title == "Test Panel"
+        assert panel.description is None
+        assert panel.color is None
+        assert panel.remove_reaction is False
+        assert panel.use_embed is True  # Default value
+        assert panel.message_id is None
+        assert panel.created_at is not None
+
+    async def test_create_role_panel_with_use_embed_true(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a role panel with use_embed=True."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Embed Panel",
+            use_embed=True,
+        )
+
+        assert panel.use_embed is True
+
+    async def test_create_role_panel_with_use_embed_false(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a role panel with use_embed=False."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Text Panel",
+            use_embed=False,
+        )
+
+        assert panel.use_embed is False
+
+    async def test_create_role_panel_reaction_type(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a reaction type role panel."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="reaction",
+            title="Reaction Panel",
+            remove_reaction=True,
+        )
+
+        assert panel.panel_type == "reaction"
+        assert panel.remove_reaction is True
+
+    async def test_create_role_panel_with_all_fields(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a role panel with all fields specified."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Full Panel",
+            description="This is a test panel",
+            color=0x5865F2,
+            remove_reaction=False,
+            use_embed=False,
+        )
+
+        assert panel.title == "Full Panel"
+        assert panel.description == "This is a test panel"
+        assert panel.color == 0x5865F2
+        assert panel.remove_reaction is False
+        assert panel.use_embed is False
+
+    async def test_get_role_panel(self, db_session: AsyncSession) -> None:
+        """Test getting a role panel by ID."""
+        created = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        panel = await get_role_panel(db_session, created.id)
+
+        assert panel is not None
+        assert panel.id == created.id
+        assert panel.title == "Test Panel"
+
+    async def test_get_role_panel_not_found(self, db_session: AsyncSession) -> None:
+        """Test getting a non-existent role panel."""
+        panel = await get_role_panel(db_session, 99999)
+        assert panel is None
+
+    async def test_get_role_panel_by_message_id(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting a role panel by message ID."""
+        created = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+        await update_role_panel(db_session, created, message_id="111222333")
+
+        panel = await get_role_panel_by_message_id(db_session, "111222333")
+
+        assert panel is not None
+        assert panel.id == created.id
+        assert panel.message_id == "111222333"
+
+    async def test_get_role_panel_by_message_id_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting a role panel by non-existent message ID."""
+        panel = await get_role_panel_by_message_id(db_session, "nonexistent")
+        assert panel is None
+
+    async def test_get_role_panels_by_guild(self, db_session: AsyncSession) -> None:
+        """Test getting all role panels for a guild."""
+        await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Panel 1",
+        )
+        await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="789",
+            panel_type="reaction",
+            title="Panel 2",
+        )
+        await create_role_panel(
+            db_session,
+            guild_id="999",
+            channel_id="111",
+            panel_type="button",
+            title="Other Guild Panel",
+        )
+
+        panels = await get_role_panels_by_guild(db_session, "123")
+
+        assert len(panels) == 2
+        titles = [p.title for p in panels]
+        assert "Panel 1" in titles
+        assert "Panel 2" in titles
+
+    async def test_get_role_panels_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting panels for a guild with no panels."""
+        panels = await get_role_panels_by_guild(db_session, "nonexistent")
+        assert panels == []
+
+    async def test_get_role_panels_by_channel(self, db_session: AsyncSession) -> None:
+        """Test getting all role panels for a channel."""
+        await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Panel 1",
+        )
+        await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="reaction",
+            title="Panel 2",
+        )
+        await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="789",
+            panel_type="button",
+            title="Other Channel Panel",
+        )
+
+        panels = await get_role_panels_by_channel(db_session, "456")
+
+        assert len(panels) == 2
+        for panel in panels:
+            assert panel.channel_id == "456"
+
+    async def test_get_role_panels_by_channel_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting panels for a channel with no panels."""
+        panels = await get_role_panels_by_channel(db_session, "nonexistent")
+        assert panels == []
+
+    async def test_get_all_role_panels(self, db_session: AsyncSession) -> None:
+        """Test getting all role panels."""
+        await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Panel 1",
+        )
+        await create_role_panel(
+            db_session,
+            guild_id="789",
+            channel_id="012",
+            panel_type="reaction",
+            title="Panel 2",
+        )
+
+        panels = await get_all_role_panels(db_session)
+
+        assert len(panels) == 2
+
+    async def test_get_all_role_panels_empty(self, db_session: AsyncSession) -> None:
+        """Test getting all panels when there are none."""
+        panels = await get_all_role_panels(db_session)
+        assert panels == []
+
+    async def test_update_role_panel_message_id(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test updating a role panel's message ID."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        updated = await update_role_panel(db_session, panel, message_id="999888777")
+
+        assert updated.message_id == "999888777"
+
+    async def test_update_role_panel_title(self, db_session: AsyncSession) -> None:
+        """Test updating a role panel's title."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Original Title",
+        )
+
+        updated = await update_role_panel(db_session, panel, title="New Title")
+
+        assert updated.title == "New Title"
+
+    async def test_update_role_panel_description(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test updating a role panel's description."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        updated = await update_role_panel(
+            db_session, panel, description="New description"
+        )
+
+        assert updated.description == "New description"
+
+    async def test_update_role_panel_color(self, db_session: AsyncSession) -> None:
+        """Test updating a role panel's color."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        updated = await update_role_panel(db_session, panel, color=0xFF0000)
+
+        assert updated.color == 0xFF0000
+
+    async def test_update_role_panel_multiple_fields(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test updating multiple fields at once."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        updated = await update_role_panel(
+            db_session,
+            panel,
+            message_id="123",
+            title="Updated Title",
+            description="Updated description",
+            color=0x00FF00,
+        )
+
+        assert updated.message_id == "123"
+        assert updated.title == "Updated Title"
+        assert updated.description == "Updated description"
+        assert updated.color == 0x00FF00
+
+    async def test_delete_role_panel(self, db_session: AsyncSession) -> None:
+        """Test deleting a role panel."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+        panel_id = panel.id
+
+        result = await delete_role_panel(db_session, panel_id)
+
+        assert result is True
+        deleted = await get_role_panel(db_session, panel_id)
+        assert deleted is None
+
+    async def test_delete_role_panel_not_found(self, db_session: AsyncSession) -> None:
+        """Test deleting a non-existent role panel."""
+        result = await delete_role_panel(db_session, 99999)
+        assert result is False
+
+    async def test_create_role_panel_with_unicode_title(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test creating a role panel with unicode characters in title."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="ロール選択 🎮",
+            description="お好きなロールを選んでください",
+        )
+
+        assert panel.title == "ロール選択 🎮"
+        assert panel.description == "お好きなロールを選んでください"
+
+
+class TestRolePanelItemOperations:
+    """Tests for role panel item database operations."""
+
+    async def test_add_role_panel_item(self, db_session: AsyncSession) -> None:
+        """Test adding an item to a role panel."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        item = await add_role_panel_item(
+            db_session,
+            panel_id=panel.id,
+            role_id="111222333",
+            emoji="🎮",
+            label="Gamer",
+            style="primary",
+        )
+
+        assert item.id is not None
+        assert item.panel_id == panel.id
+        assert item.role_id == "111222333"
+        assert item.emoji == "🎮"
+        assert item.label == "Gamer"
+        assert item.style == "primary"
+        assert item.position == 0
+
+    async def test_add_role_panel_item_minimal(self, db_session: AsyncSession) -> None:
+        """Test adding an item with minimal fields."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="reaction",
+            title="Test Panel",
+        )
+
+        item = await add_role_panel_item(
+            db_session,
+            panel_id=panel.id,
+            role_id="111222333",
+            emoji="👍",
+        )
+
+        assert item.emoji == "👍"
+        assert item.label is None
+        assert item.style == "secondary"
+
+    async def test_add_role_panel_item_auto_position(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that items get auto-incrementing positions."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        item1 = await add_role_panel_item(
+            db_session,
+            panel_id=panel.id,
+            role_id="111",
+            emoji="🎮",
+        )
+        item2 = await add_role_panel_item(
+            db_session,
+            panel_id=panel.id,
+            role_id="222",
+            emoji="🎵",
+        )
+
+        assert item1.position == 0
+        assert item2.position == 1
+
+    async def test_add_multiple_items(self, db_session: AsyncSession) -> None:
+        """Test adding multiple items to a panel."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id="111", emoji="🎮"
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id="222", emoji="🎵"
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id="333", emoji="🎨"
+        )
+
+        items = await get_role_panel_items(db_session, panel.id)
+
+        assert len(items) == 3
+        # Items are added in order, sorted by position
+        assert items[0].emoji == "🎮"
+        assert items[1].emoji == "🎵"
+        assert items[2].emoji == "🎨"
+
+    async def test_get_role_panel_items(self, db_session: AsyncSession) -> None:
+        """Test getting all items for a panel sorted by position."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        # Add items - they get auto-incrementing positions
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id="111", emoji="🎮"
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id="222", emoji="🎵"
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id="333", emoji="🎨"
+        )
+
+        items = await get_role_panel_items(db_session, panel.id)
+
+        assert len(items) == 3
+        # Should be sorted by position (auto-assigned 0, 1, 2)
+        assert items[0].position == 0
+        assert items[0].emoji == "🎮"
+        assert items[1].position == 1
+        assert items[1].emoji == "🎵"
+        assert items[2].position == 2
+        assert items[2].emoji == "🎨"
+
+    async def test_get_role_panel_items_empty(self, db_session: AsyncSession) -> None:
+        """Test getting items for a panel with no items."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        items = await get_role_panel_items(db_session, panel.id)
+
+        assert items == []
+
+    async def test_get_role_panel_item_by_emoji(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting an item by emoji."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id="111", emoji="🎮"
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id="222", emoji="🎵"
+        )
+
+        item = await get_role_panel_item_by_emoji(db_session, panel.id, "🎮")
+
+        assert item is not None
+        assert item.emoji == "🎮"
+        assert item.role_id == "111"
+
+    async def test_get_role_panel_item_by_emoji_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting an item by non-existent emoji."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        item = await get_role_panel_item_by_emoji(db_session, panel.id, "🎮")
+
+        assert item is None
+
+    async def test_remove_role_panel_item(self, db_session: AsyncSession) -> None:
+        """Test removing an item from a panel."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id="111", emoji="🎮"
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id="222", emoji="🎵"
+        )
+
+        result = await remove_role_panel_item(db_session, panel.id, "🎮")
+
+        assert result is True
+        items = await get_role_panel_items(db_session, panel.id)
+        assert len(items) == 1
+        assert items[0].emoji == "🎵"
+
+    async def test_remove_role_panel_item_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test removing a non-existent item."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        result = await remove_role_panel_item(db_session, panel.id, "🎮")
+
+        assert result is False
+
+    async def test_delete_panel_cascades_items(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that deleting a panel also deletes its items."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id="111", emoji="🎮"
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id="222", emoji="🎵"
+        )
+        panel_id = panel.id
+
+        await delete_role_panel(db_session, panel_id)
+
+        # Items should be deleted with the panel
+        items = await get_role_panel_items(db_session, panel_id)
+        assert items == []
+
+    async def test_add_role_panel_item_with_unicode_label(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test adding an item with unicode characters in label."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        item = await add_role_panel_item(
+            db_session,
+            panel_id=panel.id,
+            role_id="111",
+            emoji="🎮",
+            label="ゲーマー",
+        )
+
+        assert item.label == "ゲーマー"

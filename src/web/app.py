@@ -1376,8 +1376,6 @@ async def _get_discord_roles_by_guild(
     return guild_roles
 
 
-<<<<<<< HEAD
-=======
 async def _get_discord_guilds_and_channels(
     db: AsyncSession,
 ) -> tuple[dict[str, str], dict[str, list[tuple[str, str]]]]:
@@ -1414,7 +1412,6 @@ async def _get_discord_guilds_and_channels(
     return guilds_map, channels_map
 
 
->>>>>>> 008c6b7 (Mod reaction panel and add tests)
 @app.get("/rolepanels/new", response_model=None)
 async def rolepanel_create_get(
     user: dict[str, Any] | None = Depends(get_current_user),
@@ -1424,20 +1421,12 @@ async def rolepanel_create_get(
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-<<<<<<< HEAD
-    guild_channels = await _get_known_guilds_and_channels(db)
-    discord_roles = await _get_discord_roles_by_guild(db)
-    return HTMLResponse(
-        content=role_panel_create_page(
-            guild_channels=guild_channels,
-=======
     guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
     discord_roles = await _get_discord_roles_by_guild(db)
     return HTMLResponse(
         content=role_panel_create_page(
             guilds_map=guilds_map,
             channels_map=channels_map,
->>>>>>> 008c6b7 (Mod reaction panel and add tests)
             discord_roles=discord_roles,
         )
     )
@@ -1452,6 +1441,7 @@ async def rolepanel_create_post(
     panel_type: Annotated[str, Form()] = "button",
     title: Annotated[str, Form()] = "",
     description: Annotated[str, Form()] = "",
+    use_embed: Annotated[str, Form()] = "1",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Create a new role panel with role items."""
@@ -1459,11 +1449,7 @@ async def rolepanel_create_post(
         return RedirectResponse(url="/login", status_code=302)
 
     # エラー時にも選択肢を表示するためにギルド/チャンネル/ロール情報を取得
-<<<<<<< HEAD
-    guild_channels = await _get_known_guilds_and_channels(db)
-=======
     guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
->>>>>>> 008c6b7 (Mod reaction panel and add tests)
     discord_roles = await _get_discord_roles_by_guild(db)
 
     # Trim input values
@@ -1472,6 +1458,9 @@ async def rolepanel_create_post(
     panel_type = panel_type.strip()
     title = title.strip()
     description = description.strip()
+
+    # Convert use_embed to boolean
+    use_embed_bool = use_embed == "1"
 
     # Validation helper
     def error_response(error: str) -> HTMLResponse:
@@ -1483,12 +1472,9 @@ async def rolepanel_create_post(
                 panel_type=panel_type,
                 title=title,
                 description=description,
-<<<<<<< HEAD
-                guild_channels=guild_channels,
-=======
+                use_embed=use_embed_bool,
                 guilds_map=guilds_map,
                 channels_map=channels_map,
->>>>>>> 008c6b7 (Mod reaction panel and add tests)
                 discord_roles=discord_roles,
             )
         )
@@ -1588,6 +1574,7 @@ async def rolepanel_create_post(
         panel_type=panel_type,
         title=title,
         description=description if description else None,
+        use_embed=use_embed_bool,
     )
     db.add(panel)
     await db.flush()  # Get the panel ID without committing
@@ -1633,8 +1620,6 @@ async def rolepanel_detail(
 
     items = sorted(panel.items, key=lambda x: x.position)
 
-<<<<<<< HEAD
-=======
     # ギルド・チャンネル名を取得
     guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
     guild_name = guilds_map.get(panel.guild_id)
@@ -1644,23 +1629,18 @@ async def rolepanel_detail(
         (name for cid, name in guild_channels if cid == panel.channel_id), None
     )
 
->>>>>>> 008c6b7 (Mod reaction panel and add tests)
     # このギルドのDiscordロール情報を取得
     discord_roles = await _get_discord_roles_by_guild(db)
     guild_discord_roles = discord_roles.get(panel.guild_id, [])
 
     return HTMLResponse(
         content=role_panel_detail_page(
-<<<<<<< HEAD
-            panel, items, success=success, discord_roles=guild_discord_roles
-=======
             panel,
             items,
             success=success,
             discord_roles=guild_discord_roles,
             guild_name=guild_name,
             channel_name=channel_name,
->>>>>>> 008c6b7 (Mod reaction panel and add tests)
         )
     )
 
@@ -1696,8 +1676,6 @@ async def rolepanel_add_item(
 
     items = sorted(panel.items, key=lambda x: x.position)
 
-<<<<<<< HEAD
-=======
     # ギルド・チャンネル名を取得
     guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
     guild_name = guilds_map.get(panel.guild_id)
@@ -1706,7 +1684,6 @@ async def rolepanel_add_item(
         (name for cid, name in guild_channels if cid == panel.channel_id), None
     )
 
->>>>>>> 008c6b7 (Mod reaction panel and add tests)
     # このギルドのDiscordロール情報を取得
     discord_roles = await _get_discord_roles_by_guild(db)
     guild_discord_roles = discord_roles.get(panel.guild_id, [])
@@ -1715,16 +1692,12 @@ async def rolepanel_add_item(
     def error_response(error: str) -> HTMLResponse:
         return HTMLResponse(
             content=role_panel_detail_page(
-<<<<<<< HEAD
-                panel, items, error=error, discord_roles=guild_discord_roles
-=======
                 panel,
                 items,
                 error=error,
                 discord_roles=guild_discord_roles,
                 guild_name=guild_name,
                 channel_name=channel_name,
->>>>>>> 008c6b7 (Mod reaction panel and add tests)
             )
         )
 

@@ -11,6 +11,7 @@ from src.ui.role_panel_view import (
     RoleButton,
     RolePanelCreateModal,
     RolePanelView,
+    create_role_panel_content,
     create_role_panel_embed,
     handle_role_reaction,
     refresh_role_panel,
@@ -31,6 +32,7 @@ def _make_role_panel(
     description: str | None = None,
     color: int | None = None,
     message_id: str | None = None,
+    use_embed: bool = True,
 ) -> MagicMock:
     """Create a mock RolePanel object."""
     panel = MagicMock()
@@ -42,6 +44,7 @@ def _make_role_panel(
     panel.description = description
     panel.color = color
     panel.message_id = message_id
+    panel.use_embed = use_embed
     return panel
 
 
@@ -268,6 +271,67 @@ class TestCreateRolePanelEmbed:
         embed = create_role_panel_embed(panel, items)
         # フィールドなし
         assert len(embed.fields) == 0
+
+
+# ===========================================================================
+# create_role_panel_content
+# ===========================================================================
+
+
+class TestCreateRolePanelContent:
+    """create_role_panel_content のテスト。"""
+
+    def test_creates_content_with_title(self) -> None:
+        """タイトル付きのテキストコンテンツを作成できる。"""
+        panel = _make_role_panel(title="Test Panel", use_embed=False)
+        content = create_role_panel_content(panel, [])
+        assert "**Test Panel**" in content
+
+    def test_creates_content_with_description(self) -> None:
+        """説明文付きのテキストコンテンツを作成できる。"""
+        panel = _make_role_panel(
+            description="This is a description", use_embed=False
+        )
+        content = create_role_panel_content(panel, [])
+        assert "This is a description" in content
+
+    def test_creates_content_without_description(self) -> None:
+        """説明文なしのテキストコンテンツを作成できる。"""
+        panel = _make_role_panel(
+            title="Title Only", description=None, use_embed=False
+        )
+        content = create_role_panel_content(panel, [])
+        assert "**Title Only**" in content
+        # 説明文がない場合は余分な改行がないはず
+        assert content.strip().startswith("**Title Only**")
+
+    def test_reaction_panel_shows_role_list(self) -> None:
+        """リアクション式パネルはロール一覧を表示する。"""
+        panel = _make_role_panel(panel_type="reaction", use_embed=False)
+        items = [
+            _make_role_panel_item(emoji="🎮", role_id="111"),
+            _make_role_panel_item(emoji="🎨", role_id="222"),
+        ]
+        content = create_role_panel_content(panel, items)
+        assert "**ロール一覧**" in content
+        assert "🎮 → <@&111>" in content
+        assert "🎨 → <@&222>" in content
+
+    def test_button_panel_no_role_list(self) -> None:
+        """ボタン式パネルはロール一覧を表示しない。"""
+        panel = _make_role_panel(panel_type="button", use_embed=False)
+        items = [
+            _make_role_panel_item(emoji="🎮", role_id="111"),
+        ]
+        content = create_role_panel_content(panel, items)
+        # ロール一覧は表示されない
+        assert "ロール一覧" not in content
+
+    def test_returns_string(self) -> None:
+        """戻り値が文字列であることを確認。"""
+        panel = _make_role_panel(use_embed=False)
+        content = create_role_panel_content(panel, [])
+        assert isinstance(content, str)
 
 
 # ===========================================================================
