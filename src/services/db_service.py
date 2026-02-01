@@ -1405,8 +1405,6 @@ async def get_discord_roles_by_guild(
         .order_by(DiscordRole.position.desc())
     )
     return list(result.scalars().all())
-<<<<<<< HEAD
-=======
 
 
 # =============================================================================
@@ -1640,4 +1638,3 @@ async def get_discord_channels_by_guild(
         .order_by(DiscordChannel.position)
     )
     return list(result.scalars().all())
->>>>>>> 008c6b7 (Mod reaction panel and add tests)

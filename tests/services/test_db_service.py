@@ -1514,7 +1514,7 @@ class TestDiscordGuildOperations:
 class TestDiscordChannelOperations:
     """Tests for Discord channel cache database operations."""
 
-    async def test_upsert_discord_channel_create(self, db_session: AsyncSession) -> None:
+    async def test_upsert_channel_create(self, db_session: AsyncSession) -> None:
         """Test creating a new Discord channel."""
         channel = await upsert_discord_channel(
             db_session,
@@ -1535,7 +1535,7 @@ class TestDiscordChannelOperations:
         assert channel.category_id == "789"
         assert channel.updated_at is not None
 
-    async def test_upsert_discord_channel_update(self, db_session: AsyncSession) -> None:
+    async def test_upsert_channel_update(self, db_session: AsyncSession) -> None:
         """Test updating an existing Discord channel."""
         await upsert_discord_channel(
             db_session,
@@ -1632,7 +1632,10 @@ class TestDiscordChannelOperations:
             db_session, guild_id="123", channel_id="3", channel_name="channel-3"
         )
         await upsert_discord_channel(
-            db_session, guild_id="999", channel_id="4", channel_name="other-guild-channel"
+            db_session,
+            guild_id="999",
+            channel_id="4",
+            channel_name="other-guild-channel",
         )
 
         count = await delete_discord_channels_by_guild(db_session, "123")
@@ -1960,9 +1963,7 @@ class TestRolePanelOperations:
         panel = await get_role_panel(db_session, 99999)
         assert panel is None
 
-    async def test_get_role_panel_by_message_id(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_get_role_panel_by_message_id(self, db_session: AsyncSession) -> None:
         """Test getting a role panel by message ID."""
         created = await create_role_panel(
             db_session,
@@ -2087,9 +2088,7 @@ class TestRolePanelOperations:
         panels = await get_all_role_panels(db_session)
         assert panels == []
 
-    async def test_update_role_panel_message_id(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_update_role_panel_message_id(self, db_session: AsyncSession) -> None:
         """Test updating a role panel's message ID."""
         panel = await create_role_panel(
             db_session,
@@ -2367,9 +2366,7 @@ class TestRolePanelItemOperations:
 
         assert items == []
 
-    async def test_get_role_panel_item_by_emoji(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_get_role_panel_item_by_emoji(self, db_session: AsyncSession) -> None:
         """Test getting an item by emoji."""
         panel = await create_role_panel(
             db_session,
@@ -2446,9 +2443,7 @@ class TestRolePanelItemOperations:
 
         assert result is False
 
-    async def test_delete_panel_cascades_items(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_delete_panel_cascades_items(self, db_session: AsyncSession) -> None:
         """Test that deleting a panel also deletes its items."""
         panel = await create_role_panel(
             db_session,

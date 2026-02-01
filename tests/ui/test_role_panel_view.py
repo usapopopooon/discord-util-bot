@@ -289,17 +289,13 @@ class TestCreateRolePanelContent:
 
     def test_creates_content_with_description(self) -> None:
         """説明文付きのテキストコンテンツを作成できる。"""
-        panel = _make_role_panel(
-            description="This is a description", use_embed=False
-        )
+        panel = _make_role_panel(description="This is a description", use_embed=False)
         content = create_role_panel_content(panel, [])
         assert "This is a description" in content
 
     def test_creates_content_without_description(self) -> None:
         """説明文なしのテキストコンテンツを作成できる。"""
-        panel = _make_role_panel(
-            title="Title Only", description=None, use_embed=False
-        )
+        panel = _make_role_panel(title="Title Only", description=None, use_embed=False)
         content = create_role_panel_content(panel, [])
         assert "**Title Only**" in content
         # 説明文がない場合は余分な改行がないはず
@@ -821,3 +817,230 @@ class TestHandleRoleReaction:
             ):
                 # エラーにならずに処理される
                 await handle_role_reaction(payload, "add")
+
+
+# ===========================================================================
+# use_embed Feature Regression Tests
+# ===========================================================================
+
+
+class TestUseEmbedFeature:
+    """use_embed 機能のデグレ防止テスト。
+
+    Embed/Text 形式の切り替えが正しく動作することを確認する。
+    """
+
+    @pytest.mark.asyncio
+    async def test_refresh_panel_uses_embed_when_use_embed_true(self) -> None:
+        """use_embed=True の場合、Embed 形式でメッセージを編集する。"""
+        msg = MagicMock(spec=discord.Message)
+        msg.edit = AsyncMock()
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.fetch_message = AsyncMock(return_value=msg)
+
+        # use_embed=True (Embed モード)
+        panel = _make_role_panel(
+            panel_type="button",
+            message_id="123456",
+            use_embed=True,
+        )
+        items = [_make_role_panel_item(emoji="🎮", label="Test")]
+
+        bot = MagicMock(spec=discord.Client)
+        bot.add_view = MagicMock()
+
+        result = await refresh_role_panel(channel, panel, items, bot)
+
+        assert result is True
+        msg.edit.assert_called_once()
+        # embed が設定され、content が None であることを確認
+        call_kwargs = msg.edit.call_args.kwargs
+        assert "embed" in call_kwargs
+        assert call_kwargs["embed"] is not None
+        assert call_kwargs.get("content") is None
+
+    @pytest.mark.asyncio
+    async def test_refresh_panel_uses_content_when_use_embed_false(self) -> None:
+        """use_embed=False の場合、テキスト形式でメッセージを編集する。"""
+        msg = MagicMock(spec=discord.Message)
+        msg.edit = AsyncMock()
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.fetch_message = AsyncMock(return_value=msg)
+
+        # use_embed=False (テキストモード)
+        panel = _make_role_panel(
+            panel_type="button",
+            message_id="123456",
+            use_embed=False,
+            title="Test Panel",
+        )
+        items = [_make_role_panel_item(emoji="🎮", label="Test")]
+
+        bot = MagicMock(spec=discord.Client)
+        bot.add_view = MagicMock()
+
+        result = await refresh_role_panel(channel, panel, items, bot)
+
+        assert result is True
+        msg.edit.assert_called_once()
+        # content が設定され、embed が None であることを確認
+        call_kwargs = msg.edit.call_args.kwargs
+        assert "content" in call_kwargs
+        assert call_kwargs["content"] is not None
+        assert "**Test Panel**" in call_kwargs["content"]
+        assert call_kwargs.get("embed") is None
+
+    @pytest.mark.asyncio
+    async def test_refresh_reaction_panel_uses_embed_when_use_embed_true(self) -> None:
+        """リアクション式パネルでも use_embed=True なら Embed を使う。"""
+        msg = MagicMock(spec=discord.Message)
+        msg.edit = AsyncMock()
+        msg.clear_reactions = AsyncMock()
+        msg.add_reaction = AsyncMock()
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.fetch_message = AsyncMock(return_value=msg)
+
+        panel = _make_role_panel(
+            panel_type="reaction",
+            message_id="123456",
+            use_embed=True,
+        )
+        items = [_make_role_panel_item(emoji="🎮")]
+
+        bot = MagicMock(spec=discord.Client)
+
+        result = await refresh_role_panel(channel, panel, items, bot)
+
+        assert result is True
+        call_kwargs = msg.edit.call_args.kwargs
+        assert call_kwargs.get("embed") is not None
+        assert call_kwargs.get("content") is None
+
+    @pytest.mark.asyncio
+    async def test_refresh_reaction_panel_uses_content_when_use_embed_false(
+        self,
+    ) -> None:
+        """リアクション式パネルでも use_embed=False ならテキストを使う。"""
+        msg = MagicMock(spec=discord.Message)
+        msg.edit = AsyncMock()
+        msg.clear_reactions = AsyncMock()
+        msg.add_reaction = AsyncMock()
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.fetch_message = AsyncMock(return_value=msg)
+
+        panel = _make_role_panel(
+            panel_type="reaction",
+            message_id="123456",
+            use_embed=False,
+            title="Reaction Panel",
+        )
+        items = [_make_role_panel_item(emoji="🎮", role_id="111")]
+
+        bot = MagicMock(spec=discord.Client)
+
+        result = await refresh_role_panel(channel, panel, items, bot)
+
+        assert result is True
+        call_kwargs = msg.edit.call_args.kwargs
+        assert call_kwargs.get("content") is not None
+        assert "**Reaction Panel**" in call_kwargs["content"]
+        assert "🎮 → <@&111>" in call_kwargs["content"]  # ロール一覧も表示
+        assert call_kwargs.get("embed") is None
+
+    @pytest.mark.asyncio
+    async def test_create_modal_stores_use_embed_true(self) -> None:
+        """RolePanelCreateModal が use_embed=True を保持する。"""
+        modal = RolePanelCreateModal(
+            panel_type="button",
+            channel_id=123456789,
+            remove_reaction=False,
+            use_embed=True,
+        )
+        assert modal.use_embed is True
+
+    @pytest.mark.asyncio
+    async def test_create_modal_stores_use_embed_false(self) -> None:
+        """RolePanelCreateModal が use_embed=False を保持する。"""
+        modal = RolePanelCreateModal(
+            panel_type="button",
+            channel_id=123456789,
+            remove_reaction=False,
+            use_embed=False,
+        )
+        assert modal.use_embed is False
+
+    @pytest.mark.asyncio
+    async def test_create_modal_default_use_embed_is_true(self) -> None:
+        """RolePanelCreateModal のデフォルト use_embed は True。"""
+        modal = RolePanelCreateModal(
+            panel_type="button",
+            channel_id=123456789,
+        )
+        assert modal.use_embed is True
+
+    def test_embed_format_includes_fields_for_reaction_panel(self) -> None:
+        """Embed 形式ではリアクション式パネルにフィールドが含まれる。"""
+        panel = _make_role_panel(
+            panel_type="reaction",
+            title="Reaction Test",
+            use_embed=True,
+        )
+        items = [
+            _make_role_panel_item(emoji="🎮", role_id="111"),
+            _make_role_panel_item(emoji="🎨", role_id="222"),
+        ]
+        embed = create_role_panel_embed(panel, items)
+
+        assert len(embed.fields) == 1
+        assert embed.fields[0].name == "ロール一覧"
+
+    def test_text_format_includes_role_list_for_reaction_panel(self) -> None:
+        """テキスト形式でもリアクション式パネルにロール一覧が含まれる。"""
+        panel = _make_role_panel(
+            panel_type="reaction",
+            title="Reaction Test",
+            use_embed=False,
+        )
+        items = [
+            _make_role_panel_item(emoji="🎮", role_id="111"),
+            _make_role_panel_item(emoji="🎨", role_id="222"),
+        ]
+        content = create_role_panel_content(panel, items)
+
+        assert "**ロール一覧**" in content
+        assert "🎮 → <@&111>" in content
+        assert "🎨 → <@&222>" in content
+
+    def test_embed_and_text_both_show_title(self) -> None:
+        """Embed とテキスト両方でタイトルが表示される。"""
+        panel = _make_role_panel(title="My Panel Title", use_embed=True)
+
+        embed = create_role_panel_embed(panel, [])
+        assert embed.title == "My Panel Title"
+
+        panel_text = _make_role_panel(title="My Panel Title", use_embed=False)
+        content = create_role_panel_content(panel_text, [])
+        assert "**My Panel Title**" in content
+
+    def test_embed_and_text_both_show_description(self) -> None:
+        """Embed とテキスト両方で説明文が表示される。"""
+        panel = _make_role_panel(
+            title="Test",
+            description="This is a description",
+            use_embed=True,
+        )
+
+        embed = create_role_panel_embed(panel, [])
+        assert embed.description == "This is a description"
+
+        panel_text = _make_role_panel(
+            title="Test",
+            description="This is a description",
+            use_embed=False,
+        )
+        content = create_role_panel_content(panel_text, [])
+        assert "This is a description" in content

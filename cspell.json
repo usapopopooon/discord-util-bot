@@ -68,7 +68,14 @@
     "Reposted",
     "capsys",
     "rolepanel",
-    "rolepanels"
+    "rolepanels",
+    "gname",
+    "linecap",
+    "linejoin",
+    "dragstart",
+    "dragend",
+    "dragover",
+    "upserts"
   ],
   "ignorePaths": [
     ".venv",

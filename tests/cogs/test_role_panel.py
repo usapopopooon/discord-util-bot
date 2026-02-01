@@ -2636,9 +2636,7 @@ class TestRoleSyncEventListeners:
                 patch(
                     "src.cogs.role_panel.delete_discord_channels_by_guild"
                 ) as mock_delete_channels,
-                patch(
-                    "src.cogs.role_panel.delete_discord_guild"
-                ) as mock_delete_guild,
+                patch("src.cogs.role_panel.delete_discord_guild") as mock_delete_guild,
             ):
                 mock_delete_roles.return_value = 5
                 mock_delete_channels.return_value = 3
@@ -3266,9 +3264,7 @@ class TestGuildInfoAndChannelSyncEventListeners:
 
         cog = RolePanelCog(mock_bot)
 
-        with patch.object(
-            cog, "_sync_guild_info", new_callable=AsyncMock
-        ) as mock_sync:
+        with patch.object(cog, "_sync_guild_info", new_callable=AsyncMock) as mock_sync:
             await cog.on_guild_update(before, mock_guild)
 
         mock_sync.assert_called_once_with(mock_guild)
@@ -3289,9 +3285,7 @@ class TestGuildInfoAndChannelSyncEventListeners:
 
         cog = RolePanelCog(mock_bot)
 
-        with patch.object(
-            cog, "_sync_guild_info", new_callable=AsyncMock
-        ) as mock_sync:
+        with patch.object(cog, "_sync_guild_info", new_callable=AsyncMock) as mock_sync:
             await cog.on_guild_update(before, mock_guild)
 
         mock_sync.assert_called_once_with(mock_guild)
@@ -3308,9 +3302,7 @@ class TestGuildInfoAndChannelSyncEventListeners:
 
         cog = RolePanelCog(mock_bot)
 
-        with patch.object(
-            cog, "_sync_guild_info", new_callable=AsyncMock
-        ) as mock_sync:
+        with patch.object(cog, "_sync_guild_info", new_callable=AsyncMock) as mock_sync:
             await cog.on_guild_update(before, mock_guild)
 
         mock_sync.assert_not_called()
@@ -3453,9 +3445,7 @@ class TestGuildInfoAndChannelSyncEventListeners:
             with patch("src.cogs.role_panel.delete_discord_channel") as mock_delete:
                 await cog.on_guild_channel_update(before, after)
 
-        mock_delete.assert_called_once_with(
-            mock_db, str(after.guild.id), str(after.id)
-        )
+        mock_delete.assert_called_once_with(mock_db, str(after.guild.id), str(after.id))
 
     async def test_on_guild_channel_update_deletes_when_view_permission_lost(
         self, mock_bot: MagicMock, mock_text_channel: MagicMock

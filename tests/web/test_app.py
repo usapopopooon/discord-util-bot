@@ -3435,7 +3435,7 @@ class TestGetDiscordRolesByGuildEdgeCases:
 class TestGetDiscordGuildsAndChannels:
     """_get_discord_guilds_and_channels のテスト。"""
 
-    async def test_returns_guilds_sorted_by_name(self, db_session: AsyncSession) -> None:
+    async def test_guilds_sorted_by_name(self, db_session: AsyncSession) -> None:
         """ギルドが名前順でソートされて返される。"""
         from src.web.app import _get_discord_guilds_and_channels
 
@@ -3504,7 +3504,10 @@ class TestGetDiscordGuildsAndChannels:
         )
         db_session.add(
             DiscordChannel(
-                guild_id="123", channel_id="2", channel_name="middle-channel", position=5
+                guild_id="123",
+                channel_id="2",
+                channel_name="middle-channel",
+                position=5,
             )
         )
         await db_session.commit()

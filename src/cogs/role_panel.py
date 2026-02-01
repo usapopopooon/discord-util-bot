@@ -483,7 +483,9 @@ class RolePanelCog(commands.Cog):
                     channel_name=channel.name,
                     channel_type=channel.type.value,
                     position=channel.position,
-                    category_id=str(channel.category_id) if channel.category_id else None,
+                    category_id=(
+                        str(channel.category_id) if channel.category_id else None
+                    ),
                 )
                 count += 1
         return count
@@ -630,9 +632,7 @@ class RolePanelCog(commands.Cog):
     # -------------------------------------------------------------------------
 
     @commands.Cog.listener()
-    async def on_guild_channel_create(
-        self, channel: discord.abc.GuildChannel
-    ) -> None:
+    async def on_guild_channel_create(self, channel: discord.abc.GuildChannel) -> None:
         """チャンネルが作成されたときに DB に追加する。"""
         if channel.type not in self.SYNC_CHANNEL_TYPES:
             return
@@ -654,7 +654,7 @@ class RolePanelCog(commands.Cog):
     @commands.Cog.listener()
     async def on_guild_channel_update(
         self,
-        before: discord.abc.GuildChannel,
+        _before: discord.abc.GuildChannel,
         after: discord.abc.GuildChannel,
     ) -> None:
         """チャンネルが更新されたときに DB を更新する。"""
@@ -687,9 +687,7 @@ class RolePanelCog(commands.Cog):
             logger.debug("Updated channel %s in cache", after.name)
 
     @commands.Cog.listener()
-    async def on_guild_channel_delete(
-        self, channel: discord.abc.GuildChannel
-    ) -> None:
+    async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
         """チャンネルが削除されたときに DB から削除する。"""
         async with async_session() as db_session:
             await delete_discord_channel(
