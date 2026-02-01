@@ -441,37 +441,48 @@ class TransferSelectMenu(discord.ui.Select[Any]):
 
 
 class KickSelectView(discord.ui.View):
-    """キック対象を選択するユーザーセレクト。
+    """キック対象を選択するセレクトメニュー。
 
-    @discord.ui.select(cls=UserSelect) で Discord 標準のユーザー選択 UI を使う。
-    サーバー全メンバーから検索・選択できる。
+    チャンネル内のメンバー一覧をドロップダウンで表示する。
+    オーナー自身と Bot は選択肢から除外される。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, channel: discord.VoiceChannel, owner_id: int) -> None:
         super().__init__(timeout=60)
+        # オーナー自身と Bot を除外した候補リストを作成
+        members = [m for m in channel.members if m.id != owner_id and not m.bot]
+        if not members:
+            return  # 誰もいなければセレクトメニューを追加しない
+        # SelectOption: ドロップダウンの選択肢 (label=表示名, value=内部値)
+        # Discord の制限: セレクトの選択肢は最大25個
+        options = [
+            discord.SelectOption(label=m.display_name, value=str(m.id))
+            for m in members[:25]
+        ]
+        self.add_item(KickSelectMenu(options))
 
-    @discord.ui.select(
-        cls=discord.ui.UserSelect,
-        placeholder="キックするユーザーを選択...",
-    )
-    async def select_user(
-        self, interaction: discord.Interaction, select: discord.ui.UserSelect[Any]
-    ) -> None:
+
+class KickSelectMenu(discord.ui.Select[Any]):
+    """キックのセレクトメニュー本体。"""
+
+    def __init__(self, options: list[discord.SelectOption]) -> None:
+        super().__init__(placeholder="キックするユーザーを選択...", options=options)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
         """ユーザー選択時の処理。VC から切断する (move_to(None))。"""
-        user_to_kick = select.values[0]
         channel = interaction.channel
-
         if not isinstance(channel, discord.VoiceChannel):
             return
 
-        # 選択されたユーザーがこの VC にいるか確認
-        if not (
-            isinstance(user_to_kick, discord.Member)
-            and user_to_kick.voice
-            and user_to_kick.voice.channel == channel
-        ):
+        guild = interaction.guild
+        if not guild:
+            return
+
+        # self.values[0]: 選択された値 (ユーザー ID の文字列)
+        user_to_kick = guild.get_member(int(self.values[0]))
+        if not user_to_kick:
             await interaction.response.edit_message(
-                content=f"{user_to_kick.mention} はこのチャンネルにいません。",
+                content="メンバーが見つかりません。",
                 view=None,
             )
             return
@@ -490,8 +501,9 @@ class BlockSelectView(discord.ui.View):
     既に VC にいる場合はキックもする。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, owner_id: int) -> None:
         super().__init__(timeout=60)
+        self.owner_id = owner_id
 
     @discord.ui.select(
         cls=discord.ui.UserSelect, placeholder="ブロックするユーザーを選択..."
@@ -507,6 +519,14 @@ class BlockSelectView(discord.ui.View):
             return
 
         if not isinstance(user_to_block, discord.Member):
+            return
+
+        # オーナー自身はブロックできない
+        if user_to_block.id == self.owner_id:
+            await interaction.response.edit_message(
+                content="自分自身をブロックすることはできません。",
+                view=None,
+            )
             return
 
         # connect=False で接続を拒否
@@ -559,29 +579,47 @@ class AllowSelectView(discord.ui.View):
 
 
 class CameraBanSelectView(discord.ui.View):
-    """カメラ禁止対象を選択するユーザーセレクト。
+    """カメラ禁止対象を選択するセレクトメニュー。
 
-    カメラ禁止 = stream=False で配信権限を拒否する。
-    特定のユーザーのカメラ配信を禁止する場合に使う。
+    チャンネル内のメンバー一覧をドロップダウンで表示する。
+    オーナー自身と Bot は選択肢から除外される。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, channel: discord.VoiceChannel, owner_id: int) -> None:
         super().__init__(timeout=60)
+        # オーナー自身と Bot を除外した候補リストを作成
+        members = [m for m in channel.members if m.id != owner_id and not m.bot]
+        if not members:
+            return  # 誰もいなければセレクトメニューを追加しない
+        options = [
+            discord.SelectOption(label=m.display_name, value=str(m.id))
+            for m in members[:25]
+        ]
+        self.add_item(CameraBanSelectMenu(options))
 
-    @discord.ui.select(
-        cls=discord.ui.UserSelect, placeholder="カメラを禁止するユーザーを選択..."
-    )
-    async def select_user(
-        self, interaction: discord.Interaction, select: discord.ui.UserSelect[Any]
-    ) -> None:
+
+class CameraBanSelectMenu(discord.ui.Select[Any]):
+    """カメラ禁止のセレクトメニュー本体。"""
+
+    def __init__(self, options: list[discord.SelectOption]) -> None:
+        super().__init__(placeholder="カメラ禁止対象を選択...", options=options)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
         """ユーザー選択時の処理。配信権限を拒否する。"""
-        user_to_ban = select.values[0]
         channel = interaction.channel
-
         if not isinstance(channel, discord.VoiceChannel):
             return
 
-        if not isinstance(user_to_ban, discord.Member):
+        guild = interaction.guild
+        if not guild:
+            return
+
+        user_to_ban = guild.get_member(int(self.values[0]))
+        if not user_to_ban:
+            await interaction.response.edit_message(
+                content="メンバーが見つかりません。",
+                view=None,
+            )
             return
 
         # stream=False で配信 (カメラ/画面共有) を禁止
@@ -592,29 +630,48 @@ class CameraBanSelectView(discord.ui.View):
 
 
 class CameraAllowSelectView(discord.ui.View):
-    """カメラ許可対象を選択するユーザーセレクト。
+    """カメラ許可対象を選択するセレクトメニュー。
 
+    チャンネル内のメンバー一覧をドロップダウンで表示する。
+    オーナー自身と Bot は選択肢から除外される。
     カメラ許可 = stream=None で配信権限の上書きを削除する。
-    カメラ禁止を解除する場合に使う。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, channel: discord.VoiceChannel, owner_id: int) -> None:
         super().__init__(timeout=60)
+        # オーナー自身と Bot を除外した候補リストを作成
+        members = [m for m in channel.members if m.id != owner_id and not m.bot]
+        if not members:
+            return  # 誰もいなければセレクトメニューを追加しない
+        options = [
+            discord.SelectOption(label=m.display_name, value=str(m.id))
+            for m in members[:25]
+        ]
+        self.add_item(CameraAllowSelectMenu(options))
 
-    @discord.ui.select(
-        cls=discord.ui.UserSelect, placeholder="カメラを許可するユーザーを選択..."
-    )
-    async def select_user(
-        self, interaction: discord.Interaction, select: discord.ui.UserSelect[Any]
-    ) -> None:
+
+class CameraAllowSelectMenu(discord.ui.Select[Any]):
+    """カメラ許可のセレクトメニュー本体。"""
+
+    def __init__(self, options: list[discord.SelectOption]) -> None:
+        super().__init__(placeholder="カメラ許可対象を選択...", options=options)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
         """ユーザー選択時の処理。配信権限の上書きを削除する。"""
-        user_to_allow = select.values[0]
         channel = interaction.channel
-
         if not isinstance(channel, discord.VoiceChannel):
             return
 
-        if not isinstance(user_to_allow, discord.Member):
+        guild = interaction.guild
+        if not guild:
+            return
+
+        user_to_allow = guild.get_member(int(self.values[0]))
+        if not user_to_allow:
+            await interaction.response.edit_message(
+                content="メンバーが見つかりません。",
+                view=None,
+            )
             return
 
         # stream=None で配信権限の上書きを削除 (デフォルトに戻す)
@@ -1106,8 +1163,22 @@ class ControlPanelView(discord.ui.View):
         self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
     ) -> None:
         """キックボタン。ユーザー選択セレクトを表示する。"""
+        channel = interaction.channel
+        if not isinstance(channel, discord.VoiceChannel):
+            return
+
+        view = KickSelectView(channel, interaction.user.id)
+        if not view.children:
+            await interaction.response.send_message(
+                "キックできるメンバーがいません。",
+                ephemeral=True,
+            )
+            return
+
         await interaction.response.send_message(
-            "キックするユーザーを選択:", view=KickSelectView(), ephemeral=True
+            "キックするユーザーを選択:",
+            view=view,
+            ephemeral=True,
         )
 
     # =========================================================================
@@ -1126,7 +1197,9 @@ class ControlPanelView(discord.ui.View):
     ) -> None:
         """ブロックボタン。ユーザー選択セレクトを表示する。"""
         await interaction.response.send_message(
-            "ブロックするユーザーを選択:", view=BlockSelectView(), ephemeral=True
+            "ブロックするユーザーを選択:",
+            view=BlockSelectView(interaction.user.id),
+            ephemeral=True,
         )
 
     @discord.ui.button(
@@ -1155,9 +1228,21 @@ class ControlPanelView(discord.ui.View):
         self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
     ) -> None:
         """カメラ禁止ボタン。ユーザー選択セレクトを表示する。"""
+        channel = interaction.channel
+        if not isinstance(channel, discord.VoiceChannel):
+            return
+
+        view = CameraBanSelectView(channel, interaction.user.id)
+        if not view.children:
+            await interaction.response.send_message(
+                "カメラ禁止できるメンバーがいません。",
+                ephemeral=True,
+            )
+            return
+
         await interaction.response.send_message(
             "カメラを禁止するユーザーを選択:",
-            view=CameraBanSelectView(),
+            view=view,
             ephemeral=True,
         )
 
@@ -1172,8 +1257,20 @@ class ControlPanelView(discord.ui.View):
         self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
     ) -> None:
         """カメラ許可ボタン。ユーザー選択セレクトを表示する。"""
+        channel = interaction.channel
+        if not isinstance(channel, discord.VoiceChannel):
+            return
+
+        view = CameraAllowSelectView(channel, interaction.user.id)
+        if not view.children:
+            await interaction.response.send_message(
+                "カメラ許可できるメンバーがいません。",
+                ephemeral=True,
+            )
+            return
+
         await interaction.response.send_message(
             "カメラを許可するユーザーを選択:",
-            view=CameraAllowSelectView(),
+            view=view,
             ephemeral=True,
         )

@@ -11,9 +11,12 @@ from src.ui.control_panel import (
     BitrateSelectMenu,
     BitrateSelectView,
     BlockSelectView,
+    CameraAllowSelectMenu,
     CameraAllowSelectView,
+    CameraBanSelectMenu,
     CameraBanSelectView,
     ControlPanelView,
+    KickSelectMenu,
     KickSelectView,
     RegionSelectMenu,
     RegionSelectView,
@@ -1079,12 +1082,31 @@ class TestKickButton:
         view = ControlPanelView(session_id=1)
         interaction = _make_interaction(user_id=1)
 
+        # VC にメンバーを追加
+        member = MagicMock(spec=discord.Member)
+        member.id = 2
+        member.bot = False
+        member.display_name = "User2"
+        interaction.channel.members = [member]
+
         await view.kick_button.callback(interaction)
 
         interaction.response.send_message.assert_awaited_once()
         kwargs = interaction.response.send_message.call_args[1]
         assert isinstance(kwargs["view"], KickSelectView)
         assert kwargs["ephemeral"] is True
+
+    async def test_no_members_to_kick(self) -> None:
+        """キックできるメンバーがいない場合のメッセージ。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.members = []
+
+        await view.kick_button.callback(interaction)
+
+        interaction.response.send_message.assert_awaited_once()
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "メンバーがいません" in msg
 
 
 # ===========================================================================
@@ -1844,23 +1866,28 @@ class TestFindPanelMessage:
 
 
 class TestKickSelectCallback:
-    """Tests for KickSelectView.select_user callback."""
+    """Tests for KickSelectMenu callback."""
 
     async def test_kick_success(self) -> None:
         """VC 内のメンバーをキックする。"""
-        view = KickSelectView()
+        # KickSelectMenu を直接テスト
+        user_to_kick = MagicMock(spec=discord.Member)
+        user_to_kick.id = 2  # オーナーではない
+        user_to_kick.bot = False
+        user_to_kick.display_name = "User2"
+        user_to_kick.mention = "<@2>"
+        user_to_kick.move_to = AsyncMock()
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [user_to_kick]
+
+        view = KickSelectView(channel, owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1)
-        channel = interaction.channel
+        interaction.guild.get_member = MagicMock(return_value=user_to_kick)
 
-        user_to_kick = MagicMock(spec=discord.Member)
-        user_to_kick.mention = "<@2>"
-        user_to_kick.voice = MagicMock()
-        user_to_kick.voice.channel = channel
-        user_to_kick.move_to = AsyncMock()
-
-        select._values = [user_to_kick]
+        select._values = ["2"]
 
         await select.callback(interaction)
 
@@ -1869,42 +1896,118 @@ class TestKickSelectCallback:
         interaction.response.edit_message.assert_awaited_once()
         assert interaction.response.edit_message.call_args[1]["content"] == "\u200b"
         # チャンネルに通知メッセージが送信される
-        channel.send.assert_awaited_once()
-        msg = channel.send.call_args[0][0]
+        interaction.channel.send.assert_awaited_once()
+        msg = interaction.channel.send.call_args[0][0]
         assert "キック" in msg
 
-    async def test_kick_user_not_in_channel(self) -> None:
-        """VC にいないメンバーはキックできない。"""
-        view = KickSelectView()
+    async def test_kick_member_not_found(self) -> None:
+        """メンバーが見つからない場合はエラーメッセージを表示。"""
+        member = MagicMock(spec=discord.Member)
+        member.id = 2
+        member.bot = False
+        member.display_name = "User2"
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [member]
+
+        view = KickSelectView(channel, owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1)
+        interaction.guild.get_member = MagicMock(return_value=None)
 
-        user_to_kick = MagicMock(spec=discord.Member)
-        user_to_kick.mention = "<@2>"
-        user_to_kick.voice = MagicMock()
-        user_to_kick.voice.channel = MagicMock()  # 別のチャンネル
-
-        select._values = [user_to_kick]
+        select._values = ["2"]
 
         await select.callback(interaction)
 
         interaction.response.edit_message.assert_awaited_once()
         msg = interaction.response.edit_message.call_args[1]["content"]
-        assert "いません" in msg
+        assert "見つかりません" in msg
 
     async def test_kick_non_voice_channel(self) -> None:
         """VoiceChannel でない場合は何もしない。"""
-        view = KickSelectView()
+        member = MagicMock(spec=discord.Member)
+        member.id = 2
+        member.bot = False
+        member.display_name = "User2"
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [member]
+
+        view = KickSelectView(channel, owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1, is_voice=False)
 
-        select._values = [MagicMock()]
+        select._values = ["2"]
 
         await select.callback(interaction)
 
         interaction.response.edit_message.assert_not_awaited()
+
+
+class TestKickSelectView:
+    """Tests for KickSelectView member filtering."""
+
+    async def test_excludes_bot_members(self) -> None:
+        """Bot ユーザーが候補から除外される。"""
+        human = MagicMock(spec=discord.Member)
+        human.id = 2
+        human.bot = False
+        human.display_name = "Human"
+
+        bot_member = MagicMock(spec=discord.Member)
+        bot_member.id = 99
+        bot_member.bot = True
+        bot_member.display_name = "Bot"
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [human, bot_member]
+
+        view = KickSelectView(channel, owner_id=1)
+        assert len(view.children) == 1
+        select_menu = view.children[0]
+        assert isinstance(select_menu, KickSelectMenu)
+        # Bot は選択肢に含まれない
+        assert len(select_menu.options) == 1
+        assert select_menu.options[0].value == "2"
+
+    async def test_excludes_owner(self) -> None:
+        """オーナー自身が候補から除外される。"""
+        owner = MagicMock(spec=discord.Member)
+        owner.id = 1
+        owner.bot = False
+        owner.display_name = "Owner"
+
+        other = MagicMock(spec=discord.Member)
+        other.id = 2
+        other.bot = False
+        other.display_name = "Other"
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [owner, other]
+
+        view = KickSelectView(channel, owner_id=1)
+        assert len(view.children) == 1
+        select_menu = view.children[0]
+        assert len(select_menu.options) == 1
+        assert select_menu.options[0].value == "2"
+
+    async def test_empty_when_only_bots_and_owner(self) -> None:
+        """オーナーと Bot しかいない場合、セレクトメニューは追加されない。"""
+        owner = MagicMock(spec=discord.Member)
+        owner.id = 1
+        owner.bot = False
+
+        bot_member = MagicMock(spec=discord.Member)
+        bot_member.id = 99
+        bot_member.bot = True
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [owner, bot_member]
+
+        view = KickSelectView(channel, owner_id=1)
+        assert len(view.children) == 0
 
 
 # ===========================================================================
@@ -1917,13 +2020,14 @@ class TestBlockSelectCallback:
 
     async def test_block_success(self) -> None:
         """メンバーをブロックする。"""
-        view = BlockSelectView()
+        view = BlockSelectView(owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1)
         channel = interaction.channel
 
         user_to_block = MagicMock(spec=discord.Member)
+        user_to_block.id = 2  # オーナーではない
         user_to_block.mention = "<@2>"
         user_to_block.voice = MagicMock()
         user_to_block.voice.channel = channel
@@ -1944,15 +2048,41 @@ class TestBlockSelectCallback:
         msg = channel.send.call_args[0][0]
         assert "ブロック" in msg
 
-    async def test_block_user_not_in_vc(self) -> None:
-        """VC にいないメンバーをブロック (キックなし)。"""
-        view = BlockSelectView()
+    async def test_block_self_rejected(self) -> None:
+        """オーナー自身はブロックできない。"""
+        view = BlockSelectView(owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1)
         channel = interaction.channel
 
         user_to_block = MagicMock(spec=discord.Member)
+        user_to_block.id = 1  # オーナー自身
+        user_to_block.mention = "<@1>"
+        user_to_block.voice = MagicMock()
+        user_to_block.voice.channel = channel
+        user_to_block.move_to = AsyncMock()
+
+        select._values = [user_to_block]
+
+        await select.callback(interaction)
+
+        channel.set_permissions.assert_not_awaited()
+        user_to_block.move_to.assert_not_awaited()
+        interaction.response.edit_message.assert_awaited_once()
+        msg = interaction.response.edit_message.call_args[1]["content"]
+        assert "自分自身" in msg
+
+    async def test_block_user_not_in_vc(self) -> None:
+        """VC にいないメンバーをブロック (キックなし)。"""
+        view = BlockSelectView(owner_id=1)
+        select = view.children[0]
+
+        interaction = _make_interaction(user_id=1)
+        channel = interaction.channel
+
+        user_to_block = MagicMock(spec=discord.Member)
+        user_to_block.id = 2
         user_to_block.mention = "<@2>"
         user_to_block.voice = None  # VC にいない
         user_to_block.move_to = AsyncMock()
@@ -1968,7 +2098,7 @@ class TestBlockSelectCallback:
 
     async def test_block_non_voice_channel(self) -> None:
         """VoiceChannel でない場合は何もしない。"""
-        view = BlockSelectView()
+        view = BlockSelectView(owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1, is_voice=False)
@@ -1981,7 +2111,7 @@ class TestBlockSelectCallback:
 
     async def test_block_non_member(self) -> None:
         """Member でない場合は何もしない。"""
-        view = BlockSelectView()
+        view = BlockSelectView(owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1)
@@ -2196,12 +2326,31 @@ class TestCameraBanButton:
         view = ControlPanelView(session_id=1)
         interaction = _make_interaction(user_id=1)
 
+        # VC にメンバーを追加
+        member = MagicMock(spec=discord.Member)
+        member.id = 2
+        member.bot = False
+        member.display_name = "User2"
+        interaction.channel.members = [member]
+
         await view.camera_ban_button.callback(interaction)
 
         interaction.response.send_message.assert_awaited_once()
         kwargs = interaction.response.send_message.call_args[1]
         assert isinstance(kwargs["view"], CameraBanSelectView)
         assert kwargs["ephemeral"] is True
+
+    async def test_no_members_to_ban(self) -> None:
+        """カメラ禁止できるメンバーがいない場合のメッセージ。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.members = []
+
+        await view.camera_ban_button.callback(interaction)
+
+        interaction.response.send_message.assert_awaited_once()
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "メンバーがいません" in msg
 
 
 # ===========================================================================
@@ -2217,12 +2366,31 @@ class TestCameraAllowButton:
         view = ControlPanelView(session_id=1)
         interaction = _make_interaction(user_id=1)
 
+        # VC にメンバーを追加
+        member = MagicMock(spec=discord.Member)
+        member.id = 2
+        member.bot = False
+        member.display_name = "User2"
+        interaction.channel.members = [member]
+
         await view.camera_allow_button.callback(interaction)
 
         interaction.response.send_message.assert_awaited_once()
         kwargs = interaction.response.send_message.call_args[1]
         assert isinstance(kwargs["view"], CameraAllowSelectView)
         assert kwargs["ephemeral"] is True
+
+    async def test_no_members_to_allow(self) -> None:
+        """カメラ許可できるメンバーがいない場合のメッセージ。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.members = []
+
+        await view.camera_allow_button.callback(interaction)
+
+        interaction.response.send_message.assert_awaited_once()
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "メンバーがいません" in msg
 
 
 # ===========================================================================
@@ -2231,59 +2399,148 @@ class TestCameraAllowButton:
 
 
 class TestCameraBanSelectCallback:
-    """Tests for CameraBanSelectView.select_user callback."""
+    """Tests for CameraBanSelectMenu callback."""
 
     async def test_camera_ban_success(self) -> None:
         """メンバーのカメラ配信を禁止する。"""
-        view = CameraBanSelectView()
+        user_to_ban = MagicMock(spec=discord.Member)
+        user_to_ban.id = 2
+        user_to_ban.bot = False
+        user_to_ban.display_name = "User2"
+        user_to_ban.mention = "<@2>"
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [user_to_ban]
+
+        view = CameraBanSelectView(channel, owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1)
-        channel = interaction.channel
+        interaction.guild.get_member = MagicMock(return_value=user_to_ban)
 
-        user_to_ban = MagicMock(spec=discord.Member)
-        user_to_ban.mention = "<@2>"
-
-        select._values = [user_to_ban]
+        select._values = ["2"]
 
         await select.callback(interaction)
 
-        channel.set_permissions.assert_awaited_once_with(user_to_ban, stream=False)
+        interaction.channel.set_permissions.assert_awaited_once_with(
+            user_to_ban, stream=False
+        )
         # セレクトメニューを非表示にする
         interaction.response.edit_message.assert_awaited_once()
         assert interaction.response.edit_message.call_args[1]["content"] == "\u200b"
         # チャンネルに通知メッセージが送信される
-        channel.send.assert_awaited_once()
-        msg = channel.send.call_args[0][0]
+        interaction.channel.send.assert_awaited_once()
+        msg = interaction.channel.send.call_args[0][0]
         assert "カメラ配信が禁止" in msg
+
+    async def test_camera_ban_member_not_found(self) -> None:
+        """メンバーが見つからない場合はエラーメッセージを表示。"""
+        member = MagicMock(spec=discord.Member)
+        member.id = 2
+        member.bot = False
+        member.display_name = "User2"
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [member]
+
+        view = CameraBanSelectView(channel, owner_id=1)
+        select = view.children[0]
+
+        interaction = _make_interaction(user_id=1)
+        interaction.guild.get_member = MagicMock(return_value=None)
+
+        select._values = ["2"]
+
+        await select.callback(interaction)
+
+        interaction.response.edit_message.assert_awaited_once()
+        msg = interaction.response.edit_message.call_args[1]["content"]
+        assert "見つかりません" in msg
 
     async def test_camera_ban_non_voice_channel(self) -> None:
         """VoiceChannel でない場合は何もしない。"""
-        view = CameraBanSelectView()
+        member = MagicMock(spec=discord.Member)
+        member.id = 2
+        member.bot = False
+        member.display_name = "User2"
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [member]
+
+        view = CameraBanSelectView(channel, owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1, is_voice=False)
 
-        select._values = [MagicMock(spec=discord.Member)]
+        select._values = ["2"]
 
         await select.callback(interaction)
 
         interaction.response.edit_message.assert_not_awaited()
 
-    async def test_camera_ban_non_member(self) -> None:
-        """Member でない場合は何もしない。"""
-        view = CameraBanSelectView()
-        select = view.children[0]
 
-        interaction = _make_interaction(user_id=1)
+class TestCameraBanSelectView:
+    """Tests for CameraBanSelectView member filtering."""
 
-        non_member = MagicMock(spec=discord.User)
+    async def test_excludes_bot_members(self) -> None:
+        """Bot ユーザーが候補から除外される。"""
+        human = MagicMock(spec=discord.Member)
+        human.id = 2
+        human.bot = False
+        human.display_name = "Human"
 
-        select._values = [non_member]
+        bot_member = MagicMock(spec=discord.Member)
+        bot_member.id = 99
+        bot_member.bot = True
+        bot_member.display_name = "Bot"
 
-        await select.callback(interaction)
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [human, bot_member]
 
-        interaction.response.edit_message.assert_not_awaited()
+        view = CameraBanSelectView(channel, owner_id=1)
+        assert len(view.children) == 1
+        select_menu = view.children[0]
+        assert isinstance(select_menu, CameraBanSelectMenu)
+        # Bot は選択肢に含まれない
+        assert len(select_menu.options) == 1
+        assert select_menu.options[0].value == "2"
+
+    async def test_excludes_owner(self) -> None:
+        """オーナー自身が候補から除外される。"""
+        owner = MagicMock(spec=discord.Member)
+        owner.id = 1
+        owner.bot = False
+        owner.display_name = "Owner"
+
+        other = MagicMock(spec=discord.Member)
+        other.id = 2
+        other.bot = False
+        other.display_name = "Other"
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [owner, other]
+
+        view = CameraBanSelectView(channel, owner_id=1)
+        assert len(view.children) == 1
+        select_menu = view.children[0]
+        assert len(select_menu.options) == 1
+        assert select_menu.options[0].value == "2"
+
+    async def test_empty_when_only_bots_and_owner(self) -> None:
+        """オーナーと Bot しかいない場合、セレクトメニューは追加されない。"""
+        owner = MagicMock(spec=discord.Member)
+        owner.id = 1
+        owner.bot = False
+
+        bot_member = MagicMock(spec=discord.Member)
+        bot_member.id = 99
+        bot_member.bot = True
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [owner, bot_member]
+
+        view = CameraBanSelectView(channel, owner_id=1)
+        assert len(view.children) == 0
 
 
 # ===========================================================================
@@ -2292,59 +2549,148 @@ class TestCameraBanSelectCallback:
 
 
 class TestCameraAllowSelectCallback:
-    """Tests for CameraAllowSelectView.select_user callback."""
+    """Tests for CameraAllowSelectMenu callback."""
 
     async def test_camera_allow_success(self) -> None:
         """メンバーのカメラ配信を許可する。"""
-        view = CameraAllowSelectView()
+        user_to_allow = MagicMock(spec=discord.Member)
+        user_to_allow.id = 2
+        user_to_allow.bot = False
+        user_to_allow.display_name = "User2"
+        user_to_allow.mention = "<@2>"
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [user_to_allow]
+
+        view = CameraAllowSelectView(channel, owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1)
-        channel = interaction.channel
+        interaction.guild.get_member = MagicMock(return_value=user_to_allow)
 
-        user_to_allow = MagicMock(spec=discord.Member)
-        user_to_allow.mention = "<@2>"
-
-        select._values = [user_to_allow]
+        select._values = ["2"]
 
         await select.callback(interaction)
 
-        channel.set_permissions.assert_awaited_once_with(user_to_allow, stream=None)
+        interaction.channel.set_permissions.assert_awaited_once_with(
+            user_to_allow, stream=None
+        )
         # セレクトメニューを非表示にする
         interaction.response.edit_message.assert_awaited_once()
         assert interaction.response.edit_message.call_args[1]["content"] == "\u200b"
         # チャンネルに通知メッセージが送信される
-        channel.send.assert_awaited_once()
-        msg = channel.send.call_args[0][0]
+        interaction.channel.send.assert_awaited_once()
+        msg = interaction.channel.send.call_args[0][0]
         assert "カメラ配信が許可" in msg
+
+    async def test_camera_allow_member_not_found(self) -> None:
+        """メンバーが見つからない場合はエラーメッセージを表示。"""
+        member = MagicMock(spec=discord.Member)
+        member.id = 2
+        member.bot = False
+        member.display_name = "User2"
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [member]
+
+        view = CameraAllowSelectView(channel, owner_id=1)
+        select = view.children[0]
+
+        interaction = _make_interaction(user_id=1)
+        interaction.guild.get_member = MagicMock(return_value=None)
+
+        select._values = ["2"]
+
+        await select.callback(interaction)
+
+        interaction.response.edit_message.assert_awaited_once()
+        msg = interaction.response.edit_message.call_args[1]["content"]
+        assert "見つかりません" in msg
 
     async def test_camera_allow_non_voice_channel(self) -> None:
         """VoiceChannel でない場合は何もしない。"""
-        view = CameraAllowSelectView()
+        member = MagicMock(spec=discord.Member)
+        member.id = 2
+        member.bot = False
+        member.display_name = "User2"
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [member]
+
+        view = CameraAllowSelectView(channel, owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1, is_voice=False)
 
-        select._values = [MagicMock(spec=discord.Member)]
+        select._values = ["2"]
 
         await select.callback(interaction)
 
         interaction.response.edit_message.assert_not_awaited()
 
-    async def test_camera_allow_non_member(self) -> None:
-        """Member でない場合は何もしない。"""
-        view = CameraAllowSelectView()
-        select = view.children[0]
 
-        interaction = _make_interaction(user_id=1)
+class TestCameraAllowSelectView:
+    """Tests for CameraAllowSelectView member filtering."""
 
-        non_member = MagicMock(spec=discord.User)
+    async def test_excludes_bot_members(self) -> None:
+        """Bot ユーザーが候補から除外される。"""
+        human = MagicMock(spec=discord.Member)
+        human.id = 2
+        human.bot = False
+        human.display_name = "Human"
 
-        select._values = [non_member]
+        bot_member = MagicMock(spec=discord.Member)
+        bot_member.id = 99
+        bot_member.bot = True
+        bot_member.display_name = "Bot"
 
-        await select.callback(interaction)
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [human, bot_member]
 
-        interaction.response.edit_message.assert_not_awaited()
+        view = CameraAllowSelectView(channel, owner_id=1)
+        assert len(view.children) == 1
+        select_menu = view.children[0]
+        assert isinstance(select_menu, CameraAllowSelectMenu)
+        # Bot は選択肢に含まれない
+        assert len(select_menu.options) == 1
+        assert select_menu.options[0].value == "2"
+
+    async def test_excludes_owner(self) -> None:
+        """オーナー自身が候補から除外される。"""
+        owner = MagicMock(spec=discord.Member)
+        owner.id = 1
+        owner.bot = False
+        owner.display_name = "Owner"
+
+        other = MagicMock(spec=discord.Member)
+        other.id = 2
+        other.bot = False
+        other.display_name = "Other"
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [owner, other]
+
+        view = CameraAllowSelectView(channel, owner_id=1)
+        assert len(view.children) == 1
+        select_menu = view.children[0]
+        assert len(select_menu.options) == 1
+        assert select_menu.options[0].value == "2"
+
+    async def test_empty_when_only_bots_and_owner(self) -> None:
+        """オーナーと Bot しかいない場合、セレクトメニューは追加されない。"""
+        owner = MagicMock(spec=discord.Member)
+        owner.id = 1
+        owner.bot = False
+
+        bot_member = MagicMock(spec=discord.Member)
+        bot_member.id = 99
+        bot_member.bot = True
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [owner, bot_member]
+
+        view = CameraAllowSelectView(channel, owner_id=1)
+        assert len(view.children) == 0
 
 
 # ===========================================================================
