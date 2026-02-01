@@ -11,6 +11,7 @@ from src.web.templates import (
     dashboard_page,
     lobbies_list_page,
     login_page,
+    role_panel_create_page,
     role_panels_list_page,
     settings_page,
     sticky_list_page,
@@ -312,6 +313,37 @@ class TestXSSProtection:
         result = settings_page(current_email=malicious_input)
         assert "<script>" not in result
 
+    @pytest.mark.parametrize(
+        "malicious_input",
+        [
+            "<script>alert('xss')</script>",
+            '"><script>alert("xss")</script>',
+            "<img src=x onerror=alert('xss')>",
+        ],
+    )
+    def test_role_panel_create_error_escapes_xss(self, malicious_input: str) -> None:
+        """ロールパネル作成ページのエラーで XSS がエスケープされる。"""
+        result = role_panel_create_page(error=malicious_input)
+        assert "<script>" not in result
+        assert "<img " not in result
+
+    @pytest.mark.parametrize(
+        "malicious_input",
+        [
+            "<script>alert('xss')</script>",
+            '"><script>alert("xss")</script>',
+        ],
+    )
+    def test_role_panel_create_fields_escape_xss(self, malicious_input: str) -> None:
+        """ロールパネル作成ページのフィールドで XSS がエスケープされる。"""
+        result = role_panel_create_page(
+            guild_id=malicious_input,
+            channel_id=malicious_input,
+            title=malicious_input,
+            description=malicious_input,
+        )
+        assert "<script>" not in result
+
 
 # ===========================================================================
 # ロールパネル一覧ページ
@@ -341,3 +373,85 @@ class TestRolePanelsListPage:
         """ダッシュボードに Role Panels リンクが含まれる。"""
         result = dashboard_page()
         assert "/rolepanels" in result
+
+    def test_contains_create_button(self) -> None:
+        """Create ボタンが含まれる。"""
+        result = role_panels_list_page([], {})
+        assert "/rolepanels/new" in result
+        assert "Create Panel" in result
+
+
+# ===========================================================================
+# ロールパネル作成ページ
+# ===========================================================================
+
+
+class TestRolePanelCreatePage:
+    """role_panel_create_page テンプレートのテスト。"""
+
+    def test_contains_form(self) -> None:
+        """フォームが含まれる。"""
+        result = role_panel_create_page()
+        assert "<form" in result
+        assert 'action="/rolepanels/new"' in result
+        assert 'method="POST"' in result
+
+    def test_contains_guild_id_field(self) -> None:
+        """Guild ID フィールドが含まれる。"""
+        result = role_panel_create_page()
+        assert 'name="guild_id"' in result
+
+    def test_contains_channel_id_field(self) -> None:
+        """Channel ID フィールドが含まれる。"""
+        result = role_panel_create_page()
+        assert 'name="channel_id"' in result
+
+    def test_contains_panel_type_field(self) -> None:
+        """Panel Type フィールドが含まれる。"""
+        result = role_panel_create_page()
+        assert 'name="panel_type"' in result
+        assert 'value="button"' in result
+        assert 'value="reaction"' in result
+
+    def test_contains_title_field(self) -> None:
+        """Title フィールドが含まれる。"""
+        result = role_panel_create_page()
+        assert 'name="title"' in result
+
+    def test_contains_description_field(self) -> None:
+        """Description フィールドが含まれる。"""
+        result = role_panel_create_page()
+        assert 'name="description"' in result
+
+    def test_error_is_displayed(self) -> None:
+        """エラーメッセージが表示される。"""
+        result = role_panel_create_page(error="Test error message")
+        assert "Test error message" in result
+
+    def test_error_is_escaped(self) -> None:
+        """エラーメッセージがエスケープされる。"""
+        result = role_panel_create_page(error="<script>xss</script>")
+        assert "&lt;script&gt;" in result
+
+    def test_preserves_input_values(self) -> None:
+        """入力値が保持される。"""
+        result = role_panel_create_page(
+            guild_id="123456789",
+            channel_id="987654321",
+            panel_type="reaction",
+            title="Test Title",
+            description="Test Description",
+        )
+        assert "123456789" in result
+        assert "987654321" in result
+        assert "Test Title" in result
+        assert "Test Description" in result
+
+    def test_input_values_are_escaped(self) -> None:
+        """入力値がエスケープされる。"""
+        result = role_panel_create_page(
+            title="<script>xss</script>",
+            description="<script>xss</script>",
+        )
+        assert "&lt;script&gt;" in result
+        assert "<script>xss</script>" not in result

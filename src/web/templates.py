@@ -974,7 +974,7 @@ def role_panels_list_page(
         panel_rows = """
         <tr>
             <td colspan="7" class="py-8 text-center text-gray-500">
-                No role panels. Create one with /rolepanel create in Discord.
+                No role panels configured
             </td>
         </tr>
         """
@@ -982,6 +982,14 @@ def role_panels_list_page(
     content = f"""
     <div class="p-6">
         {_nav("Role Panels")}
+
+        <div class="flex justify-end mb-4">
+            <a href="/rolepanels/new"
+               class="bg-blue-600 hover:bg-blue-700 text-white font-medium
+                      py-2 px-4 rounded transition-colors">
+                + Create Panel
+            </a>
+        </div>
 
         <div class="bg-gray-800 rounded-lg overflow-hidden">
             <table class="w-full">
@@ -1002,8 +1010,158 @@ def role_panels_list_page(
             </table>
         </div>
         <p class="mt-4 text-gray-500 text-sm">
-            Role panels are created via Discord command: /rolepanel create
+            After creating a panel, add roles using /rolepanel add in Discord.
         </p>
     </div>
     """
     return _base("Role Panels", content)
+
+
+def role_panel_create_page(
+    error: str | None = None,
+    guild_id: str = "",
+    channel_id: str = "",
+    panel_type: str = "button",
+    title: str = "",
+    description: str = "",
+) -> str:
+    """Role panel create page template."""
+    message_html = ""
+    if error:
+        message_html = f"""
+        <div class="bg-red-500/20 border border-red-500 text-red-300 px-4 py-3 rounded mb-4">
+            {escape(error)}
+        </div>
+        """
+
+    # Panel type selection
+    button_selected = "checked" if panel_type == "button" else ""
+    reaction_selected = "checked" if panel_type == "reaction" else ""
+
+    content = f"""
+    <div class="p-6">
+        {_nav("Create Role Panel")}
+        <div class="max-w-lg">
+            <div class="bg-gray-800 p-6 rounded-lg">
+                {message_html}
+                <form method="POST" action="/rolepanels/new">
+                    <div class="mb-4">
+                        <label for="guild_id" class="block text-sm font-medium mb-2">
+                            Guild ID <span class="text-red-400">*</span>
+                        </label>
+                        <input
+                            type="text"
+                            id="guild_id"
+                            name="guild_id"
+                            value="{escape(guild_id)}"
+                            required
+                            pattern="[0-9]+"
+                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500
+                                   text-gray-100 font-mono"
+                            placeholder="123456789012345678"
+                        >
+                        <p class="text-gray-500 text-xs mt-1">
+                            Discord server ID (enable Developer Mode in Discord settings)
+                        </p>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="channel_id" class="block text-sm font-medium mb-2">
+                            Channel ID <span class="text-red-400">*</span>
+                        </label>
+                        <input
+                            type="text"
+                            id="channel_id"
+                            name="channel_id"
+                            value="{escape(channel_id)}"
+                            required
+                            pattern="[0-9]+"
+                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500
+                                   text-gray-100 font-mono"
+                            placeholder="123456789012345678"
+                        >
+                        <p class="text-gray-500 text-xs mt-1">
+                            Text channel where the panel will be posted
+                        </p>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium mb-2">
+                            Panel Type <span class="text-red-400">*</span>
+                        </label>
+                        <div class="flex gap-4">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name="panel_type" value="button"
+                                       {button_selected}
+                                       class="text-blue-500 focus:ring-blue-500">
+                                <span>Button</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name="panel_type" value="reaction"
+                                       {reaction_selected}
+                                       class="text-blue-500 focus:ring-blue-500">
+                                <span>Reaction</span>
+                            </label>
+                        </div>
+                        <p class="text-gray-500 text-xs mt-1">
+                            Button: users click buttons. Reaction: users add/remove emoji reactions.
+                        </p>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="title" class="block text-sm font-medium mb-2">
+                            Title <span class="text-red-400">*</span>
+                        </label>
+                        <input
+                            type="text"
+                            id="title"
+                            name="title"
+                            value="{escape(title)}"
+                            required
+                            maxlength="256"
+                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500
+                                   text-gray-100"
+                            placeholder="Role Selection"
+                        >
+                    </div>
+
+                    <div class="mb-6">
+                        <label for="description" class="block text-sm font-medium mb-2">
+                            Description
+                        </label>
+                        <textarea
+                            id="description"
+                            name="description"
+                            rows="3"
+                            maxlength="4096"
+                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500
+                                   text-gray-100"
+                            placeholder="Click a button to get or remove a role"
+                        >{escape(description)}</textarea>
+                    </div>
+
+                    <button
+                        type="submit"
+                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium
+                               py-2 px-4 rounded transition-colors"
+                    >
+                        Create Panel
+                    </button>
+                </form>
+                <p class="mt-4 text-gray-500 text-sm">
+                    After creating the panel, add roles using /rolepanel add in Discord.
+                </p>
+                <div class="mt-4">
+                    <a href="/rolepanels" class="text-gray-400 hover:text-white text-sm">
+                        &larr; Back to role panels
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    """
+    return _base("Create Role Panel", content)

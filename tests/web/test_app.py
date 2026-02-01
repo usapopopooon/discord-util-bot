@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import (
@@ -2671,3 +2672,278 @@ class TestRolePanelsRoutes:
         response = await authenticated_client.get("/rolepanels")
         assert response.status_code == 200
         assert "Auto-remove" in response.text
+
+    async def test_rolepanels_list_contains_create_button(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """一覧ページに Create ボタンが含まれる。"""
+        response = await authenticated_client.get("/rolepanels")
+        assert response.status_code == 200
+        assert "/rolepanels/new" in response.text
+        assert "Create Panel" in response.text
+
+
+# ===========================================================================
+# Role Panel Create ルート
+# ===========================================================================
+
+
+class TestRolePanelCreateRoutes:
+    """/rolepanels/new ルートのテスト。"""
+
+    async def test_create_page_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.get("/rolepanels/new", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_create_page_shows_form(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """認証済みでフォームが表示される。"""
+        response = await authenticated_client.get("/rolepanels/new")
+        assert response.status_code == 200
+        assert 'action="/rolepanels/new"' in response.text
+        assert 'name="guild_id"' in response.text
+        assert 'name="channel_id"' in response.text
+        assert 'name="panel_type"' in response.text
+        assert 'name="title"' in response.text
+
+    async def test_create_post_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123",
+                "channel_id": "456",
+                "panel_type": "button",
+                "title": "Test",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_create_success(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """パネルを正常に作成できる。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "New Test Panel",
+                "description": "Test description",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/rolepanels"
+
+        # DB にパネルが作成されていることを確認
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "New Test Panel")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is not None
+        assert panel.guild_id == "123456789012345678"
+        assert panel.channel_id == "987654321098765432"
+        assert panel.panel_type == "button"
+        assert panel.description == "Test description"
+
+    async def test_create_reaction_type(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """リアクション式パネルを作成できる。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "reaction",
+                "title": "Reaction Panel",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Reaction Panel")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is not None
+        assert panel.panel_type == "reaction"
+
+    async def test_create_missing_guild_id(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """guild_id が空の場合はエラー。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "Test",
+            },
+        )
+        assert response.status_code == 200
+        assert "Guild ID is required" in response.text
+
+    async def test_create_invalid_guild_id(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """guild_id が数字でない場合はエラー。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "not_a_number",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "Test",
+            },
+        )
+        assert response.status_code == 200
+        assert "Guild ID must be a number" in response.text
+
+    async def test_create_missing_channel_id(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """channel_id が空の場合はエラー。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "",
+                "panel_type": "button",
+                "title": "Test",
+            },
+        )
+        assert response.status_code == 200
+        assert "Channel ID is required" in response.text
+
+    async def test_create_invalid_channel_id(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """channel_id が数字でない場合はエラー。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "not_a_number",
+                "panel_type": "button",
+                "title": "Test",
+            },
+        )
+        assert response.status_code == 200
+        assert "Channel ID must be a number" in response.text
+
+    async def test_create_invalid_panel_type(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """panel_type が不正な場合はエラー。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "invalid",
+                "title": "Test",
+            },
+        )
+        assert response.status_code == 200
+        assert "Panel type must be 'button' or 'reaction'" in response.text
+
+    async def test_create_missing_title(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """title が空の場合はエラー。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "",
+            },
+        )
+        assert response.status_code == 200
+        assert "Title is required" in response.text
+
+    async def test_create_title_too_long(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """title が長すぎる場合はエラー。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "x" * 257,
+            },
+        )
+        assert response.status_code == 200
+        assert "Title must be 256 characters or less" in response.text
+
+    async def test_create_description_too_long(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """description が長すぎる場合はエラー。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "Test",
+                "description": "x" * 4097,
+            },
+        )
+        assert response.status_code == 200
+        assert "Description must be 4096 characters or less" in response.text
+
+    async def test_create_preserves_input_on_error(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """エラー時に入力値が保持される。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "reaction",
+                "title": "",  # Empty title causes error
+                "description": "Test desc",
+            },
+        )
+        assert response.status_code == 200
+        assert "123456789012345678" in response.text
+        assert "987654321098765432" in response.text
+        assert "Test desc" in response.text
+
+    async def test_create_without_description(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """description なしでパネルを作成できる。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "No Description Panel",
+                "description": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "No Description Panel")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is not None
+        assert panel.description is None

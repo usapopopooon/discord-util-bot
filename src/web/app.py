@@ -55,6 +55,7 @@ from src.web.templates import (
     login_page,
     password_change_page,
     reset_password_page,
+    role_panel_create_page,
     role_panels_list_page,
     settings_page,
     sticky_list_page,
@@ -1229,4 +1230,146 @@ async def rolepanel_delete(
     if panel:
         await db.delete(panel)
         await db.commit()
+    return RedirectResponse(url="/rolepanels", status_code=302)
+
+
+@app.get("/rolepanels/new", response_model=None)
+async def rolepanel_create_get(
+    user: dict[str, Any] | None = Depends(get_current_user),
+) -> Response:
+    """Show role panel create form."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return HTMLResponse(content=role_panel_create_page())
+
+
+@app.post("/rolepanels/new", response_model=None)
+async def rolepanel_create_post(
+    user: dict[str, Any] | None = Depends(get_current_user),
+    guild_id: Annotated[str, Form()] = "",
+    channel_id: Annotated[str, Form()] = "",
+    panel_type: Annotated[str, Form()] = "button",
+    title: Annotated[str, Form()] = "",
+    description: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Create a new role panel."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # Trim input values
+    guild_id = guild_id.strip()
+    channel_id = channel_id.strip()
+    panel_type = panel_type.strip()
+    title = title.strip()
+    description = description.strip()
+
+    # Validation
+    if not guild_id:
+        return HTMLResponse(
+            content=role_panel_create_page(
+                error="Guild ID is required",
+                guild_id=guild_id,
+                channel_id=channel_id,
+                panel_type=panel_type,
+                title=title,
+                description=description,
+            )
+        )
+
+    if not guild_id.isdigit():
+        return HTMLResponse(
+            content=role_panel_create_page(
+                error="Guild ID must be a number",
+                guild_id=guild_id,
+                channel_id=channel_id,
+                panel_type=panel_type,
+                title=title,
+                description=description,
+            )
+        )
+
+    if not channel_id:
+        return HTMLResponse(
+            content=role_panel_create_page(
+                error="Channel ID is required",
+                guild_id=guild_id,
+                channel_id=channel_id,
+                panel_type=panel_type,
+                title=title,
+                description=description,
+            )
+        )
+
+    if not channel_id.isdigit():
+        return HTMLResponse(
+            content=role_panel_create_page(
+                error="Channel ID must be a number",
+                guild_id=guild_id,
+                channel_id=channel_id,
+                panel_type=panel_type,
+                title=title,
+                description=description,
+            )
+        )
+
+    if panel_type not in ("button", "reaction"):
+        return HTMLResponse(
+            content=role_panel_create_page(
+                error="Panel type must be 'button' or 'reaction'",
+                guild_id=guild_id,
+                channel_id=channel_id,
+                panel_type=panel_type,
+                title=title,
+                description=description,
+            )
+        )
+
+    if not title:
+        return HTMLResponse(
+            content=role_panel_create_page(
+                error="Title is required",
+                guild_id=guild_id,
+                channel_id=channel_id,
+                panel_type=panel_type,
+                title=title,
+                description=description,
+            )
+        )
+
+    if len(title) > 256:
+        return HTMLResponse(
+            content=role_panel_create_page(
+                error="Title must be 256 characters or less",
+                guild_id=guild_id,
+                channel_id=channel_id,
+                panel_type=panel_type,
+                title=title,
+                description=description,
+            )
+        )
+
+    if len(description) > 4096:
+        return HTMLResponse(
+            content=role_panel_create_page(
+                error="Description must be 4096 characters or less",
+                guild_id=guild_id,
+                channel_id=channel_id,
+                panel_type=panel_type,
+                title=title,
+                description=description,
+            )
+        )
+
+    # Create the role panel
+    panel = RolePanel(
+        guild_id=guild_id,
+        channel_id=channel_id,
+        panel_type=panel_type,
+        title=title,
+        description=description if description else None,
+    )
+    db.add(panel)
+    await db.commit()
+
     return RedirectResponse(url="/rolepanels", status_code=302)
