@@ -166,6 +166,12 @@ class TestDashboardPage:
         result = dashboard_page(email="<script>xss</script>")
         assert "&lt;script&gt;" in result
 
+    def test_contains_maintenance_link(self) -> None:
+        """Database Maintenance リンクが含まれる。"""
+        result = dashboard_page()
+        assert "/settings/maintenance" in result
+        assert "Database Maintenance" in result
+
 
 # ===========================================================================
 # 設定ページ

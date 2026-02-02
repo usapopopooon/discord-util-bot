@@ -302,6 +302,10 @@ def dashboard_page(email: str = "Admin") -> str:
                 <h2 class="text-lg font-semibold mb-2">Role Panels</h2>
                 <p class="text-gray-400 text-sm">View role assignment panels</p>
             </a>
+            <a href="/settings/maintenance" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
+                <h2 class="text-lg font-semibold mb-2">Database Maintenance</h2>
+                <p class="text-gray-400 text-sm">Refresh stats and cleanup orphaned data</p>
+            </a>
         </div>
     </div>
     """
