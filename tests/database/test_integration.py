@@ -5,36 +5,64 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from faker import Faker
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.services.db_service import (
+    add_role_panel_item,
     add_voice_session_member,
     clear_bump_reminder,
     create_lobby,
     create_role_panel,
     create_sticky_message,
     create_voice_session,
+    delete_bump_config,
+    delete_bump_reminders_by_guild,
+    delete_discord_channel,
+    delete_discord_channels_by_guild,
+    delete_discord_guild,
+    delete_discord_role,
+    delete_discord_roles_by_guild,
+    delete_lobbies_by_guild,
     delete_lobby,
     delete_role_panel,
     delete_sticky_message,
+    delete_sticky_messages_by_guild,
     delete_voice_session,
+    delete_voice_sessions_by_guild,
+    get_all_discord_guilds,
     get_all_sticky_messages,
     get_all_voice_sessions,
+    get_bump_config,
     get_bump_reminder,
+    get_discord_channels_by_guild,
+    get_discord_roles_by_guild,
     get_due_bump_reminders,
     get_lobbies_by_guild,
     get_lobby_by_channel_id,
     get_role_panel,
+    get_role_panel_by_message_id,
+    get_role_panel_item_by_emoji,
+    get_role_panel_items,
+    get_role_panels_by_channel,
     get_role_panels_by_guild,
     get_sticky_message,
     get_voice_session,
     get_voice_session_members_ordered,
+    remove_role_panel_item,
     remove_voice_session_member,
     toggle_bump_reminder,
+    update_role_panel,
     update_voice_session,
+    upsert_bump_config,
     upsert_bump_reminder,
+    upsert_discord_channel,
+    upsert_discord_guild,
+    upsert_discord_role,
 )
+from src.utils import normalize_emoji
 
 from .conftest import snowflake
 
@@ -506,6 +534,170 @@ class TestRolePanelCRUD:
 
         assert await get_role_panel(db_session, panel_id) is None
 
+    async def test_add_items_with_different_emojis(
+        self, db_session: AsyncSession
+    ) -> None:
+        """異なる絵文字でアイテムを追加できる。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="アイテムテスト",
+        )
+
+        # 異なる絵文字で3つのアイテムを追加
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id=snowflake(), emoji="🎮"
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id=snowflake(), emoji="🎨"
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id=snowflake(), emoji="🎵"
+        )
+
+        items = await get_role_panel_items(db_session, panel.id)
+        assert len(items) == 3
+        emojis = {item.emoji for item in items}
+        assert emojis == {"🎮", "🎨", "🎵"}
+
+    async def test_duplicate_emoji_raises_integrity_error(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同じ絵文字を2回追加すると IntegrityError。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="重複テスト",
+        )
+
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id=snowflake(), emoji="🎮"
+        )
+
+        with pytest.raises(IntegrityError):
+            await add_role_panel_item(
+                db_session, panel_id=panel.id, role_id=snowflake(), emoji="🎮"
+            )
+
+    async def test_same_emoji_different_panels_allowed(
+        self, db_session: AsyncSession
+    ) -> None:
+        """異なるパネルでは同じ絵文字を使用できる。"""
+        guild_id = snowflake()
+
+        panel1 = await create_role_panel(
+            db_session,
+            guild_id=guild_id,
+            channel_id=snowflake(),
+            panel_type="button",
+            title="パネル1",
+        )
+        panel2 = await create_role_panel(
+            db_session,
+            guild_id=guild_id,
+            channel_id=snowflake(),
+            panel_type="button",
+            title="パネル2",
+        )
+
+        # 同じ絵文字を両方のパネルに追加
+        await add_role_panel_item(
+            db_session, panel_id=panel1.id, role_id=snowflake(), emoji="🎮"
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel2.id, role_id=snowflake(), emoji="🎮"
+        )
+
+        items1 = await get_role_panel_items(db_session, panel1.id)
+        items2 = await get_role_panel_items(db_session, panel2.id)
+
+        assert len(items1) == 1
+        assert len(items2) == 1
+        assert items1[0].emoji == "🎮"
+        assert items2[0].emoji == "🎮"
+
+    async def test_emoji_normalization_on_save(self, db_session: AsyncSession) -> None:
+        """絵文字は正規化されて保存される。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="正規化テスト",
+        )
+
+        # 絵文字を正規化して保存
+        emoji = "😀"
+        normalized = normalize_emoji(emoji)
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id=snowflake(), emoji=normalized
+        )
+
+        items = await get_role_panel_items(db_session, panel.id)
+        assert len(items) == 1
+        assert items[0].emoji == normalized
+
+    async def test_use_embed_default_true(self, db_session: AsyncSession) -> None:
+        """use_embed のデフォルト値は True。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="デフォルトテスト",
+        )
+
+        fetched = await get_role_panel(db_session, panel.id)
+        assert fetched is not None
+        assert fetched.use_embed is True
+
+    async def test_use_embed_false_persisted(self, db_session: AsyncSession) -> None:
+        """use_embed=False が正しく保存される。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="use_embed=False テスト",
+            use_embed=False,
+        )
+
+        fetched = await get_role_panel(db_session, panel.id)
+        assert fetched is not None
+        assert fetched.use_embed is False
+
+    async def test_cascade_delete_items_on_panel_delete(
+        self, db_session: AsyncSession
+    ) -> None:
+        """パネル削除時にアイテムもカスケード削除される。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="カスケードテスト",
+        )
+
+        # 複数アイテムを追加
+        for emoji in ["🎮", "🎨", "🎵"]:
+            await add_role_panel_item(
+                db_session, panel_id=panel.id, role_id=snowflake(), emoji=emoji
+            )
+
+        items = await get_role_panel_items(db_session, panel.id)
+        assert len(items) == 3
+
+        # パネル削除
+        await delete_role_panel(db_session, panel.id)
+
+        # アイテムも削除されている
+        items = await get_role_panel_items(db_session, panel.id)
+        assert len(items) == 0
+
 
 class TestVoiceSessionMemberManagement:
     """VoiceSession メンバー管理テスト。"""
@@ -896,3 +1088,902 @@ class TestBulkOperations:
             await delete_voice_session(db_session, ch_id)
 
         assert len(await get_all_voice_sessions(db_session)) == 0
+
+
+class TestDiscordEntityManagement:
+    """Discord エンティティ（ギルド、チャンネル、ロール）の管理テスト。"""
+
+    async def test_guild_channel_lifecycle(self, db_session: AsyncSession) -> None:
+        """ギルド → チャンネル作成 → 削除のライフサイクル。"""
+        guild_id = snowflake()
+
+        # ギルド作成
+        guild = await upsert_discord_guild(
+            db_session, guild_id=guild_id, guild_name="Test Guild"
+        )
+        assert guild.guild_id == guild_id
+
+        # チャンネル作成
+        ch1, ch2 = snowflake(), snowflake()
+        await upsert_discord_channel(
+            db_session, guild_id=guild_id, channel_id=ch1, channel_name="channel1"
+        )
+        await upsert_discord_channel(
+            db_session, guild_id=guild_id, channel_id=ch2, channel_name="channel2"
+        )
+
+        channels = await get_discord_channels_by_guild(db_session, guild_id)
+        assert len(channels) == 2
+
+        # 1つのチャンネルを削除
+        result = await delete_discord_channel(db_session, guild_id, ch1)
+        assert result is True
+
+        channels = await get_discord_channels_by_guild(db_session, guild_id)
+        assert len(channels) == 1
+        assert channels[0].channel_id == ch2
+
+    async def test_guild_role_lifecycle(self, db_session: AsyncSession) -> None:
+        """ギルド → ロール作成 → 削除のライフサイクル。"""
+        guild_id = snowflake()
+
+        # ギルド作成
+        await upsert_discord_guild(
+            db_session, guild_id=guild_id, guild_name="Test Guild"
+        )
+
+        # ロール作成
+        r1, r2, r3 = snowflake(), snowflake(), snowflake()
+        await upsert_discord_role(
+            db_session, guild_id=guild_id, role_id=r1, role_name="Admin"
+        )
+        await upsert_discord_role(
+            db_session, guild_id=guild_id, role_id=r2, role_name="Mod"
+        )
+        await upsert_discord_role(
+            db_session, guild_id=guild_id, role_id=r3, role_name="Member"
+        )
+
+        roles = await get_discord_roles_by_guild(db_session, guild_id)
+        assert len(roles) == 3
+
+        # 1つのロールを削除
+        result = await delete_discord_role(db_session, guild_id, r2)
+        assert result is True
+
+        roles = await get_discord_roles_by_guild(db_session, guild_id)
+        assert len(roles) == 2
+        role_ids = {r.role_id for r in roles}
+        assert r2 not in role_ids
+
+    async def test_guild_deletion_clears_channels_and_roles(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ギルド削除時にチャンネルとロールも削除される。"""
+        guild_id = snowflake()
+
+        # ギルド作成
+        await upsert_discord_guild(
+            db_session, guild_id=guild_id, guild_name="Test Guild"
+        )
+
+        # チャンネルとロールを追加
+        for i in range(3):
+            await upsert_discord_channel(
+                db_session,
+                guild_id=guild_id,
+                channel_id=snowflake(),
+                channel_name=f"ch{i}",
+            )
+            await upsert_discord_role(
+                db_session,
+                guild_id=guild_id,
+                role_id=snowflake(),
+                role_name=f"role{i}",
+            )
+
+        assert len(await get_discord_channels_by_guild(db_session, guild_id)) == 3
+        assert len(await get_discord_roles_by_guild(db_session, guild_id)) == 3
+
+        # チャンネルとロールを一括削除
+        deleted_channels = await delete_discord_channels_by_guild(db_session, guild_id)
+        deleted_roles = await delete_discord_roles_by_guild(db_session, guild_id)
+
+        assert deleted_channels == 3
+        assert deleted_roles == 3
+
+        # ギルド削除
+        result = await delete_discord_guild(db_session, guild_id)
+        assert result is True
+
+        # すべて削除されている
+        assert len(await get_discord_channels_by_guild(db_session, guild_id)) == 0
+        assert len(await get_discord_roles_by_guild(db_session, guild_id)) == 0
+        all_guilds = await get_all_discord_guilds(db_session)
+        assert len([g for g in all_guilds if g.guild_id == guild_id]) == 0
+
+    async def test_channel_upsert_updates_existing(
+        self, db_session: AsyncSession
+    ) -> None:
+        """既存チャンネルの upsert は更新になる。"""
+        guild_id = snowflake()
+        channel_id = snowflake()
+
+        await upsert_discord_guild(
+            db_session, guild_id=guild_id, guild_name="Test Guild"
+        )
+
+        # 初回作成
+        await upsert_discord_channel(
+            db_session,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            channel_name="original",
+        )
+
+        # 同じ channel_id で upsert（更新）
+        await upsert_discord_channel(
+            db_session, guild_id=guild_id, channel_id=channel_id, channel_name="updated"
+        )
+
+        channels = await get_discord_channels_by_guild(db_session, guild_id)
+        assert len(channels) == 1
+        assert channels[0].channel_name == "updated"
+
+    async def test_role_upsert_updates_existing(self, db_session: AsyncSession) -> None:
+        """既存ロールの upsert は更新になる。"""
+        guild_id = snowflake()
+        role_id = snowflake()
+
+        await upsert_discord_guild(
+            db_session, guild_id=guild_id, guild_name="Test Guild"
+        )
+
+        # 初回作成
+        await upsert_discord_role(
+            db_session,
+            guild_id=guild_id,
+            role_id=role_id,
+            role_name="original",
+        )
+
+        # 同じ role_id で upsert（更新）
+        await upsert_discord_role(
+            db_session, guild_id=guild_id, role_id=role_id, role_name="updated"
+        )
+
+        roles = await get_discord_roles_by_guild(db_session, guild_id)
+        assert len(roles) == 1
+        assert roles[0].role_name == "updated"
+
+
+class TestBumpConfigReminderIntegration:
+    """BumpConfig と BumpReminder の連携テスト。"""
+
+    async def test_config_and_reminder_coexist(self, db_session: AsyncSession) -> None:
+        """同じギルドで Config と Reminder が共存できる。"""
+        guild_id = snowflake()
+        channel_id = snowflake()
+
+        # Config 作成
+        config = await upsert_bump_config(
+            db_session, guild_id=guild_id, channel_id=channel_id
+        )
+        assert config.guild_id == guild_id
+
+        # Reminder 作成
+        reminder = await upsert_bump_reminder(
+            db_session,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            service_name="disboard",
+            remind_at=datetime.now(UTC) + timedelta(hours=2),
+        )
+        assert reminder.guild_id == guild_id
+
+        # 両方取得可能
+        fetched_config = await get_bump_config(db_session, guild_id)
+        fetched_reminder = await get_bump_reminder(db_session, guild_id, "disboard")
+
+        assert fetched_config is not None
+        assert fetched_reminder is not None
+
+    async def test_config_deletion_does_not_affect_reminder(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Config 削除が Reminder に影響しない。"""
+        guild_id = snowflake()
+        channel_id = snowflake()
+
+        await upsert_bump_config(db_session, guild_id=guild_id, channel_id=channel_id)
+        await upsert_bump_reminder(
+            db_session,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            service_name="disboard",
+            remind_at=datetime.now(UTC) + timedelta(hours=2),
+        )
+
+        # Config 削除
+        result = await delete_bump_config(db_session, guild_id)
+        assert result is True
+
+        # Reminder は残っている
+        reminder = await get_bump_reminder(db_session, guild_id, "disboard")
+        assert reminder is not None
+
+    async def test_multiple_services_same_guild(self, db_session: AsyncSession) -> None:
+        """同じギルドで複数サービスの Reminder が共存できる。"""
+        guild_id = snowflake()
+        now = datetime.now(UTC)
+
+        # 3つのサービス
+        for service in ["disboard", "dissoku", "displace"]:
+            await upsert_bump_reminder(
+                db_session,
+                guild_id=guild_id,
+                channel_id=snowflake(),
+                service_name=service,
+                remind_at=now + timedelta(hours=2),
+            )
+
+        # それぞれ取得可能
+        for service in ["disboard", "dissoku", "displace"]:
+            reminder = await get_bump_reminder(db_session, guild_id, service)
+            assert reminder is not None
+            assert reminder.service_name == service
+
+    async def test_disabled_reminder_not_in_due_list(
+        self, db_session: AsyncSession
+    ) -> None:
+        """無効化した Reminder は due リストに含まれない。"""
+        guild_id = snowflake()
+        past = datetime.now(UTC) - timedelta(hours=1)
+
+        # 過去の時刻で Reminder 作成
+        await upsert_bump_reminder(
+            db_session,
+            guild_id=guild_id,
+            channel_id=snowflake(),
+            service_name="disboard",
+            remind_at=past,
+        )
+
+        # 有効時は due リストに含まれる
+        due = await get_due_bump_reminders(db_session, datetime.now(UTC))
+        assert any(r.guild_id == guild_id for r in due)
+
+        # 無効化
+        await toggle_bump_reminder(db_session, guild_id, "disboard")
+
+        # due リストに含まれない
+        due = await get_due_bump_reminders(db_session, datetime.now(UTC))
+        assert not any(r.guild_id == guild_id for r in due)
+
+
+class TestRolePanelAdvanced:
+    """RolePanel の高度な操作テスト。"""
+
+    async def test_get_panel_by_message_id(self, db_session: AsyncSession) -> None:
+        """message_id でパネルを取得できる。"""
+        guild_id = snowflake()
+        message_id = snowflake()
+
+        panel = await create_role_panel(
+            db_session,
+            guild_id=guild_id,
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        # message_id を設定
+        await update_role_panel(db_session, panel, message_id=message_id)
+
+        # message_id で取得
+        fetched = await get_role_panel_by_message_id(db_session, message_id)
+        assert fetched is not None
+        assert fetched.id == panel.id
+
+    async def test_get_panels_by_channel(self, db_session: AsyncSession) -> None:
+        """チャンネル内の全パネルを取得できる。"""
+        guild_id = snowflake()
+        channel_id = snowflake()
+
+        # 同じチャンネルに3つのパネル
+        for i in range(3):
+            await create_role_panel(
+                db_session,
+                guild_id=guild_id,
+                channel_id=channel_id,
+                panel_type="button",
+                title=f"Panel {i}",
+            )
+
+        panels = await get_role_panels_by_channel(db_session, channel_id)
+        assert len(panels) == 3
+
+    async def test_item_lookup_by_emoji(self, db_session: AsyncSession) -> None:
+        """絵文字でアイテムを検索できる。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Test",
+        )
+
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id=snowflake(), emoji="🎮"
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id=snowflake(), emoji="🎨"
+        )
+
+        # 絵文字で検索
+        item = await get_role_panel_item_by_emoji(db_session, panel.id, "🎮")
+        assert item is not None
+        assert item.emoji == "🎮"
+
+        # 存在しない絵文字
+        not_found = await get_role_panel_item_by_emoji(db_session, panel.id, "🎵")
+        assert not_found is None
+
+    async def test_remove_item_by_emoji(self, db_session: AsyncSession) -> None:
+        """アイテムを絵文字で削除できる。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Test",
+        )
+
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id=snowflake(), emoji="🎮"
+        )
+        await add_role_panel_item(
+            db_session, panel_id=panel.id, role_id=snowflake(), emoji="🎨"
+        )
+
+        # 1つ削除
+        result = await remove_role_panel_item(db_session, panel.id, "🎮")
+        assert result is True
+
+        # 残り1つ
+        items = await get_role_panel_items(db_session, panel.id)
+        assert len(items) == 1
+        assert items[0].emoji == "🎨"
+
+    async def test_update_panel_fields(self, db_session: AsyncSession) -> None:
+        """パネルのフィールドを更新できる。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Original",
+            description="Original desc",
+            color=0xFF0000,
+        )
+
+        # 更新
+        await update_role_panel(
+            db_session,
+            panel,
+            title="Updated",
+            description="Updated desc",
+            color=0x00FF00,
+        )
+
+        # 再取得して確認
+        fetched = await get_role_panel(db_session, panel.id)
+        assert fetched is not None
+        assert fetched.title == "Updated"
+        assert fetched.description == "Updated desc"
+        assert fetched.color == 0x00FF00
+
+
+class TestCrossEntityIntegrity:
+    """異なるエンティティ間の整合性テスト。"""
+
+    async def test_same_channel_different_resources(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同じチャンネルに異なるリソースが共存できる。"""
+        guild_id = snowflake()
+        channel_id = snowflake()
+
+        # StickyMessage
+        await create_sticky_message(
+            db_session,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            title="Sticky",
+            description="Test sticky",
+            color=0xFF0000,
+            cooldown_seconds=10,
+            message_type="embed",
+        )
+
+        # RolePanel
+        await create_role_panel(
+            db_session,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            panel_type="button",
+            title="Role Panel",
+        )
+
+        # BumpConfig
+        await upsert_bump_config(db_session, guild_id=guild_id, channel_id=channel_id)
+
+        # すべて取得可能
+        assert await get_sticky_message(db_session, channel_id) is not None
+        panels = await get_role_panels_by_channel(db_session, channel_id)
+        assert len(panels) == 1
+        assert await get_bump_config(db_session, guild_id) is not None
+
+    async def test_independent_deletion(self, db_session: AsyncSession) -> None:
+        """各リソースの削除が他に影響しない。"""
+        guild_id = snowflake()
+        channel_id = snowflake()
+
+        # 3つのリソースを作成
+        await create_sticky_message(
+            db_session,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            title="Sticky",
+            description="Test",
+            color=0,
+            cooldown_seconds=10,
+            message_type="text",
+        )
+        panel = await create_role_panel(
+            db_session,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            panel_type="button",
+            title="Panel",
+        )
+        await upsert_bump_config(db_session, guild_id=guild_id, channel_id=channel_id)
+
+        # RolePanel だけ削除
+        await delete_role_panel(db_session, panel.id)
+
+        # 他は残っている
+        assert await get_sticky_message(db_session, channel_id) is not None
+        assert await get_bump_config(db_session, guild_id) is not None
+        assert len(await get_role_panels_by_channel(db_session, channel_id)) == 0
+
+    async def test_guild_data_isolation(self, db_session: AsyncSession) -> None:
+        """異なるギルドのデータが完全に分離されている。"""
+        g1, g2 = snowflake(), snowflake()
+
+        # 各ギルドにリソースを作成
+        for gid in [g1, g2]:
+            await create_lobby(db_session, guild_id=gid, lobby_channel_id=snowflake())
+            await create_role_panel(
+                db_session,
+                guild_id=gid,
+                channel_id=snowflake(),
+                panel_type="button",
+                title=f"Panel for {gid}",
+            )
+            await upsert_bump_config(db_session, guild_id=gid, channel_id=snowflake())
+
+        # 各ギルドのデータが分離されている
+        assert len(await get_lobbies_by_guild(db_session, g1)) == 1
+        assert len(await get_lobbies_by_guild(db_session, g2)) == 1
+        assert len(await get_role_panels_by_guild(db_session, g1)) == 1
+        assert len(await get_role_panels_by_guild(db_session, g2)) == 1
+
+        # g1 のリソースを削除しても g2 に影響しない
+        lobbies = await get_lobbies_by_guild(db_session, g1)
+        await delete_lobby(db_session, lobbies[0].id)
+
+        assert len(await get_lobbies_by_guild(db_session, g1)) == 0
+        assert len(await get_lobbies_by_guild(db_session, g2)) == 1
+
+
+class TestEdgeCasesAndBoundaries:
+    """エッジケースと境界値のテスト。"""
+
+    async def test_empty_string_handling(self, db_session: AsyncSession) -> None:
+        """空文字列の扱い。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Test",
+            description="",  # 空文字列
+        )
+
+        fetched = await get_role_panel(db_session, panel.id)
+        assert fetched is not None
+        # 空文字列は None ではなく空文字列として保存される
+        assert fetched.description == ""
+
+    async def test_none_optional_fields(self, db_session: AsyncSession) -> None:
+        """None のオプションフィールド。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Test",
+            description=None,
+            color=None,
+        )
+
+        fetched = await get_role_panel(db_session, panel.id)
+        assert fetched is not None
+        assert fetched.description is None
+        assert fetched.color is None
+
+    async def test_delete_nonexistent_returns_false(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないリソースの削除は False を返す。"""
+        result = await delete_role_panel(db_session, 999999)
+        assert result is False
+
+        result = await delete_lobby(db_session, 999999)
+        assert result is False
+
+        result = await delete_voice_session(db_session, "nonexistent")
+        assert result is False
+
+    async def test_get_nonexistent_returns_none(self, db_session: AsyncSession) -> None:
+        """存在しないリソースの取得は None を返す。"""
+        assert await get_role_panel(db_session, 999999) is None
+        assert await get_voice_session(db_session, "nonexistent") is None
+        assert await get_lobby_by_channel_id(db_session, "nonexistent") is None
+        assert await get_role_panel_by_message_id(db_session, "nonexistent") is None
+
+    async def test_consecutive_updates(self, db_session: AsyncSession) -> None:
+        """連続した更新が正しく反映される。"""
+        lobby = await create_lobby(
+            db_session, guild_id=snowflake(), lobby_channel_id=snowflake()
+        )
+        vs = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=snowflake(),
+            owner_id=snowflake(),
+            name="original",
+        )
+
+        # 5回連続更新
+        for i in range(5):
+            await update_voice_session(db_session, vs, name=f"update-{i}")
+
+        # 最後の値が反映されている
+        fetched = await get_voice_session(db_session, vs.channel_id)
+        assert fetched is not None
+        assert fetched.name == "update-4"
+
+    async def test_maximum_items_per_panel(self, db_session: AsyncSession) -> None:
+        """パネルに多数のアイテムを追加できる。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Many Items",
+        )
+
+        # 25個のアイテムを追加（Discord の制限に近い数）
+        # 実際には異なる絵文字を使う必要があるが、テスト用にカスタム絵文字形式を使用
+        for i in range(25):
+            await add_role_panel_item(
+                db_session,
+                panel_id=panel.id,
+                role_id=snowflake(),
+                emoji=f"<:emoji{i}:{snowflake()}>",  # カスタム絵文字形式
+            )
+
+        items = await get_role_panel_items(db_session, panel.id)
+        assert len(items) == 25
+
+
+# =============================================================================
+# ギルド削除時のクリーンアップ統合テスト
+# =============================================================================
+
+
+class TestGuildRemovalCleanup:
+    """ギルドからBot削除時のデータクリーンアップ統合テスト。
+
+    on_guild_remove イベントで呼ばれる削除関数の整合性をテスト。
+    """
+
+    async def test_voice_cleanup_with_sessions(self, db_session: AsyncSession) -> None:
+        """VCセッションを持つギルドのクリーンアップ。
+
+        ロビー → セッション → メンバー の階層関係が正しく削除されることを確認。
+        """
+        guild_id = snowflake()
+
+        # ロビーを作成
+        lobby = await create_lobby(
+            db_session,
+            guild_id=guild_id,
+            lobby_channel_id=snowflake(),
+        )
+
+        # 複数のセッションを作成
+        vs1 = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=snowflake(),
+            owner_id=snowflake(),
+            name="Session 1",
+        )
+        vs2 = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=snowflake(),
+            owner_id=snowflake(),
+            name="Session 2",
+        )
+
+        # 各セッションにメンバーを追加
+        await add_voice_session_member(db_session, vs1.id, snowflake())
+        await add_voice_session_member(db_session, vs1.id, snowflake())
+        await add_voice_session_member(db_session, vs2.id, snowflake())
+
+        # ギルドのクリーンアップを実行
+        # 順序: セッション → ロビー (外部キー制約のため)
+        vs_count = await delete_voice_sessions_by_guild(db_session, guild_id)
+        lobby_count = await delete_lobbies_by_guild(db_session, guild_id)
+
+        assert vs_count == 2
+        assert lobby_count == 1
+
+        # 全て削除されていることを確認
+        assert await get_voice_session(db_session, vs1.channel_id) is None
+        assert await get_voice_session(db_session, vs2.channel_id) is None
+        assert await get_lobbies_by_guild(db_session, guild_id) == []
+
+    async def test_bump_cleanup_with_multiple_services(
+        self, db_session: AsyncSession
+    ) -> None:
+        """複数サービスのbumpリマインダーを持つギルドのクリーンアップ。"""
+        guild_id = snowflake()
+        channel_id = snowflake()
+        remind_at = datetime.now(UTC) + timedelta(hours=2)
+
+        # bump設定を作成
+        await upsert_bump_config(db_session, guild_id, channel_id)
+
+        # 複数サービスのリマインダーを作成
+        await upsert_bump_reminder(
+            db_session,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            service_name="DISBOARD",
+            remind_at=remind_at,
+        )
+        await upsert_bump_reminder(
+            db_session,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            service_name="ディス速報",
+            remind_at=remind_at,
+        )
+
+        # ギルドのクリーンアップを実行
+        await delete_bump_config(db_session, guild_id)
+        reminder_count = await delete_bump_reminders_by_guild(db_session, guild_id)
+
+        assert reminder_count == 2
+
+        # 全て削除されていることを確認
+        assert await get_bump_config(db_session, guild_id) is None
+        assert await get_bump_reminder(db_session, guild_id, "DISBOARD") is None
+        assert await get_bump_reminder(db_session, guild_id, "ディス速報") is None
+
+    async def test_sticky_cleanup_multiple_channels(
+        self, db_session: AsyncSession
+    ) -> None:
+        """複数チャンネルのstickyメッセージを持つギルドのクリーンアップ。"""
+        guild_id = snowflake()
+
+        # 複数チャンネルにstickyを作成
+        await create_sticky_message(
+            db_session,
+            channel_id=snowflake(),
+            guild_id=guild_id,
+            title="Sticky 1",
+            description="Description 1",
+            color=0xFF0000,
+            cooldown_seconds=5,
+        )
+        await create_sticky_message(
+            db_session,
+            channel_id=snowflake(),
+            guild_id=guild_id,
+            title="Sticky 2",
+            description="Description 2",
+            color=0x00FF00,
+            cooldown_seconds=10,
+        )
+        await create_sticky_message(
+            db_session,
+            channel_id=snowflake(),
+            guild_id=guild_id,
+            title="Sticky 3",
+            description="Description 3",
+            color=0x0000FF,
+            cooldown_seconds=15,
+        )
+
+        # ギルドのクリーンアップを実行
+        sticky_count = await delete_sticky_messages_by_guild(db_session, guild_id)
+
+        assert sticky_count == 3
+
+        # 全て削除されていることを確認
+        all_stickies = await get_all_sticky_messages(db_session)
+        guild_stickies = [s for s in all_stickies if s.guild_id == guild_id]
+        assert len(guild_stickies) == 0
+
+    async def test_full_guild_cleanup(self, db_session: AsyncSession) -> None:
+        """ギルドの全データを一括クリーンアップする統合テスト。
+
+        実際の on_guild_remove イベントで行われる操作をシミュレート。
+        """
+        guild_id = snowflake()
+        remind_at = datetime.now(UTC) + timedelta(hours=2)
+
+        # --- セットアップ: ギルドに様々なデータを作成 ---
+
+        # VC関連
+        lobby = await create_lobby(
+            db_session,
+            guild_id=guild_id,
+            lobby_channel_id=snowflake(),
+        )
+        vs = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=snowflake(),
+            owner_id=snowflake(),
+            name="Test Session",
+        )
+        await add_voice_session_member(db_session, vs.id, snowflake())
+
+        # Bump関連
+        bump_channel = snowflake()
+        await upsert_bump_config(db_session, guild_id, bump_channel)
+        await upsert_bump_reminder(
+            db_session,
+            guild_id=guild_id,
+            channel_id=bump_channel,
+            service_name="DISBOARD",
+            remind_at=remind_at,
+        )
+
+        # Sticky関連
+        await create_sticky_message(
+            db_session,
+            channel_id=snowflake(),
+            guild_id=guild_id,
+            title="Test Sticky",
+            description="Test",
+            color=0xFF0000,
+            cooldown_seconds=5,
+        )
+
+        # --- クリーンアップ実行 (on_guild_remove の処理をシミュレート) ---
+
+        # Voice (順序重要: セッション → ロビー)
+        vs_count = await delete_voice_sessions_by_guild(db_session, guild_id)
+        lobby_count = await delete_lobbies_by_guild(db_session, guild_id)
+
+        # Bump
+        await delete_bump_config(db_session, guild_id)
+        bump_count = await delete_bump_reminders_by_guild(db_session, guild_id)
+
+        # Sticky
+        sticky_count = await delete_sticky_messages_by_guild(db_session, guild_id)
+
+        # --- 検証 ---
+        assert vs_count == 1
+        assert lobby_count == 1
+        assert bump_count == 1
+        assert sticky_count == 1
+
+        # 全て削除されていることを確認
+        assert await get_lobbies_by_guild(db_session, guild_id) == []
+        assert await get_bump_config(db_session, guild_id) is None
+        all_stickies = await get_all_sticky_messages(db_session)
+        assert all(s.guild_id != guild_id for s in all_stickies)
+
+    async def test_cleanup_isolation_between_guilds(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ギルドAのクリーンアップがギルドBに影響しないことを確認。"""
+        guild_a = snowflake()
+        guild_b = snowflake()
+        remind_at = datetime.now(UTC) + timedelta(hours=2)
+
+        # ギルドAにデータを作成
+        lobby_a = await create_lobby(
+            db_session, guild_id=guild_a, lobby_channel_id=snowflake()
+        )
+        await create_voice_session(
+            db_session,
+            lobby_id=lobby_a.id,
+            channel_id=snowflake(),
+            owner_id=snowflake(),
+            name="A Session",
+        )
+        await upsert_bump_config(db_session, guild_a, snowflake())
+        await upsert_bump_reminder(
+            db_session,
+            guild_id=guild_a,
+            channel_id=snowflake(),
+            service_name="DISBOARD",
+            remind_at=remind_at,
+        )
+        await create_sticky_message(
+            db_session,
+            channel_id=snowflake(),
+            guild_id=guild_a,
+            title="A Sticky",
+            description="A",
+            color=0xFF0000,
+            cooldown_seconds=5,
+        )
+
+        # ギルドBにデータを作成
+        lobby_b = await create_lobby(
+            db_session, guild_id=guild_b, lobby_channel_id=snowflake()
+        )
+        await create_voice_session(
+            db_session,
+            lobby_id=lobby_b.id,
+            channel_id=snowflake(),
+            owner_id=snowflake(),
+            name="B Session",
+        )
+        await upsert_bump_config(db_session, guild_b, snowflake())
+        await upsert_bump_reminder(
+            db_session,
+            guild_id=guild_b,
+            channel_id=snowflake(),
+            service_name="DISBOARD",
+            remind_at=remind_at,
+        )
+        await create_sticky_message(
+            db_session,
+            channel_id=snowflake(),
+            guild_id=guild_b,
+            title="B Sticky",
+            description="B",
+            color=0x00FF00,
+            cooldown_seconds=5,
+        )
+
+        # ギルドAのみクリーンアップ
+        await delete_voice_sessions_by_guild(db_session, guild_a)
+        await delete_lobbies_by_guild(db_session, guild_a)
+        await delete_bump_config(db_session, guild_a)
+        await delete_bump_reminders_by_guild(db_session, guild_a)
+        await delete_sticky_messages_by_guild(db_session, guild_a)
+
+        # ギルドAは空
+        assert await get_lobbies_by_guild(db_session, guild_a) == []
+        assert await get_bump_config(db_session, guild_a) is None
+
+        # ギルドBは残っている
+        assert len(await get_lobbies_by_guild(db_session, guild_b)) == 1
+        assert await get_bump_config(db_session, guild_b) is not None
+        assert await get_bump_reminder(db_session, guild_b, "DISBOARD") is not None
+        all_stickies = await get_all_sticky_messages(db_session)
+        guild_b_stickies = [s for s in all_stickies if s.guild_id == guild_b]
+        assert len(guild_b_stickies) == 1

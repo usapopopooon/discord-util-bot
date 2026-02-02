@@ -731,6 +731,207 @@ class TestAddCommand:
         call_args = interaction.response.send_message.call_args
         assert "既に使用されています" in call_args.args[0]
 
+    async def test_add_invalid_emoji_error(self, mock_bot: MagicMock) -> None:
+        """無効な絵文字の場合エラーを返す。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.channel = MagicMock(spec=discord.TextChannel)
+        interaction.channel.id = 123
+        interaction.response = AsyncMock()
+
+        mock_role = MagicMock(spec=discord.Role)
+
+        # 無効な絵文字 (通常のテキスト) でコマンドを呼び出す
+        await cog.add.callback(
+            cog, interaction, mock_role, "invalid", None, "secondary"
+        )
+
+        interaction.response.send_message.assert_awaited_once()
+        call_args = interaction.response.send_message.call_args
+        assert "無効な絵文字" in call_args.args[0]
+        assert call_args.kwargs.get("ephemeral") is True
+
+    async def test_add_whitespace_emoji_error(self, mock_bot: MagicMock) -> None:
+        """空白のみの絵文字は無効。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.channel = MagicMock(spec=discord.TextChannel)
+        interaction.channel.id = 123
+        interaction.response = AsyncMock()
+
+        mock_role = MagicMock(spec=discord.Role)
+
+        await cog.add.callback(cog, interaction, mock_role, "   ", None, "secondary")
+
+        interaction.response.send_message.assert_awaited_once()
+        call_args = interaction.response.send_message.call_args
+        assert "無効な絵文字" in call_args.args[0]
+
+    async def test_add_zwj_emoji_valid(self, mock_bot: MagicMock) -> None:
+        """ZWJ 絵文字 (🧑‍💻等) は有効。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.channel = MagicMock(spec=discord.TextChannel)
+        interaction.channel.id = 123
+        interaction.response = AsyncMock()
+        interaction.guild = MagicMock()
+        interaction.guild.get_channel.return_value = None
+
+        mock_role = MagicMock(spec=discord.Role)
+        mock_role.id = 111
+        mock_role.mention = "@Test"
+        mock_panel = RolePanel(
+            id=1, guild_id="123", channel_id="123", panel_type="button", title="Test"
+        )
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch(
+                "src.cogs.role_panel.get_role_panels_by_channel"
+            ) as mock_get_panels:
+                mock_get_panels.return_value = [mock_panel]
+
+                with patch(
+                    "src.cogs.role_panel.get_role_panel_item_by_emoji"
+                ) as mock_get_item:
+                    mock_get_item.return_value = None  # 絵文字は未使用
+
+                    with (
+                        patch(
+                            "src.cogs.role_panel.add_role_panel_item"
+                        ) as mock_add_item,
+                        patch(
+                            "src.cogs.role_panel.get_role_panel_items"
+                        ) as mock_get_items,
+                    ):
+                        mock_get_items.return_value = []
+
+                        # ZWJ 絵文字でコマンドを呼び出す
+                        await cog.add.callback(
+                            cog, interaction, mock_role, "🧑‍💻", None, "secondary"
+                        )
+
+                    # add_role_panel_item が呼び出されたことを確認
+                    mock_add_item.assert_awaited_once()
+
+        # エラーメッセージではなく成功メッセージ
+        call_args = interaction.response.send_message.call_args
+        assert "追加しました" in call_args.args[0]
+
+    async def test_add_keycap_emoji_valid(self, mock_bot: MagicMock) -> None:
+        """Keycap 絵文字 (1️⃣等) は有効。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.channel = MagicMock(spec=discord.TextChannel)
+        interaction.channel.id = 123
+        interaction.response = AsyncMock()
+        interaction.guild = MagicMock()
+        interaction.guild.get_channel.return_value = None
+
+        mock_role = MagicMock(spec=discord.Role)
+        mock_role.id = 111
+        mock_role.mention = "@Test"
+        mock_panel = RolePanel(
+            id=1, guild_id="123", channel_id="123", panel_type="button", title="Test"
+        )
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch(
+                "src.cogs.role_panel.get_role_panels_by_channel"
+            ) as mock_get_panels:
+                mock_get_panels.return_value = [mock_panel]
+
+                with patch(
+                    "src.cogs.role_panel.get_role_panel_item_by_emoji"
+                ) as mock_get_item:
+                    mock_get_item.return_value = None
+
+                    with (
+                        patch(
+                            "src.cogs.role_panel.add_role_panel_item"
+                        ) as mock_add_item,
+                        patch(
+                            "src.cogs.role_panel.get_role_panel_items"
+                        ) as mock_get_items,
+                    ):
+                        mock_get_items.return_value = []
+
+                        # Keycap 絵文字でコマンドを呼び出す
+                        await cog.add.callback(
+                            cog, interaction, mock_role, "1️⃣", None, "secondary"
+                        )
+
+                    mock_add_item.assert_awaited_once()
+
+        call_args = interaction.response.send_message.call_args
+        assert "追加しました" in call_args.args[0]
+
+    async def test_add_integrity_error_race_condition(
+        self, mock_bot: MagicMock
+    ) -> None:
+        """IntegrityError (レースコンディション) で適切なエラーを返す。"""
+        from sqlalchemy.exc import IntegrityError
+
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.channel = MagicMock(spec=discord.TextChannel)
+        interaction.channel.id = 123
+        interaction.response = AsyncMock()
+
+        mock_role = MagicMock(spec=discord.Role)
+        mock_role.id = 111
+        mock_panel = RolePanel(
+            id=1, guild_id="123", channel_id="123", panel_type="button", title="Test"
+        )
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch(
+                "src.cogs.role_panel.get_role_panels_by_channel"
+            ) as mock_get_panels:
+                mock_get_panels.return_value = [mock_panel]
+
+                with patch(
+                    "src.cogs.role_panel.get_role_panel_item_by_emoji"
+                ) as mock_get_item:
+                    mock_get_item.return_value = None  # チェック時は未使用
+
+                    with patch(
+                        "src.cogs.role_panel.add_role_panel_item"
+                    ) as mock_add_item:
+                        # add_role_panel_item が IntegrityError をスロー
+                        mock_add_item.side_effect = IntegrityError(
+                            statement="INSERT",
+                            params={},
+                            orig=Exception("duplicate key"),
+                        )
+
+                        await cog.add.callback(
+                            cog, interaction, mock_role, "🎮", None, "secondary"
+                        )
+
+        interaction.response.send_message.assert_awaited_once()
+        call_args = interaction.response.send_message.call_args
+        assert "既に使用されています" in call_args.args[0]
+        assert call_args.kwargs.get("ephemeral") is True
+
 
 class TestRemoveCommand:
     """remove コマンドのテスト。"""

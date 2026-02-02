@@ -1122,6 +1122,33 @@ class TestRolePanelItemWithFaker:
                 emoji="🎮",
             )
 
+    async def test_add_item_duplicate_emoji(self, db_session: AsyncSession) -> None:
+        """同じパネルに同じ絵文字のアイテムを追加すると IntegrityError。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Test",
+        )
+
+        # 最初のアイテムは成功
+        await add_role_panel_item(
+            db_session,
+            panel_id=panel.id,
+            role_id=snowflake(),
+            emoji="🎮",
+        )
+
+        # 同じ絵文字で2つ目を追加しようとすると IntegrityError
+        with pytest.raises(IntegrityError):
+            await add_role_panel_item(
+                db_session,
+                panel_id=panel.id,
+                role_id=snowflake(),
+                emoji="🎮",
+            )
+
 
 # ===========================================================================
 # VoiceSessionMember CRUD — faker 利用

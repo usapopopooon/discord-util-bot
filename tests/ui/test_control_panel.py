@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
+import pytest
 
 from src.ui.control_panel import (
+    CONTROL_PANEL_COOLDOWN_SECONDS,
     AllowSelectView,
     BitrateSelectMenu,
     BitrateSelectView,
@@ -25,10 +28,21 @@ from src.ui.control_panel import (
     TransferSelectView,
     UserLimitModal,
     _find_panel_message,
+    clear_control_panel_cooldown_cache,
     create_control_panel_embed,
+    is_control_panel_on_cooldown,
     refresh_panel_embed,
     repost_panel,
 )
+from src.utils import clear_resource_locks
+
+
+@pytest.fixture(autouse=True)
+def clear_cooldown_cache() -> None:
+    """Clear control panel cooldown cache and resource locks before each test."""
+    clear_control_panel_cooldown_cache()
+    clear_resource_locks()
+
 
 # ---------------------------------------------------------------------------
 # テスト用ヘルパー
@@ -3422,3 +3436,251 @@ class TestLockButtonChannelRenameEdgeCases:
 
         # 最初の🔒のみ削除
         interaction.channel.edit.assert_awaited_once_with(name="🔒テスト")
+
+
+# ---------------------------------------------------------------------------
+# コントロールパネル操作クールダウンテスト
+# ---------------------------------------------------------------------------
+
+
+class TestControlPanelCooldown:
+    """コントロールパネル操作クールダウンの単体テスト。"""
+
+    def test_first_action_not_on_cooldown(self) -> None:
+        """最初の操作はクールダウンされない."""
+        user_id = 12345
+        channel_id = 100
+
+        result = is_control_panel_on_cooldown(user_id, channel_id)
+
+        assert result is False
+
+    def test_immediate_second_action_on_cooldown(self) -> None:
+        """直後の操作はクールダウンされる."""
+        user_id = 12345
+        channel_id = 100
+
+        # 1回目 (クールダウンを記録)
+        is_control_panel_on_cooldown(user_id, channel_id)
+
+        # 即座に2回目
+        result = is_control_panel_on_cooldown(user_id, channel_id)
+
+        assert result is True
+
+    def test_different_user_not_affected(self) -> None:
+        """異なるユーザーはクールダウンの影響を受けない."""
+        user_id_1 = 12345
+        user_id_2 = 67890
+        channel_id = 100
+
+        # ユーザー1が操作
+        is_control_panel_on_cooldown(user_id_1, channel_id)
+
+        # ユーザー2は影響を受けない
+        result = is_control_panel_on_cooldown(user_id_2, channel_id)
+
+        assert result is False
+
+    def test_different_channel_not_affected(self) -> None:
+        """異なるチャンネルはクールダウンの影響を受けない."""
+        user_id = 12345
+        channel_id_1 = 100
+        channel_id_2 = 200
+
+        # チャンネル1で操作
+        is_control_panel_on_cooldown(user_id, channel_id_1)
+
+        # チャンネル2は影響を受けない
+        result = is_control_panel_on_cooldown(user_id, channel_id_2)
+
+        assert result is False
+
+    def test_cooldown_expires(self) -> None:
+        """クールダウン時間経過後は再度操作できる."""
+        import time
+        from unittest.mock import patch as mock_patch
+
+        user_id = 12345
+        channel_id = 100
+
+        # 1回目
+        is_control_panel_on_cooldown(user_id, channel_id)
+
+        # time.monotonic をモックしてクールダウン時間経過をシミュレート
+        original_time = time.monotonic()
+        with mock_patch(
+            "src.ui.control_panel.time.monotonic",
+            return_value=original_time + CONTROL_PANEL_COOLDOWN_SECONDS + 0.1,
+        ):
+            result = is_control_panel_on_cooldown(user_id, channel_id)
+
+        assert result is False
+
+    def test_clear_cooldown_cache(self) -> None:
+        """クールダウンキャッシュをクリアできる."""
+        user_id = 12345
+        channel_id = 100
+
+        # クールダウンを設定
+        is_control_panel_on_cooldown(user_id, channel_id)
+        assert is_control_panel_on_cooldown(user_id, channel_id) is True
+
+        # キャッシュをクリア
+        clear_control_panel_cooldown_cache()
+
+        # クリア後はクールダウンされない
+        assert is_control_panel_on_cooldown(user_id, channel_id) is False
+
+    def test_cooldown_constant_value(self) -> None:
+        """クールダウン時間が適切に設定されている."""
+        assert CONTROL_PANEL_COOLDOWN_SECONDS == 3
+
+
+class TestControlPanelCooldownIntegration:
+    """コントロールパネル操作クールダウンの統合テスト (interaction_check との連携)."""
+
+    async def test_interaction_check_rejects_when_on_cooldown(self) -> None:
+        """クールダウン中に操作するとエラーメッセージが返される."""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=12345)
+        interaction.channel_id = 100
+
+        # 1回目のクールダウンを記録
+        is_control_panel_on_cooldown(12345, 100)
+
+        # interaction_check を呼び出し
+        result = await view.interaction_check(interaction)
+
+        # 拒否される
+        assert result is False
+        interaction.response.send_message.assert_awaited_once()
+        call_args = interaction.response.send_message.call_args
+        assert "操作が早すぎます" in call_args.args[0]
+        assert call_args.kwargs.get("ephemeral") is True
+
+    async def test_interaction_check_allows_first_action(self) -> None:
+        """最初の操作は許可される."""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=12345)
+        interaction.channel_id = 100
+
+        voice_session = _make_voice_session(owner_id="12345")
+        mock_factory, _ = _mock_async_session()
+
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+        ):
+            result = await view.interaction_check(interaction)
+
+        assert result is True
+
+    async def test_different_users_can_operate_simultaneously(self) -> None:
+        """異なるユーザーは同時に操作できる."""
+        view = ControlPanelView(session_id=1)
+        interaction1 = _make_interaction(user_id=12345)
+        interaction1.channel_id = 100
+
+        interaction2 = _make_interaction(user_id=67890)
+        interaction2.channel_id = 100
+
+        voice_session = _make_voice_session(owner_id="12345")
+        mock_factory, _ = _mock_async_session()
+
+        # ユーザー1が操作
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+        ):
+            result1 = await view.interaction_check(interaction1)
+
+        # ユーザー2も操作可能 (別ユーザーなのでクールダウン対象外)
+        voice_session2 = _make_voice_session(owner_id="67890")
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session2,
+            ),
+        ):
+            result2 = await view.interaction_check(interaction2)
+
+        assert result1 is True
+        assert result2 is True
+
+
+# ---------------------------------------------------------------------------
+# ロック + クールダウン二重保護統合テスト
+# ---------------------------------------------------------------------------
+
+
+class TestControlPanelLockCooldownIntegration:
+    """コントロールパネルのロック + クールダウン二重保護の統合テスト."""
+
+    async def test_lock_serializes_same_channel_operations(self) -> None:
+        """同じチャンネルの操作はロックによりシリアライズされる."""
+        from src.utils import get_resource_lock
+
+        execution_order: list[str] = []
+
+        async def mock_button_operation(name: str, channel_id: int) -> None:
+            async with get_resource_lock(f"control_panel:{channel_id}"):
+                execution_order.append(f"start_{name}")
+                await asyncio.sleep(0.01)
+                execution_order.append(f"end_{name}")
+
+        # 同じチャンネル ID で並行操作
+        await asyncio.gather(
+            mock_button_operation("A", 12345),
+            mock_button_operation("B", 12345),
+        )
+
+        # シリアライズされているため、start-end が連続
+        assert len(execution_order) == 4
+        assert execution_order[0].startswith("start_")
+        assert execution_order[1].startswith("end_")
+        # 最初の操作が完全に終了してから次の操作が開始
+        assert execution_order[0][6:] == execution_order[1][4:]
+
+    async def test_lock_allows_parallel_for_different_channels(self) -> None:
+        """異なるチャンネルの操作は並列実行可能."""
+        from src.utils import get_resource_lock
+
+        execution_order: list[str] = []
+
+        async def mock_button_operation(name: str, channel_id: int) -> None:
+            async with get_resource_lock(f"control_panel:{channel_id}"):
+                execution_order.append(f"start_{name}_{channel_id}")
+                await asyncio.sleep(0.01)
+                execution_order.append(f"end_{name}_{channel_id}")
+
+        # 異なるチャンネル ID で並行操作
+        await asyncio.gather(
+            mock_button_operation("A", 111),
+            mock_button_operation("B", 222),
+        )
+
+        # 両方とも完了
+        assert len(execution_order) == 4
+
+    async def test_lock_key_format_matches_implementation(self) -> None:
+        """ロックキーの形式が実装と一致することを確認."""
+        from src.utils import get_resource_lock
+
+        channel_id = 12345
+        expected_key = f"control_panel:{channel_id}"
+
+        # 同じキーで2回ロックを取得すると同じロックインスタンス
+        lock1 = get_resource_lock(expected_key)
+        lock2 = get_resource_lock(expected_key)
+        assert lock1 is lock2

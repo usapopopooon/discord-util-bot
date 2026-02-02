@@ -29,8 +29,10 @@ from src.services.db_service import (
     add_voice_session_member,
     create_lobby,
     create_voice_session,
+    delete_lobbies_by_guild,
     delete_lobby,
     delete_voice_session,
+    delete_voice_sessions_by_guild,
     get_lobbies_by_guild,
     get_lobby_by_channel_id,
     get_voice_session,
@@ -43,11 +45,81 @@ from src.ui.control_panel import (
     create_control_panel_embed,
     repost_panel,
 )
+from src.utils import get_resource_lock
 
 # デフォルトの VC リージョン (サーバー地域)。"japan" = 東京リージョン
 DEFAULT_RTC_REGION = "japan"
 
+# VC 作成のクールダウン時間 (秒)
+VC_CREATE_COOLDOWN_SECONDS = 30
+
 logger = logging.getLogger(__name__)
+
+# ==========================================================================
+# VC 作成クールダウン (連続作成防止)
+# ==========================================================================
+
+# ユーザーごとの最終 VC 作成時刻を記録
+# key: user_id, value: timestamp (float, time.monotonic)
+_vc_create_cooldown_cache: dict[int, float] = {}
+
+# キャッシュクリーンアップ間隔
+_VC_CLEANUP_INTERVAL = 300  # 5分
+_vc_last_cleanup_time = 0.0
+
+
+def _cleanup_vc_create_cooldown_cache() -> None:
+    """古いVC作成クールダウンエントリを削除する."""
+    global _vc_last_cleanup_time
+    now = time.monotonic()
+
+    # 5分ごとにクリーンアップ
+    if now - _vc_last_cleanup_time < _VC_CLEANUP_INTERVAL:
+        return
+
+    _vc_last_cleanup_time = now
+
+    # 古いエントリを削除 (5分以上経過したもの)
+    expired = [
+        key
+        for key, timestamp in _vc_create_cooldown_cache.items()
+        if now - timestamp > _VC_CLEANUP_INTERVAL
+    ]
+    for key in expired:
+        del _vc_create_cooldown_cache[key]
+
+
+def is_vc_create_on_cooldown(user_id: int) -> tuple[bool, float]:
+    """ユーザーが VC 作成のクールダウン中かどうかを確認する.
+
+    Args:
+        user_id: Discord ユーザー ID
+
+    Returns:
+        (クールダウン中なら True, 残り秒数)
+    """
+    _cleanup_vc_create_cooldown_cache()
+
+    now = time.monotonic()
+
+    last_time = _vc_create_cooldown_cache.get(user_id)
+    if last_time is not None:
+        elapsed = now - last_time
+        if elapsed < VC_CREATE_COOLDOWN_SECONDS:
+            remaining = VC_CREATE_COOLDOWN_SECONDS - elapsed
+            return True, remaining
+
+    return False, 0.0
+
+
+def record_vc_create_cooldown(user_id: int) -> None:
+    """VC 作成のクールダウンを記録する."""
+    _vc_create_cooldown_cache[user_id] = time.monotonic()
+
+
+def clear_vc_create_cooldown_cache() -> None:
+    """VC作成クールダウンキャッシュをクリアする (テスト用)."""
+    _vc_create_cooldown_cache.clear()
 
 
 class VoiceCog(commands.Cog):
@@ -142,6 +214,30 @@ class VoiceCog(commands.Cog):
             lobby = await get_lobby_by_channel_id(session, str(channel.id))
             if lobby:
                 await delete_lobby(session, lobby.id)
+
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        """ギルドからボットが削除された時に関連する VC データを全て削除する。"""
+        guild_id = str(guild.id)
+
+        # メモリキャッシュをクリア
+        # (guild のチャンネルIDを特定できないため全体は消さない)
+        # 注: ギルドのチャンネルは取得できないため、キャッシュは自然に stale になる
+
+        async with async_session() as session:
+            # 先にボイスセッションを削除 (外部キー制約のため)
+            vs_count = await delete_voice_sessions_by_guild(session, guild_id)
+            # 次にロビーを削除
+            lobby_count = await delete_lobbies_by_guild(session, guild_id)
+
+        if vs_count > 0 or lobby_count > 0:
+            logger.info(
+                "Cleaned up %d voice session(s) and %d lobby/lobbies "
+                "for removed guild: guild=%s",
+                vs_count,
+                lobby_count,
+                guild_id,
+            )
 
     # ==========================================================================
     # 参加時刻の追跡ヘルパー
@@ -342,16 +438,50 @@ class VoiceCog(commands.Cog):
 
         処理の流れ:
           1. 参加したチャンネルがロビーか DB で確認
-          2. ロビーなら新しい VC を作成
-          3. DB にセッション情報を記録
-          4. テキストチャット権限を設定 (オーナーのみ閲覧可)
-          5. メンバーを新しい VC に移動
-          6. コントロールパネル (Embed + ボタン) を送信
+          2. クールダウンチェック (連続作成防止)
+          3. ロビーなら新しい VC を作成
+          4. DB にセッション情報を記録
+          5. テキストチャット権限を設定 (オーナーのみ閲覧可)
+          6. メンバーを新しい VC に移動
+          7. コントロールパネル (Embed + ボタン) を送信
+
+        Note:
+          ユーザーごとのリソースロックにより、同一ユーザーの並行リクエストを
+          シリアライズする。クールダウンと合わせて二重保護。
         """
-        async with async_session() as session:
+        # ユーザーごとのロックで並行リクエストをシリアライズ
+        async with (
+            get_resource_lock(f"vc_create:{member.id}"),
+            async_session() as session,
+        ):
             # DB からロビー情報を取得。ロビーでなければ何もしない
             lobby = await get_lobby_by_channel_id(session, str(channel.id))
             if not lobby:
+                return
+
+            # --- クールダウンチェック (連続 VC 作成防止) ---
+            on_cooldown, remaining = is_vc_create_on_cooldown(member.id)
+            if on_cooldown:
+                logger.info(
+                    "VC creation on cooldown for user %s (%.0f seconds remaining)",
+                    member.id,
+                    remaining,
+                )
+                # クールダウン中の通知 (DM、失敗しても問題ない)
+                with contextlib.suppress(discord.HTTPException, discord.Forbidden):
+                    await member.send(
+                        f"⏳ VCの作成は{remaining:.0f}秒後に可能になります。"
+                    )
+                # ロビーから切断
+                try:
+                    await member.move_to(None)
+                except discord.HTTPException as e:
+                    logger.warning(
+                        "Failed to kick cooldown user %s from lobby %s: %s",
+                        member.id,
+                        channel.id,
+                        e,
+                    )
                 return
 
             guild = member.guild
@@ -369,7 +499,8 @@ class VoiceCog(commands.Cog):
 
             # --- VC の作成 ---
             # チャンネル名は「ユーザー名's channel」形式
-            # ロビーチャンネルの権限設定をコピーして @everyone の接続拒否などを引き継ぐ
+            # ロビーチャンネルの権限設定をコピーして
+            # @everyone の接続拒否などを引き継ぐ
             channel_name = f"{member.display_name}'s channel"
             new_channel = await guild.create_voice_channel(
                 name=channel_name,
@@ -395,6 +526,8 @@ class VoiceCog(commands.Cog):
                 await add_voice_session_member(
                     session, voice_session.id, str(member.id)
                 )
+                # VC 作成成功後、クールダウンを記録
+                record_vc_create_cooldown(member.id)
             except Exception:
                 await new_channel.delete()
                 raise

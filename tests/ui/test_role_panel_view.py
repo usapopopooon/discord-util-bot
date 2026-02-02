@@ -8,12 +8,15 @@ import discord
 import pytest
 
 from src.ui.role_panel_view import (
+    ROLE_PANEL_COOLDOWN_SECONDS,
     RoleButton,
     RolePanelCreateModal,
     RolePanelView,
+    clear_cooldown_cache,
     create_role_panel_content,
     create_role_panel_embed,
     handle_role_reaction,
+    is_on_cooldown,
     refresh_role_panel,
 )
 
@@ -1044,3 +1047,160 @@ class TestUseEmbedFeature:
         )
         content = create_role_panel_content(panel_text, [])
         assert "This is a description" in content
+
+
+# ===========================================================================
+# Cooldown Feature Tests
+# ===========================================================================
+
+
+class TestCooldownFeature:
+    """クールダウン機能のテスト.
+
+    連打対策のクールダウンが正しく動作することを確認する。
+    """
+
+    def setup_method(self) -> None:
+        """各テスト前にクールダウンキャッシュをクリア."""
+        clear_cooldown_cache()
+
+    def test_first_action_not_on_cooldown(self) -> None:
+        """最初の操作はクールダウンされない."""
+        user_id = 12345
+        panel_id = 1
+
+        result = is_on_cooldown(user_id, panel_id)
+
+        assert result is False
+
+    def test_immediate_second_action_on_cooldown(self) -> None:
+        """直後の操作はクールダウンされる."""
+        user_id = 12345
+        panel_id = 1
+
+        # 1回目
+        is_on_cooldown(user_id, panel_id)
+
+        # 即座に2回目
+        result = is_on_cooldown(user_id, panel_id)
+
+        assert result is True
+
+    def test_different_user_not_affected(self) -> None:
+        """異なるユーザーはクールダウンの影響を受けない."""
+        user_id_1 = 12345
+        user_id_2 = 67890
+        panel_id = 1
+
+        # ユーザー1が操作
+        is_on_cooldown(user_id_1, panel_id)
+
+        # ユーザー2は影響を受けない
+        result = is_on_cooldown(user_id_2, panel_id)
+
+        assert result is False
+
+    def test_different_panel_not_affected(self) -> None:
+        """異なるパネルはクールダウンの影響を受けない."""
+        user_id = 12345
+        panel_id_1 = 1
+        panel_id_2 = 2
+
+        # パネル1で操作
+        is_on_cooldown(user_id, panel_id_1)
+
+        # パネル2は影響を受けない
+        result = is_on_cooldown(user_id, panel_id_2)
+
+        assert result is False
+
+    def test_cooldown_expires(self) -> None:
+        """クールダウン時間経過後は再度操作できる."""
+        import time
+        from unittest.mock import patch
+
+        user_id = 12345
+        panel_id = 1
+
+        # 1回目
+        is_on_cooldown(user_id, panel_id)
+
+        # time.monotonic をモックしてクールダウン時間経過をシミュレート
+        original_time = time.monotonic()
+        with patch(
+            "src.ui.role_panel_view.time.monotonic",
+            return_value=original_time + ROLE_PANEL_COOLDOWN_SECONDS + 0.1,
+        ):
+            result = is_on_cooldown(user_id, panel_id)
+
+        assert result is False
+
+    def test_clear_cooldown_cache(self) -> None:
+        """クールダウンキャッシュをクリアできる."""
+        user_id = 12345
+        panel_id = 1
+
+        # クールダウンを設定
+        is_on_cooldown(user_id, panel_id)
+        assert is_on_cooldown(user_id, panel_id) is True
+
+        # キャッシュをクリア
+        clear_cooldown_cache()
+
+        # クリア後はクールダウンされない
+        assert is_on_cooldown(user_id, panel_id) is False
+
+    def test_cooldown_constant_value(self) -> None:
+        """クールダウン時間が適切に設定されている."""
+        assert ROLE_PANEL_COOLDOWN_SECONDS == 1.0
+
+    @pytest.mark.asyncio
+    async def test_button_callback_rejects_when_on_cooldown(self) -> None:
+        """ボタンコールバックはクールダウン中にエラーメッセージを返す."""
+        clear_cooldown_cache()
+
+        item = _make_role_panel_item(emoji="🎮", role_id="111")
+        button = RoleButton(panel_id=1, item=item)
+
+        # モック interaction
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock()
+        interaction.user = MagicMock()
+        interaction.user.id = 12345
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+
+        # 1回目のクールダウンを記録
+        is_on_cooldown(12345, 1)
+
+        # 2回目の操作 (クールダウン中)
+        await button.callback(interaction)
+
+        # エラーメッセージが送信されることを確認
+        interaction.response.send_message.assert_called_once()
+        call_args = interaction.response.send_message.call_args
+        assert "操作が早すぎます" in call_args.args[0]
+        assert call_args.kwargs.get("ephemeral") is True
+
+    @pytest.mark.asyncio
+    async def test_reaction_handler_ignores_when_on_cooldown(self) -> None:
+        """リアクションハンドラはクールダウン中に処理をスキップする."""
+        clear_cooldown_cache()
+
+        # モック payload
+        payload = MagicMock(spec=discord.RawReactionActionEvent)
+        payload.user_id = 12345
+        payload.message_id = 999
+        payload.member = MagicMock()
+        payload.member.bot = False
+        payload.emoji = MagicMock()
+
+        # 1回目のクールダウンを記録
+        is_on_cooldown(12345, 999)
+
+        # 2回目の操作 (クールダウン中)
+        # DB クエリが呼ばれないことを確認
+        with patch("src.ui.role_panel_view.async_session") as mock_session:
+            await handle_role_reaction(payload, "add")
+            # セッションが開始されないことを確認 (クールダウンで早期リターン)
+            mock_session.assert_not_called()

@@ -14,6 +14,11 @@ if TYPE_CHECKING:
     )
 
 
+def _csrf_field(csrf_token: str) -> str:
+    """CSRF トークンの hidden フィールドを生成する."""
+    return f'<input type="hidden" name="csrf_token" value="{escape(csrf_token)}">'
+
+
 def _base(title: str, content: str) -> str:
     """Base HTML template with Tailwind CDN."""
     return f"""<!DOCTYPE html>
@@ -52,7 +57,7 @@ def _nav(title: str, show_dashboard_link: bool = True) -> str:
     """
 
 
-def login_page(error: str | None = None) -> str:
+def login_page(error: str | None = None, csrf_token: str = "") -> str:
     """Login page template."""
     error_html = ""
     if error:
@@ -68,6 +73,7 @@ def login_page(error: str | None = None) -> str:
             <h1 class="text-2xl font-bold text-center mb-6">Bot Admin</h1>
             {error_html}
             <form method="POST" action="/login">
+                {_csrf_field(csrf_token)}
                 <div class="mb-4">
                     <label for="email" class="block text-sm font-medium mb-2">
                         Email
@@ -122,6 +128,7 @@ def login_page(error: str | None = None) -> str:
 def forgot_password_page(
     error: str | None = None,
     success: str | None = None,
+    csrf_token: str = "",
 ) -> str:
     """Forgot password page template."""
     message_html = ""
@@ -147,6 +154,7 @@ def forgot_password_page(
                 Enter your email address and we'll send you a link to reset your password.
             </p>
             <form method="POST" action="/forgot-password">
+                {_csrf_field(csrf_token)}
                 <div class="mb-4">
                     <label for="email" class="block text-sm font-medium mb-2">
                         Email
@@ -185,6 +193,7 @@ def reset_password_page(
     token: str,
     error: str | None = None,
     success: str | None = None,
+    csrf_token: str = "",
 ) -> str:
     """Reset password page template."""
     message_html = ""
@@ -207,6 +216,7 @@ def reset_password_page(
             <h1 class="text-2xl font-bold text-center mb-6">Set New Password</h1>
             {message_html}
             <form method="POST" action="/reset-password">
+                {_csrf_field(csrf_token)}
                 <input type="hidden" name="token" value="{escape(token)}">
                 <div class="mb-4">
                     <label for="new_password" class="block text-sm font-medium mb-2">
@@ -344,6 +354,7 @@ def email_change_page(
     pending_email: str | None = None,
     error: str | None = None,
     success: str | None = None,
+    csrf_token: str = "",
 ) -> str:
     """Email change page template."""
     message_html = ""
@@ -380,6 +391,7 @@ def email_change_page(
                     Current email: <strong>{escape(current_email)}</strong>
                 </p>
                 <form method="POST" action="/settings/email">
+                    {_csrf_field(csrf_token)}
                     <div class="mb-6">
                         <label for="new_email" class="block text-sm font-medium mb-2">
                             New Email
@@ -421,6 +433,7 @@ def email_change_page(
 def password_change_page(
     error: str | None = None,
     success: str | None = None,
+    csrf_token: str = "",
 ) -> str:
     """Password change page template."""
     message_html = ""
@@ -444,6 +457,7 @@ def password_change_page(
             <div class="bg-gray-800 p-6 rounded-lg">
                 {message_html}
                 <form method="POST" action="/settings/password">
+                    {_csrf_field(csrf_token)}
                     <div class="mb-4">
                         <label for="new_password" class="block text-sm font-medium mb-2">
                             New Password
@@ -500,6 +514,7 @@ def password_change_page(
 def initial_setup_page(
     current_email: str,
     error: str | None = None,
+    csrf_token: str = "",
 ) -> str:
     """Initial setup page template (requires email and password change)."""
     message_html = ""
@@ -519,6 +534,7 @@ def initial_setup_page(
                 Please set up your email address and password to continue.
             </p>
             <form method="POST" action="/initial-setup">
+                {_csrf_field(csrf_token)}
                 <div class="mb-4">
                     <label for="new_email" class="block text-sm font-medium mb-2">
                         Email Address
@@ -586,6 +602,7 @@ def email_verification_pending_page(
     pending_email: str,
     error: str | None = None,
     success: str | None = None,
+    csrf_token: str = "",
 ) -> str:
     """Email verification pending page template."""
     message_html = ""
@@ -618,6 +635,7 @@ def email_verification_pending_page(
                     Please check your inbox and click the verification link to continue.
                 </p>
                 <form method="POST" action="/resend-verification" class="mb-4">
+                    {_csrf_field(csrf_token)}
                     <button
                         type="submit"
                         class="w-full bg-gray-700 hover:bg-gray-600 text-white font-medium
@@ -636,7 +654,7 @@ def email_verification_pending_page(
     return _base("Verify Email", content)
 
 
-def lobbies_list_page(lobbies: list["Lobby"]) -> str:
+def lobbies_list_page(lobbies: list["Lobby"], csrf_token: str = "") -> str:
     """Lobbies list page template."""
     rows = ""
     for lobby in lobbies:
@@ -651,6 +669,7 @@ def lobbies_list_page(lobbies: list["Lobby"]) -> str:
             <td class="py-3 px-4">
                 <form method="POST" action="/lobbies/{lobby.id}/delete"
                       onsubmit="return confirm('Delete this lobby?');">
+                    {_csrf_field(csrf_token)}
                     <button type="submit"
                             class="text-red-400 hover:text-red-300 text-sm">
                         Delete
@@ -697,7 +716,7 @@ def lobbies_list_page(lobbies: list["Lobby"]) -> str:
     return _base("Lobbies", content)
 
 
-def sticky_list_page(stickies: list["StickyMessage"]) -> str:
+def sticky_list_page(stickies: list["StickyMessage"], csrf_token: str = "") -> str:
     """Sticky messages list page template."""
     rows = ""
     for sticky in stickies:
@@ -728,6 +747,7 @@ def sticky_list_page(stickies: list["StickyMessage"]) -> str:
             <td class="py-3 px-4">
                 <form method="POST" action="/sticky/{sticky.channel_id}/delete"
                       onsubmit="return confirm('Delete this sticky message?');">
+                    {_csrf_field(csrf_token)}
                     <button type="submit"
                             class="text-red-400 hover:text-red-300 text-sm">
                         Delete
@@ -776,7 +796,9 @@ def sticky_list_page(stickies: list["StickyMessage"]) -> str:
     return _base("Sticky Messages", content)
 
 
-def bump_list_page(configs: list["BumpConfig"], reminders: list["BumpReminder"]) -> str:
+def bump_list_page(
+    configs: list["BumpConfig"], reminders: list["BumpReminder"], csrf_token: str = ""
+) -> str:
     """Bump configs and reminders list page template."""
     config_rows = ""
     for config in configs:
@@ -790,6 +812,7 @@ def bump_list_page(configs: list["BumpConfig"], reminders: list["BumpReminder"])
             <td class="py-3 px-4">
                 <form method="POST" action="/bump/config/{config.guild_id}/delete"
                       onsubmit="return confirm('Delete this bump config?');">
+                    {_csrf_field(csrf_token)}
                     <button type="submit"
                             class="text-red-400 hover:text-red-300 text-sm">
                         Delete
@@ -828,6 +851,7 @@ def bump_list_page(configs: list["BumpConfig"], reminders: list["BumpReminder"])
             <td class="py-3 px-4">
                 <div class="flex gap-2">
                     <form method="POST" action="/bump/reminder/{reminder.id}/toggle">
+                        {_csrf_field(csrf_token)}
                         <button type="submit"
                                 class="text-blue-400 hover:text-blue-300 text-sm">
                             Toggle
@@ -835,6 +859,7 @@ def bump_list_page(configs: list["BumpConfig"], reminders: list["BumpReminder"])
                     </form>
                     <form method="POST" action="/bump/reminder/{reminder.id}/delete"
                           onsubmit="return confirm('Delete this reminder?');">
+                        {_csrf_field(csrf_token)}
                         <button type="submit"
                                 class="text-red-400 hover:text-red-300 text-sm">
                             Delete
@@ -905,6 +930,7 @@ def bump_list_page(configs: list["BumpConfig"], reminders: list["BumpReminder"])
 def role_panels_list_page(
     panels: list["RolePanel"],
     items_by_panel: dict[int, list["RolePanelItem"]],
+    csrf_token: str = "",
 ) -> str:
     """Role panels list page template."""
     panel_rows = ""
@@ -969,6 +995,7 @@ def role_panels_list_page(
                     </a>
                     <form method="POST" action="/rolepanels/{panel.id}/delete"
                           onsubmit="return confirm('Delete this role panel?');">
+                        {_csrf_field(csrf_token)}
                         <button type="submit"
                                 class="text-red-400 hover:text-red-300 text-sm">
                             Delete
@@ -1037,6 +1064,7 @@ def role_panel_create_page(
     guilds_map: dict[str, str] | None = None,
     channels_map: dict[str, list[tuple[str, str]]] | None = None,
     discord_roles: dict[str, list[tuple[str, str, int]]] | None = None,
+    csrf_token: str = "",
 ) -> str:
     """Role panel create page template.
 
@@ -1106,11 +1134,12 @@ def role_panel_create_page(
     content = f"""
     <div class="p-6">
         {_nav("Create Role Panel")}
-        <div class="max-w-lg">
+        <div class="max-w-2xl mx-auto">
             <div class="bg-gray-800 p-6 rounded-lg">
                 {message_html}
                 {no_guilds_warning}
                 <form method="POST" action="/rolepanels/new" id="createPanelForm">
+                    {_csrf_field(csrf_token)}
                     <div class="mb-4">
                         <label for="guild_select" class="block text-sm font-medium mb-2">
                             Server <span class="text-red-400">*</span>
@@ -1393,7 +1422,7 @@ def role_panel_create_page(
             }}
 
             row.innerHTML = `
-                <div class="drag-handle flex items-center justify-center w-8 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200" title="Drag to reorder">
+                <div class="drag-handle flex items-center justify-center w-8 h-10 mb-0 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200" title="Drag to reorder">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16" />
                     </svg>
@@ -1439,7 +1468,7 @@ def role_panel_create_page(
                         placeholder="Gamer"
                     >
                 </div>
-                <div>
+                <div class="flex-shrink-0">
                     <button
                         type="button"
                         class="remove-role-item bg-red-600 hover:bg-red-700 text-white
@@ -1583,6 +1612,7 @@ def role_panel_detail_page(
     discord_roles: list[tuple[str, str, int]] | None = None,
     guild_name: str | None = None,
     channel_name: str | None = None,
+    csrf_token: str = "",
 ) -> str:
     """Role panel detail page template with item management.
 
@@ -1656,6 +1686,7 @@ def role_panel_detail_page(
             <td class="py-3 px-4">
                 <form method="POST" action="/rolepanels/{panel.id}/items/{item.id}/delete"
                       onsubmit="return confirm('Delete this role item?');">
+                    {_csrf_field(csrf_token)}
                     <button type="submit"
                             class="text-red-400 hover:text-red-300 text-sm">
                         Delete
@@ -1752,6 +1783,7 @@ def role_panel_detail_page(
         <div class="bg-gray-800 p-6 rounded-lg">
             <h2 class="text-lg font-semibold mb-4">Add Role Item</h2>
             <form method="POST" action="/rolepanels/{panel.id}/items/add">
+                {_csrf_field(csrf_token)}
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                     <div>
                         <label for="emoji" class="block text-sm font-medium mb-2">

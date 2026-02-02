@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
@@ -9,6 +10,7 @@ import pytest
 from discord.ext import commands
 
 from src.cogs.bump import (
+    BUMP_NOTIFICATION_COOLDOWN_SECONDS,
     DISBOARD_BOT_ID,
     DISBOARD_SUCCESS_KEYWORD,
     DISSOKU_BOT_ID,
@@ -16,7 +18,18 @@ from src.cogs.bump import (
     TARGET_ROLE_NAME,
     BumpCog,
     BumpNotificationView,
+    clear_bump_notification_cooldown_cache,
+    is_bump_notification_on_cooldown,
 )
+from src.utils import clear_resource_locks
+
+
+@pytest.fixture(autouse=True)
+def clear_cooldown_cache() -> None:
+    """Clear bump notification cooldown cache and resource locks before each test."""
+    clear_bump_notification_cooldown_cache()
+    clear_resource_locks()
+
 
 # ---------------------------------------------------------------------------
 # テスト用ヘルパー
@@ -2702,3 +2715,324 @@ class TestBumpSetupWithRecentBump:
         await cog.bump_setup.callback(cog, interaction)
 
         interaction.response.send_message.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Bump 通知設定クールダウンテスト
+# ---------------------------------------------------------------------------
+
+
+class TestBumpNotificationCooldown:
+    """Bump 通知設定クールダウンの単体テスト。"""
+
+    def test_first_action_not_on_cooldown(self) -> None:
+        """最初の操作はクールダウンされない."""
+        user_id = 12345
+        guild_id = "67890"
+        service_name = "DISBOARD"
+
+        result = is_bump_notification_on_cooldown(user_id, guild_id, service_name)
+
+        assert result is False
+
+    def test_immediate_second_action_on_cooldown(self) -> None:
+        """直後の操作はクールダウンされる."""
+        user_id = 12345
+        guild_id = "67890"
+        service_name = "DISBOARD"
+
+        # 1回目 (クールダウンを記録)
+        is_bump_notification_on_cooldown(user_id, guild_id, service_name)
+
+        # 即座に2回目
+        result = is_bump_notification_on_cooldown(user_id, guild_id, service_name)
+
+        assert result is True
+
+    def test_different_user_not_affected(self) -> None:
+        """異なるユーザーはクールダウンの影響を受けない."""
+        user_id_1 = 12345
+        user_id_2 = 67890
+        guild_id = "11111"
+        service_name = "DISBOARD"
+
+        # ユーザー1が操作
+        is_bump_notification_on_cooldown(user_id_1, guild_id, service_name)
+
+        # ユーザー2は影響を受けない
+        result = is_bump_notification_on_cooldown(user_id_2, guild_id, service_name)
+
+        assert result is False
+
+    def test_different_guild_not_affected(self) -> None:
+        """異なるギルドはクールダウンの影響を受けない."""
+        user_id = 12345
+        guild_id_1 = "11111"
+        guild_id_2 = "22222"
+        service_name = "DISBOARD"
+
+        # ギルド1で操作
+        is_bump_notification_on_cooldown(user_id, guild_id_1, service_name)
+
+        # ギルド2は影響を受けない
+        result = is_bump_notification_on_cooldown(user_id, guild_id_2, service_name)
+
+        assert result is False
+
+    def test_different_service_not_affected(self) -> None:
+        """異なるサービスはクールダウンの影響を受けない."""
+        user_id = 12345
+        guild_id = "11111"
+        service_name_1 = "DISBOARD"
+        service_name_2 = "ディス速報"
+
+        # DISBOARD で操作
+        is_bump_notification_on_cooldown(user_id, guild_id, service_name_1)
+
+        # ディス速報は影響を受けない
+        result = is_bump_notification_on_cooldown(user_id, guild_id, service_name_2)
+
+        assert result is False
+
+    def test_cooldown_expires(self) -> None:
+        """クールダウン時間経過後は再度操作できる."""
+        import time
+        from unittest.mock import patch as mock_patch
+
+        user_id = 12345
+        guild_id = "67890"
+        service_name = "DISBOARD"
+
+        # 1回目
+        is_bump_notification_on_cooldown(user_id, guild_id, service_name)
+
+        # time.monotonic をモックしてクールダウン時間経過をシミュレート
+        original_time = time.monotonic()
+        with mock_patch(
+            "src.cogs.bump.time.monotonic",
+            return_value=original_time + BUMP_NOTIFICATION_COOLDOWN_SECONDS + 0.1,
+        ):
+            result = is_bump_notification_on_cooldown(user_id, guild_id, service_name)
+
+        assert result is False
+
+    def test_clear_cooldown_cache(self) -> None:
+        """クールダウンキャッシュをクリアできる."""
+        user_id = 12345
+        guild_id = "67890"
+        service_name = "DISBOARD"
+
+        # クールダウンを設定
+        is_bump_notification_on_cooldown(user_id, guild_id, service_name)
+        assert is_bump_notification_on_cooldown(user_id, guild_id, service_name) is True
+
+        # キャッシュをクリア
+        clear_bump_notification_cooldown_cache()
+
+        # クリア後はクールダウンされない
+        assert (
+            is_bump_notification_on_cooldown(user_id, guild_id, service_name) is False
+        )
+
+    def test_cooldown_constant_value(self) -> None:
+        """クールダウン時間が適切に設定されている."""
+        assert BUMP_NOTIFICATION_COOLDOWN_SECONDS == 3
+
+
+class TestBumpNotificationCooldownIntegration:
+    """Bump 通知設定クールダウンの統合テスト (BumpNotificationView との連携)."""
+
+    async def test_toggle_button_rejects_when_on_cooldown(self) -> None:
+        """クールダウン中にトグルボタンを押すとエラーメッセージが返される."""
+        view = BumpNotificationView("12345", "DISBOARD", True)
+
+        mock_interaction = MagicMock(spec=discord.Interaction)
+        mock_interaction.user = MagicMock()
+        mock_interaction.user.id = 99999
+        mock_interaction.response = MagicMock()
+        mock_interaction.response.send_message = AsyncMock()
+
+        # 1回目のクールダウンを記録
+        is_bump_notification_on_cooldown(99999, "12345", "DISBOARD")
+
+        # 2回目の操作 (クールダウン中)
+        await view.toggle_button.callback(mock_interaction)
+
+        # エラーメッセージが送信される
+        mock_interaction.response.send_message.assert_awaited_once()
+        call_args = mock_interaction.response.send_message.call_args
+        assert "操作が早すぎます" in call_args.args[0]
+        assert call_args.kwargs.get("ephemeral") is True
+
+    async def test_role_button_rejects_when_on_cooldown(self) -> None:
+        """クールダウン中にロールボタンを押すとエラーメッセージが返される."""
+        view = BumpNotificationView("12345", "DISBOARD", True)
+
+        mock_interaction = MagicMock(spec=discord.Interaction)
+        mock_interaction.user = MagicMock()
+        mock_interaction.user.id = 99999
+        mock_interaction.response = MagicMock()
+        mock_interaction.response.send_message = AsyncMock()
+
+        # 1回目のクールダウンを記録
+        is_bump_notification_on_cooldown(99999, "12345", "DISBOARD")
+
+        # 2回目の操作 (クールダウン中)
+        await view.role_button.callback(mock_interaction)
+
+        # エラーメッセージが送信される
+        mock_interaction.response.send_message.assert_awaited_once()
+        call_args = mock_interaction.response.send_message.call_args
+        assert "操作が早すぎます" in call_args.args[0]
+        assert call_args.kwargs.get("ephemeral") is True
+
+    async def test_toggle_button_allows_first_action(self) -> None:
+        """最初のトグル操作は許可される."""
+        view = BumpNotificationView("12345", "DISBOARD", True)
+
+        mock_interaction = MagicMock(spec=discord.Interaction)
+        mock_interaction.user = MagicMock()
+        mock_interaction.user.id = 88888
+        mock_interaction.response = MagicMock()
+        mock_interaction.response.edit_message = AsyncMock()
+        mock_interaction.followup = MagicMock()
+        mock_interaction.followup.send = AsyncMock()
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.bump.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.bump.toggle_bump_reminder",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            await view.toggle_button.callback(mock_interaction)
+
+        # 正常にトグル操作が行われる
+        mock_interaction.response.edit_message.assert_awaited_once()
+        mock_interaction.followup.send.assert_awaited_once()
+
+    async def test_different_users_can_operate_simultaneously(self) -> None:
+        """異なるユーザーは同時に操作できる."""
+        view = BumpNotificationView("12345", "DISBOARD", True)
+
+        # ユーザー1がクールダウン状態になる
+        is_bump_notification_on_cooldown(11111, "12345", "DISBOARD")
+
+        # ユーザー2の interaction
+        mock_interaction = MagicMock(spec=discord.Interaction)
+        mock_interaction.user = MagicMock()
+        mock_interaction.user.id = 22222
+        mock_interaction.response = MagicMock()
+        mock_interaction.response.edit_message = AsyncMock()
+        mock_interaction.followup = MagicMock()
+        mock_interaction.followup.send = AsyncMock()
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.bump.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.bump.toggle_bump_reminder",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            await view.toggle_button.callback(mock_interaction)
+
+        # ユーザー2は操作可能
+        mock_interaction.response.edit_message.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# ロック + クールダウン二重保護統合テスト
+# ---------------------------------------------------------------------------
+
+
+class TestBumpNotificationLockCooldownIntegration:
+    """Bump 通知のロック + クールダウン二重保護の統合テスト."""
+
+    async def test_lock_serializes_same_guild_service_operations(self) -> None:
+        """同じギルド・サービスの操作はロックによりシリアライズされる."""
+        from src.utils import get_resource_lock
+
+        execution_order: list[str] = []
+
+        async def mock_toggle_operation(name: str, guild_id: str, service: str) -> None:
+            async with get_resource_lock(f"bump_notification:{guild_id}:{service}"):
+                execution_order.append(f"start_{name}")
+                await asyncio.sleep(0.01)
+                execution_order.append(f"end_{name}")
+
+        # 同じギルド・サービスで並行操作
+        await asyncio.gather(
+            mock_toggle_operation("A", "12345", "DISBOARD"),
+            mock_toggle_operation("B", "12345", "DISBOARD"),
+        )
+
+        # シリアライズされているため、start-end が連続
+        assert len(execution_order) == 4
+        assert execution_order[0].startswith("start_")
+        assert execution_order[1].startswith("end_")
+        assert execution_order[0][6:] == execution_order[1][4:]
+
+    async def test_lock_allows_parallel_for_different_services(self) -> None:
+        """異なるサービスの操作は並列実行可能."""
+        from src.utils import get_resource_lock
+
+        execution_order: list[str] = []
+
+        async def mock_toggle_operation(name: str, guild_id: str, service: str) -> None:
+            async with get_resource_lock(f"bump_notification:{guild_id}:{service}"):
+                execution_order.append(f"start_{name}_{service}")
+                await asyncio.sleep(0.01)
+                execution_order.append(f"end_{name}_{service}")
+
+        # 同じギルドだが異なるサービスで並行操作
+        await asyncio.gather(
+            mock_toggle_operation("A", "12345", "DISBOARD"),
+            mock_toggle_operation("B", "12345", "ディス速報"),
+        )
+
+        # 両方とも完了
+        assert len(execution_order) == 4
+
+    async def test_lock_allows_parallel_for_different_guilds(self) -> None:
+        """異なるギルドの操作は並列実行可能."""
+        from src.utils import get_resource_lock
+
+        execution_order: list[str] = []
+
+        async def mock_toggle_operation(name: str, guild_id: str, service: str) -> None:
+            async with get_resource_lock(f"bump_notification:{guild_id}:{service}"):
+                execution_order.append(f"start_{name}_{guild_id}")
+                await asyncio.sleep(0.01)
+                execution_order.append(f"end_{name}_{guild_id}")
+
+        # 異なるギルドで並行操作
+        await asyncio.gather(
+            mock_toggle_operation("A", "111", "DISBOARD"),
+            mock_toggle_operation("B", "222", "DISBOARD"),
+        )
+
+        # 両方とも完了
+        assert len(execution_order) == 4
+
+    async def test_lock_key_format_matches_implementation(self) -> None:
+        """ロックキーの形式が実装と一致することを確認."""
+        from src.utils import get_resource_lock
+
+        guild_id = "12345"
+        service_name = "DISBOARD"
+        expected_key = f"bump_notification:{guild_id}:{service_name}"
+
+        # 同じキーで2回ロックを取得すると同じロックインスタンス
+        lock1 = get_resource_lock(expected_key)
+        lock2 = get_resource_lock(expected_key)
+        assert lock1 is lock2

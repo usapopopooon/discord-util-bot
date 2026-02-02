@@ -23,15 +23,19 @@ from src.services.db_service import (
     create_sticky_message,
     create_voice_session,
     delete_bump_config,
+    delete_bump_reminders_by_guild,
     delete_discord_channel,
     delete_discord_channels_by_guild,
     delete_discord_guild,
     delete_discord_role,
     delete_discord_roles_by_guild,
+    delete_lobbies_by_guild,
     delete_lobby,
     delete_role_panel,
     delete_sticky_message,
+    delete_sticky_messages_by_guild,
     delete_voice_session,
+    delete_voice_sessions_by_guild,
     get_all_discord_guilds,
     get_all_role_panels,
     get_all_sticky_messages,
@@ -2487,3 +2491,210 @@ class TestRolePanelItemOperations:
         )
 
         assert item.label == "ゲーマー"
+
+
+# =============================================================================
+# Guild-level cleanup functions
+# =============================================================================
+
+
+class TestDeleteLobbiesByGuild:
+    """delete_lobbies_by_guild のテスト。"""
+
+    async def test_delete_lobbies_by_guild(self, db_session: AsyncSession) -> None:
+        """指定ギルドのロビーを全て削除できる。"""
+        # 対象ギルドにロビーを作成
+        await create_lobby(db_session, guild_id="123", lobby_channel_id="ch1")
+        await create_lobby(db_session, guild_id="123", lobby_channel_id="ch2")
+        # 別ギルドにもロビーを作成
+        await create_lobby(db_session, guild_id="999", lobby_channel_id="ch3")
+
+        count = await delete_lobbies_by_guild(db_session, "123")
+        assert count == 2
+
+        # 対象ギルドのロビーは削除されている
+        lobbies = await get_lobbies_by_guild(db_session, "123")
+        assert len(lobbies) == 0
+
+        # 別ギルドのロビーは残っている
+        other_lobbies = await get_lobbies_by_guild(db_session, "999")
+        assert len(other_lobbies) == 1
+
+    async def test_delete_lobbies_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないギルドを指定しても 0 が返る。"""
+        count = await delete_lobbies_by_guild(db_session, "nonexistent")
+        assert count == 0
+
+
+class TestDeleteVoiceSessionsByGuild:
+    """delete_voice_sessions_by_guild のテスト。"""
+
+    async def test_delete_voice_sessions_by_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """指定ギルドのボイスセッションを全て削除できる。"""
+        # ロビーを作成
+        lobby1 = await create_lobby(
+            db_session, guild_id="123", lobby_channel_id="lobby1"
+        )
+        lobby2 = await create_lobby(
+            db_session, guild_id="999", lobby_channel_id="lobby2"
+        )
+
+        # 対象ギルドにボイスセッションを作成
+        await create_voice_session(
+            db_session,
+            lobby_id=lobby1.id,
+            channel_id="vc1",
+            owner_id="user1",
+            name="VC 1",
+        )
+        await create_voice_session(
+            db_session,
+            lobby_id=lobby1.id,
+            channel_id="vc2",
+            owner_id="user2",
+            name="VC 2",
+        )
+        # 別ギルドにもボイスセッションを作成
+        await create_voice_session(
+            db_session,
+            lobby_id=lobby2.id,
+            channel_id="vc3",
+            owner_id="user3",
+            name="VC 3",
+        )
+
+        count = await delete_voice_sessions_by_guild(db_session, "123")
+        assert count == 2
+
+        # 対象ギルドのボイスセッションは削除されている
+        all_sessions = await get_all_voice_sessions(db_session)
+        target_sessions = [s for s in all_sessions if s.lobby.guild_id == "123"]
+        assert len(target_sessions) == 0
+
+        # 別ギルドのボイスセッションは残っている
+        other_sessions = [s for s in all_sessions if s.lobby.guild_id == "999"]
+        assert len(other_sessions) == 1
+
+    async def test_delete_voice_sessions_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないギルドを指定しても 0 が返る。"""
+        count = await delete_voice_sessions_by_guild(db_session, "nonexistent")
+        assert count == 0
+
+
+class TestDeleteBumpRemindersByGuild:
+    """delete_bump_reminders_by_guild のテスト。"""
+
+    async def test_delete_bump_reminders_by_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """指定ギルドの bump リマインダーを全て削除できる。"""
+        from datetime import UTC, datetime, timedelta
+
+        remind_at = datetime.now(UTC) + timedelta(hours=2)
+
+        # 対象ギルドにリマインダーを作成
+        await upsert_bump_reminder(
+            db_session,
+            guild_id="123",
+            channel_id="ch1",
+            service_name="DISBOARD",
+            remind_at=remind_at,
+        )
+        await upsert_bump_reminder(
+            db_session,
+            guild_id="123",
+            channel_id="ch1",
+            service_name="ディス速報",
+            remind_at=remind_at,
+        )
+        # 別ギルドにもリマインダーを作成
+        await upsert_bump_reminder(
+            db_session,
+            guild_id="999",
+            channel_id="ch2",
+            service_name="DISBOARD",
+            remind_at=remind_at,
+        )
+
+        count = await delete_bump_reminders_by_guild(db_session, "123")
+        assert count == 2
+
+        # 対象ギルドのリマインダーは削除されている
+        disboard = await get_bump_reminder(db_session, "123", "DISBOARD")
+        dissoku = await get_bump_reminder(db_session, "123", "ディス速報")
+        assert disboard is None
+        assert dissoku is None
+
+        # 別ギルドのリマインダーは残っている
+        other = await get_bump_reminder(db_session, "999", "DISBOARD")
+        assert other is not None
+
+    async def test_delete_bump_reminders_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないギルドを指定しても 0 が返る。"""
+        count = await delete_bump_reminders_by_guild(db_session, "nonexistent")
+        assert count == 0
+
+
+class TestDeleteStickyMessagesByGuild:
+    """delete_sticky_messages_by_guild のテスト。"""
+
+    async def test_delete_sticky_messages_by_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """指定ギルドの sticky メッセージを全て削除できる。"""
+        # 対象ギルドに sticky メッセージを作成
+        await create_sticky_message(
+            db_session,
+            channel_id="ch1",
+            guild_id="123",
+            title="Sticky 1",
+            description="Description 1",
+            color=0xFF0000,
+            cooldown_seconds=5,
+        )
+        await create_sticky_message(
+            db_session,
+            channel_id="ch2",
+            guild_id="123",
+            title="Sticky 2",
+            description="Description 2",
+            color=0x00FF00,
+            cooldown_seconds=10,
+        )
+        # 別ギルドにも sticky メッセージを作成
+        await create_sticky_message(
+            db_session,
+            channel_id="ch3",
+            guild_id="999",
+            title="Other Sticky",
+            description="Other Description",
+            color=0x0000FF,
+            cooldown_seconds=5,
+        )
+
+        count = await delete_sticky_messages_by_guild(db_session, "123")
+        assert count == 2
+
+        # 対象ギルドの sticky メッセージは削除されている
+        all_stickies = await get_all_sticky_messages(db_session)
+        target_stickies = [s for s in all_stickies if s.guild_id == "123"]
+        assert len(target_stickies) == 0
+
+        # 別ギルドの sticky メッセージは残っている
+        other_stickies = [s for s in all_stickies if s.guild_id == "999"]
+        assert len(other_stickies) == 1
+
+    async def test_delete_sticky_messages_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないギルドを指定しても 0 が返る。"""
+        count = await delete_sticky_messages_by_guild(db_session, "nonexistent")
+        assert count == 0

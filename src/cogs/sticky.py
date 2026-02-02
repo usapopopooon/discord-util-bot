@@ -26,6 +26,7 @@ from src.database.engine import async_session
 from src.services.db_service import (
     create_sticky_message,
     delete_sticky_message,
+    delete_sticky_messages_by_guild,
     get_all_sticky_messages,
     get_sticky_message,
     update_sticky_message_id,
@@ -311,6 +312,50 @@ class StickyCog(commands.Cog):
         for task in self._pending_tasks.values():
             task.cancel()
         self._pending_tasks.clear()
+
+    # ==========================================================================
+    # クリーンアップリスナー
+    # ==========================================================================
+
+    @commands.Cog.listener()
+    async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
+        """チャンネル削除時に sticky メッセージ設定を削除する。"""
+        channel_id = str(channel.id)
+
+        # 保留中のタスクをキャンセル
+        if channel_id in self._pending_tasks:
+            self._pending_tasks[channel_id].cancel()
+            self._pending_tasks.pop(channel_id, None)
+
+        # DB から削除
+        async with async_session() as session:
+            deleted = await delete_sticky_message(session, channel_id)
+
+        if deleted:
+            logger.info(
+                "Cleaned up sticky message for deleted channel: guild=%s channel=%s",
+                channel.guild.id,
+                channel_id,
+            )
+
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        """ギルドからボットが削除された時に関連する sticky メッセージを全て削除する。"""
+        guild_id = str(guild.id)
+
+        # 保留中のタスクをキャンセル (このギルドに属するもの)
+        # 注: channel_id からギルドを特定できないため、DB から削除後にクリア
+        # 実際のタスクは DB 参照時に sticky が見つからず終了する
+
+        async with async_session() as session:
+            count = await delete_sticky_messages_by_guild(session, guild_id)
+
+        if count > 0:
+            logger.info(
+                "Cleaned up %d sticky message(s) for removed guild: guild=%s",
+                count,
+                guild_id,
+            )
 
     # ==========================================================================
     # メッセージ監視

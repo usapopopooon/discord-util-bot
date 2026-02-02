@@ -200,6 +200,28 @@ async def delete_lobby(session: AsyncSession, lobby_id: int) -> bool:
     return False
 
 
+async def delete_lobbies_by_guild(session: AsyncSession, guild_id: str) -> int:
+    """指定ギルドの全ロビーを削除する。
+
+    Bot がギルドから退出したときにクリーンアップとして使用。
+
+    Args:
+        session: DB セッション
+        guild_id: Discord サーバーの ID
+
+    Returns:
+        削除したロビーの数
+    """
+    result = await session.execute(select(Lobby).where(Lobby.guild_id == guild_id))
+    lobbies = list(result.scalars().all())
+    count = len(lobbies)
+    for lobby in lobbies:
+        await session.delete(lobby)
+    if count > 0:
+        await session.commit()
+    return count
+
+
 # =============================================================================
 # VoiceSession (一時 VC セッション) 操作
 # =============================================================================
@@ -402,6 +424,34 @@ async def delete_voice_session(session: AsyncSession, channel_id: str) -> bool:
         await session.commit()
         return True
     return False
+
+
+async def delete_voice_sessions_by_guild(session: AsyncSession, guild_id: str) -> int:
+    """指定ギルドの全 VC セッションを削除する。
+
+    Bot がギルドから退出したときにクリーンアップとして使用。
+    Lobby テーブルを経由して該当ギルドのセッションを検索。
+
+    Args:
+        session: DB セッション
+        guild_id: Discord サーバーの ID
+
+    Returns:
+        削除したセッションの数
+    """
+    # Lobby 経由で該当ギルドの VoiceSession を取得
+    result = await session.execute(
+        select(VoiceSession)
+        .join(Lobby, VoiceSession.lobby_id == Lobby.id)
+        .where(Lobby.guild_id == guild_id)
+    )
+    voice_sessions = list(result.scalars().all())
+    count = len(voice_sessions)
+    for vs in voice_sessions:
+        await session.delete(vs)
+    if count > 0:
+        await session.commit()
+    return count
 
 
 # =============================================================================
@@ -798,6 +848,30 @@ async def delete_bump_config(
     return False
 
 
+async def delete_bump_reminders_by_guild(session: AsyncSession, guild_id: str) -> int:
+    """指定ギルドの全 bump リマインダーを削除する。
+
+    Bot がギルドから退出したときにクリーンアップとして使用。
+
+    Args:
+        session: DB セッション
+        guild_id: Discord サーバーの ID
+
+    Returns:
+        削除したリマインダーの数
+    """
+    result = await session.execute(
+        select(BumpReminder).where(BumpReminder.guild_id == guild_id)
+    )
+    reminders = list(result.scalars().all())
+    count = len(reminders)
+    for reminder in reminders:
+        await session.delete(reminder)
+    if count > 0:
+        await session.commit()
+    return count
+
+
 # =============================================================================
 # StickyMessage (sticky メッセージ) 操作
 # =============================================================================
@@ -931,6 +1005,30 @@ async def delete_sticky_message(
         return True
 
     return False
+
+
+async def delete_sticky_messages_by_guild(session: AsyncSession, guild_id: str) -> int:
+    """指定ギルドの全 sticky メッセージを削除する。
+
+    Bot がギルドから退出したときにクリーンアップとして使用。
+
+    Args:
+        session: DB セッション
+        guild_id: Discord サーバーの ID
+
+    Returns:
+        削除した sticky メッセージの数
+    """
+    result = await session.execute(
+        select(StickyMessage).where(StickyMessage.guild_id == guild_id)
+    )
+    stickies = list(result.scalars().all())
+    count = len(stickies)
+    for sticky in stickies:
+        await session.delete(sticky)
+    if count > 0:
+        await session.commit()
+    return count
 
 
 async def get_all_sticky_messages(
@@ -1178,6 +1276,10 @@ async def add_role_panel_item(
 
     Returns:
         作成された RolePanelItem
+
+    Raises:
+        sqlalchemy.exc.IntegrityError: 同じ絵文字が既に存在する場合
+            (UniqueConstraint "uq_panel_emoji" 違反)
     """
     # 現在の最大 position を取得
     result = await session.execute(

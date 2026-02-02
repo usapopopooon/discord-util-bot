@@ -19,6 +19,7 @@ discord.py の UI コンポーネント:
 
 import contextlib
 import logging
+import time
 from typing import Any
 
 import discord
@@ -29,8 +30,75 @@ from src.core.validators import validate_channel_name, validate_user_limit
 from src.database.engine import async_session
 from src.database.models import VoiceSession
 from src.services.db_service import get_voice_session, update_voice_session
+from src.utils import get_resource_lock
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# コントロールパネル操作クールダウン (連打対策)
+# =============================================================================
+
+# コントロールパネル操作のクールダウン時間 (秒)
+CONTROL_PANEL_COOLDOWN_SECONDS = 3
+
+# ユーザーごとの最終操作時刻を記録
+# key: (user_id, channel_id), value: timestamp (float)
+_control_panel_cooldown_cache: dict[tuple[int, int], float] = {}
+
+# キャッシュクリーンアップ間隔
+_CLEANUP_INTERVAL = 300  # 5分
+_last_cleanup_time = 0.0
+
+
+def _cleanup_control_panel_cooldown_cache() -> None:
+    """古いコントロールパネルクールダウンエントリを削除する."""
+    global _last_cleanup_time
+    now = time.monotonic()
+
+    # 5分ごとにクリーンアップ
+    if now - _last_cleanup_time < _CLEANUP_INTERVAL:
+        return
+
+    _last_cleanup_time = now
+
+    # 古いエントリを削除 (5分以上経過したもの)
+    expired = [
+        key
+        for key, timestamp in _control_panel_cooldown_cache.items()
+        if now - timestamp > _CLEANUP_INTERVAL
+    ]
+    for key in expired:
+        del _control_panel_cooldown_cache[key]
+
+
+def is_control_panel_on_cooldown(user_id: int, channel_id: int) -> bool:
+    """ユーザーがコントロールパネル操作のクールダウン中かどうかを確認する.
+
+    Args:
+        user_id: Discord ユーザー ID
+        channel_id: チャンネル ID
+
+    Returns:
+        クールダウン中なら True
+    """
+    _cleanup_control_panel_cooldown_cache()
+
+    key = (user_id, channel_id)
+    now = time.monotonic()
+
+    last_time = _control_panel_cooldown_cache.get(key)
+    if last_time is not None and now - last_time < CONTROL_PANEL_COOLDOWN_SECONDS:
+        return True
+
+    # クールダウンを記録/更新
+    _control_panel_cooldown_cache[key] = now
+    return False
+
+
+def clear_control_panel_cooldown_cache() -> None:
+    """コントロールパネルクールダウンキャッシュをクリアする (テスト用)."""
+    _control_panel_cooldown_cache.clear()
+
 
 # パネルメッセージの Embed タイトル (検索用定数)
 _PANEL_TITLE = "ボイスチャンネル設定"
@@ -404,41 +472,43 @@ class TransferSelectMenu(discord.ui.Select[Any]):
             )
             return
 
-        async with async_session() as db_session:
-            voice_session = await get_voice_session(
-                db_session, str(interaction.channel_id)
-            )
-            if not voice_session:
-                await interaction.response.edit_message(
-                    content="セッションが見つかりません。", view=None
+        # チャンネルごとのロックで並行リクエストをシリアライズ
+        async with get_resource_lock(f"control_panel:{channel.id}"):
+            async with async_session() as db_session:
+                voice_session = await get_voice_session(
+                    db_session, str(interaction.channel_id)
                 )
-                return
+                if not voice_session:
+                    await interaction.response.edit_message(
+                        content="セッションが見つかりません。", view=None
+                    )
+                    return
 
-            # テキストチャット権限の移行
-            # 旧オーナー: read_message_history=None (ロール設定に戻す)
-            if isinstance(interaction.user, discord.Member):
-                await channel.set_permissions(
-                    interaction.user,
-                    read_message_history=None,
+                # テキストチャット権限の移行
+                # 旧オーナー: read_message_history=None (ロール設定に戻す)
+                if isinstance(interaction.user, discord.Member):
+                    await channel.set_permissions(
+                        interaction.user,
+                        read_message_history=None,
+                    )
+                # 新オーナー: read_message_history=True (閲覧可)
+                await channel.set_permissions(new_owner, read_message_history=True)
+
+                # DB のオーナー ID を更新
+                await update_voice_session(
+                    db_session,
+                    voice_session,
+                    owner_id=str(new_owner.id),
                 )
-            # 新オーナー: read_message_history=True (閲覧可)
-            await channel.set_permissions(new_owner, read_message_history=True)
 
-            # DB のオーナー ID を更新
-            await update_voice_session(
-                db_session,
-                voice_session,
-                owner_id=str(new_owner.id),
-            )
+            # ephemeral のセレクトメニューを削除し、チャンネルに通知
+            await interaction.response.edit_message(content="\u200b", view=None)
+            old = interaction.user.mention
+            new = new_owner.mention
+            await channel.send(f"👑 {old} → {new} にオーナーが譲渡されました。")
 
-        # ephemeral のセレクトメニューを削除し、チャンネルに通知
-        await interaction.response.edit_message(content="\u200b", view=None)
-        old = interaction.user.mention
-        new = new_owner.mention
-        await channel.send(f"👑 {old} → {new} にオーナーが譲渡されました。")
-
-        # パネルを再投稿 (旧パネル削除 → 新パネル送信 + ピン留め)
-        await repost_panel(channel, interaction.client)  # type: ignore[arg-type]
+            # パネルを再投稿 (旧パネル削除 → 新パネル送信 + ピン留め)
+            await repost_panel(channel, interaction.client)  # type: ignore[arg-type]
 
 
 class KickSelectView(discord.ui.View):
@@ -850,6 +920,16 @@ class ControlPanelView(discord.ui.View):
         discord.py が各ボタンのコールバック前に自動で呼ぶ。
         False を返すとコールバックが実行されない。
         """
+        # クールダウンチェック (連打対策)
+        if interaction.channel_id and is_control_panel_on_cooldown(
+            interaction.user.id, interaction.channel_id
+        ):
+            await interaction.response.send_message(
+                "操作が早すぎます。少し待ってから再度お試しください。",
+                ephemeral=True,
+            )
+            return False
+
         async with async_session() as db_session:
             voice_session = await get_voice_session(
                 db_session, str(interaction.channel_id)
@@ -970,67 +1050,66 @@ class ControlPanelView(discord.ui.View):
         if not isinstance(channel, discord.VoiceChannel) or not interaction.guild:
             return
 
-        async with async_session() as db_session:
-            voice_session = await get_voice_session(
-                db_session, str(interaction.channel_id)
-            )
-            if not voice_session:
-                return
-
-            # トグル: 現在の状態を反転
-            # 注意: read → toggle → write は非アトミック操作のため、
-            # 理論上は同時押しで lost update が発生しうる。
-            # ただし interaction_check でオーナーのみに制限しているため、
-            # 実際に同時トグルが起きることはない。
-            new_locked_state = not voice_session.is_locked
-
-            if new_locked_state:
-                # ロック: @everyone の接続を拒否
-                await channel.set_permissions(
-                    interaction.guild.default_role, connect=False
+        # チャンネルごとのロックで並行リクエストをシリアライズ
+        async with get_resource_lock(f"control_panel:{channel.id}"):
+            async with async_session() as db_session:
+                voice_session = await get_voice_session(
+                    db_session, str(interaction.channel_id)
                 )
-                # オーナーにフル権限を付与
-                if isinstance(interaction.user, discord.Member):
+                if not voice_session:
+                    return
+
+                # トグル: 現在の状態を反転
+                # リソースロックにより、並行リクエストによる lost update を防止
+                new_locked_state = not voice_session.is_locked
+
+                if new_locked_state:
+                    # ロック: @everyone の接続を拒否
                     await channel.set_permissions(
-                        interaction.user,
-                        connect=True,
-                        speak=True,
-                        stream=True,
-                        move_members=True,
-                        mute_members=True,
-                        deafen_members=True,
+                        interaction.guild.default_role, connect=False
                     )
-                # チャンネル名の先頭に🔒を追加 (まだない場合のみ)
-                if not channel.name.startswith("🔒"):
-                    with contextlib.suppress(discord.HTTPException):
-                        await channel.edit(name=f"🔒{channel.name}")
-                # ボタンの表示を「解除」に変更
-                button.label = "解除"
-                button.emoji = "🔓"
-            else:
-                # 解除: @everyone の権限上書きを削除
-                # overwrite=None で上書きごと削除 (デフォルトに戻す)
-                await channel.set_permissions(
-                    interaction.guild.default_role, overwrite=None
+                    # オーナーにフル権限を付与
+                    if isinstance(interaction.user, discord.Member):
+                        await channel.set_permissions(
+                            interaction.user,
+                            connect=True,
+                            speak=True,
+                            stream=True,
+                            move_members=True,
+                            mute_members=True,
+                            deafen_members=True,
+                        )
+                    # チャンネル名の先頭に🔒を追加 (まだない場合のみ)
+                    if not channel.name.startswith("🔒"):
+                        with contextlib.suppress(discord.HTTPException):
+                            await channel.edit(name=f"🔒{channel.name}")
+                    # ボタンの表示を「解除」に変更
+                    button.label = "解除"
+                    button.emoji = "🔓"
+                else:
+                    # 解除: @everyone の権限上書きを削除
+                    # overwrite=None で上書きごと削除 (デフォルトに戻す)
+                    await channel.set_permissions(
+                        interaction.guild.default_role, overwrite=None
+                    )
+                    # チャンネル名の先頭から🔒を削除 (ある場合のみ)
+                    if channel.name.startswith("🔒"):
+                        with contextlib.suppress(discord.HTTPException):
+                            await channel.edit(name=channel.name[1:])
+                    button.label = "ロック"
+                    button.emoji = "🔒"
+
+                # DB を更新
+                await update_voice_session(
+                    db_session, voice_session, is_locked=new_locked_state
                 )
-                # チャンネル名の先頭から🔒を削除 (ある場合のみ)
-                if channel.name.startswith("🔒"):
-                    with contextlib.suppress(discord.HTTPException):
-                        await channel.edit(name=channel.name[1:])
-                button.label = "ロック"
-                button.emoji = "🔒"
 
-            # DB を更新
-            await update_voice_session(
-                db_session, voice_session, is_locked=new_locked_state
-            )
-
-        status = "ロック" if new_locked_state else "ロック解除"
-        emoji = "🔒" if new_locked_state else "🔓"
-        # チャンネルに変更通知を送信
-        await interaction.response.defer()
-        await channel.send(f"{emoji} チャンネルが **{status}** されました。")
-        await refresh_panel_embed(channel)
+            status = "ロック" if new_locked_state else "ロック解除"
+            emoji = "🔒" if new_locked_state else "🔓"
+            # チャンネルに変更通知を送信
+            await interaction.response.defer()
+            await channel.send(f"{emoji} チャンネルが **{status}** されました。")
+            await refresh_panel_embed(channel)
 
     @discord.ui.button(
         label="非表示",
@@ -1051,46 +1130,47 @@ class ControlPanelView(discord.ui.View):
         if not isinstance(channel, discord.VoiceChannel) or not interaction.guild:
             return
 
-        async with async_session() as db_session:
-            voice_session = await get_voice_session(
-                db_session, str(interaction.channel_id)
-            )
-            if not voice_session:
-                return
-
-            # 注意: lock ボタンと同様、非アトミックなトグル操作。
-            # interaction_check のオーナー制限により実害なし。
-            new_hidden_state = not voice_session.is_hidden
-
-            if new_hidden_state:
-                # 非表示: @everyone のチャンネル表示を拒否
-                await channel.set_permissions(
-                    interaction.guild.default_role, view_channel=False
+        # チャンネルごとのロックで並行リクエストをシリアライズ
+        async with get_resource_lock(f"control_panel:{channel.id}"):
+            async with async_session() as db_session:
+                voice_session = await get_voice_session(
+                    db_session, str(interaction.channel_id)
                 )
-                # 現在チャンネルにいるメンバーには表示を許可
-                for member in channel.members:
-                    await channel.set_permissions(member, view_channel=True)
-                button.label = "表示"
-                button.emoji = "👁️"
-            else:
-                # 表示: view_channel の上書きを削除
-                # view_channel=None で「上書きなし」にする (ロールの設定に従う)
-                await channel.set_permissions(
-                    interaction.guild.default_role, view_channel=None
+                if not voice_session:
+                    return
+
+                # リソースロックにより、並行リクエストによる lost update を防止
+                new_hidden_state = not voice_session.is_hidden
+
+                if new_hidden_state:
+                    # 非表示: @everyone のチャンネル表示を拒否
+                    await channel.set_permissions(
+                        interaction.guild.default_role, view_channel=False
+                    )
+                    # 現在チャンネルにいるメンバーには表示を許可
+                    for member in channel.members:
+                        await channel.set_permissions(member, view_channel=True)
+                    button.label = "表示"
+                    button.emoji = "👁️"
+                else:
+                    # 表示: view_channel の上書きを削除
+                    # view_channel=None で「上書きなし」にする (ロールの設定に従う)
+                    await channel.set_permissions(
+                        interaction.guild.default_role, view_channel=None
+                    )
+                    button.label = "非表示"
+                    button.emoji = "🙈"
+
+                await update_voice_session(
+                    db_session, voice_session, is_hidden=new_hidden_state
                 )
-                button.label = "非表示"
-                button.emoji = "🙈"
 
-            await update_voice_session(
-                db_session, voice_session, is_hidden=new_hidden_state
-            )
-
-        status = "非表示" if new_hidden_state else "表示"
-        emoji = "🙈" if new_hidden_state else "👁️"
-        # チャンネルに変更通知を送信
-        await interaction.response.defer()
-        await channel.send(f"{emoji} チャンネルが **{status}** になりました。")
-        await refresh_panel_embed(channel)
+            status = "非表示" if new_hidden_state else "表示"
+            emoji = "🙈" if new_hidden_state else "👁️"
+            # チャンネルに変更通知を送信
+            await interaction.response.defer()
+            await channel.send(f"{emoji} チャンネルが **{status}** になりました。")
+            await refresh_panel_embed(channel)
 
     @discord.ui.button(
         label="年齢制限",

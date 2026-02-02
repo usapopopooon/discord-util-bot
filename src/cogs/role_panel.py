@@ -20,6 +20,7 @@ from typing import Literal
 import discord
 from discord import app_commands
 from discord.ext import commands
+from sqlalchemy.exc import IntegrityError
 
 from src.database.engine import async_session
 from src.services.db_service import (
@@ -45,6 +46,7 @@ from src.ui.role_panel_view import (
     RolePanelView,
     refresh_role_panel,
 )
+from src.utils import is_valid_emoji, normalize_emoji
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +133,19 @@ class RolePanelCog(commands.Cog):
             )
             return
 
+        # 絵文字の検証
+        if not is_valid_emoji(emoji):
+            await interaction.response.send_message(
+                "無効な絵文字です。\n"
+                "Unicode 絵文字 (🎮) または Discord カスタム絵文字 "
+                "(<:name:id>) を使用してください。",
+                ephemeral=True,
+            )
+            return
+
+        # 絵文字を正規化 (DB保存時の一貫性確保)
+        emoji = normalize_emoji(emoji)
+
         async with async_session() as db_session:
             # チャンネル内のパネルを取得
             panels = await get_role_panels_by_channel(
@@ -156,14 +171,21 @@ class RolePanelCog(commands.Cog):
                 return
 
             # ロールを追加
-            await add_role_panel_item(
-                db_session,
-                panel_id=panel.id,
-                role_id=str(role.id),
-                emoji=emoji,
-                label=label,
-                style=style,
-            )
+            try:
+                await add_role_panel_item(
+                    db_session,
+                    panel_id=panel.id,
+                    role_id=str(role.id),
+                    emoji=emoji,
+                    label=label,
+                    style=style,
+                )
+            except IntegrityError:
+                # レースコンディション: チェック後に別のリクエストで追加された
+                await interaction.response.send_message(
+                    f"絵文字 {emoji} は既に使用されています。", ephemeral=True
+                )
+                return
 
             # パネルを更新
             items = await get_role_panel_items(db_session, panel.id)

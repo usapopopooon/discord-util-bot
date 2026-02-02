@@ -75,7 +75,12 @@
     "dragstart",
     "dragend",
     "dragover",
-    "upserts"
+    "upserts",
+    "keycap",
+    "Keycap",
+    "surrogateescape",
+    "poolclass",
+    "isready"
   ],
   "ignorePaths": [
     ".venv",

@@ -17,6 +17,7 @@ DISBOARD/ディス速報の bump 成功を検知し、2時間後にリマイン�
 from __future__ import annotations
 
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 
 import discord
@@ -27,6 +28,7 @@ from src.database.engine import async_session
 from src.services.db_service import (
     clear_bump_reminder,
     delete_bump_config,
+    delete_bump_reminders_by_guild,
     get_bump_config,
     get_bump_reminder,
     get_due_bump_reminders,
@@ -35,6 +37,7 @@ from src.services.db_service import (
     upsert_bump_config,
     upsert_bump_reminder,
 )
+from src.utils import get_resource_lock
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +62,74 @@ REMINDER_CHECK_INTERVAL_SECONDS = 30
 
 # リマインド対象のロール名
 TARGET_ROLE_NAME = "Server Bumper"
+
+# =============================================================================
+# Bump 通知設定クールダウン (連打対策)
+# =============================================================================
+
+# Bump 通知設定操作のクールダウン時間 (秒)
+BUMP_NOTIFICATION_COOLDOWN_SECONDS = 3
+
+# ユーザーごとの最終操作時刻を記録
+# key: (user_id, guild_id, service_name), value: timestamp (float)
+_bump_notification_cooldown_cache: dict[tuple[int, str, str], float] = {}
+
+# キャッシュクリーンアップ間隔
+_BUMP_CLEANUP_INTERVAL = 300  # 5分
+_bump_last_cleanup_time = 0.0
+
+
+def _cleanup_bump_notification_cooldown_cache() -> None:
+    """古いBump通知設定クールダウンエントリを削除する."""
+    global _bump_last_cleanup_time
+    now = time.monotonic()
+
+    # 5分ごとにクリーンアップ
+    if now - _bump_last_cleanup_time < _BUMP_CLEANUP_INTERVAL:
+        return
+
+    _bump_last_cleanup_time = now
+
+    # 古いエントリを削除 (5分以上経過したもの)
+    expired = [
+        key
+        for key, timestamp in _bump_notification_cooldown_cache.items()
+        if now - timestamp > _BUMP_CLEANUP_INTERVAL
+    ]
+    for key in expired:
+        del _bump_notification_cooldown_cache[key]
+
+
+def is_bump_notification_on_cooldown(
+    user_id: int, guild_id: str, service_name: str
+) -> bool:
+    """ユーザーがBump通知設定操作のクールダウン中かどうかを確認する.
+
+    Args:
+        user_id: Discord ユーザー ID
+        guild_id: ギルド ID
+        service_name: サービス名 ("DISBOARD" or "ディス速報")
+
+    Returns:
+        クールダウン中なら True
+    """
+    _cleanup_bump_notification_cooldown_cache()
+
+    key = (user_id, guild_id, service_name)
+    now = time.monotonic()
+
+    last_time = _bump_notification_cooldown_cache.get(key)
+    if last_time is not None and now - last_time < BUMP_NOTIFICATION_COOLDOWN_SECONDS:
+        return True
+
+    # クールダウンを記録/更新
+    _bump_notification_cooldown_cache[key] = now
+    return False
+
+
+def clear_bump_notification_cooldown_cache() -> None:
+    """Bump通知設定クールダウンキャッシュをクリアする (テスト用)."""
+    _bump_notification_cooldown_cache.clear()
 
 
 # =============================================================================
@@ -101,21 +172,25 @@ class BumpRoleSelectMenu(discord.ui.RoleSelect["BumpRoleSelectView"]):
 
         selected_role = self.values[0]
 
-        async with async_session() as session:
-            await update_bump_reminder_role(
-                session, self.guild_id, self.service_name, str(selected_role.id)
-            )
+        # ギルド・サービスごとのロックで並行リクエストをシリアライズ
+        async with get_resource_lock(
+            f"bump_notification:{self.guild_id}:{self.service_name}"
+        ):
+            async with async_session() as session:
+                await update_bump_reminder_role(
+                    session, self.guild_id, self.service_name, str(selected_role.id)
+                )
 
-        await interaction.response.edit_message(
-            content=f"通知先ロールを **{selected_role.name}** に変更しました。",
-            view=None,
-        )
-        logger.info(
-            "Bump notification role changed: guild=%s service=%s role=%s",
-            self.guild_id,
-            self.service_name,
-            selected_role.name,
-        )
+            await interaction.response.edit_message(
+                content=f"通知先ロールを **{selected_role.name}** に変更しました。",
+                view=None,
+            )
+            logger.info(
+                "Bump notification role changed: guild=%s service=%s role=%s",
+                self.guild_id,
+                self.service_name,
+                selected_role.name,
+            )
 
 
 class BumpRoleSelectView(discord.ui.View):
@@ -148,16 +223,18 @@ class BumpRoleSelectView(discord.ui.View):
             return
         service_name = menu.service_name
 
-        async with async_session() as session:
-            await update_bump_reminder_role(session, guild_id, service_name, None)
+        # ギルド・サービスごとのロックで並行リクエストをシリアライズ
+        async with get_resource_lock(f"bump_notification:{guild_id}:{service_name}"):
+            async with async_session() as session:
+                await update_bump_reminder_role(session, guild_id, service_name, None)
 
-        msg = f"通知先ロールを **{TARGET_ROLE_NAME}** (デフォルト) に戻しました。"
-        await interaction.response.edit_message(content=msg, view=None)
-        logger.info(
-            "Bump notification role reset to default: guild=%s service=%s",
-            guild_id,
-            service_name,
-        )
+            msg = f"通知先ロールを **{TARGET_ROLE_NAME}** (デフォルト) に戻しました。"
+            await interaction.response.edit_message(content=msg, view=None)
+            logger.info(
+                "Bump notification role reset to default: guild=%s service=%s",
+                guild_id,
+                service_name,
+            )
 
 
 class BumpNotificationView(discord.ui.View):
@@ -197,25 +274,39 @@ class BumpNotificationView(discord.ui.View):
         _button: discord.ui.Button[BumpNotificationView],
     ) -> None:
         """通知の有効/無効を切り替える。"""
-        async with async_session() as session:
-            new_state = await toggle_bump_reminder(
-                session, self.guild_id, self.service_name
+        # クールダウンチェック (連打対策)
+        if is_bump_notification_on_cooldown(
+            interaction.user.id, self.guild_id, self.service_name
+        ):
+            await interaction.response.send_message(
+                "操作が早すぎます。少し待ってから再度お試しください。",
+                ephemeral=True,
             )
+            return
 
-        self._update_toggle_button(new_state)
+        # ギルド・サービスごとのロックで並行リクエストをシリアライズ
+        async with get_resource_lock(
+            f"bump_notification:{self.guild_id}:{self.service_name}"
+        ):
+            async with async_session() as session:
+                new_state = await toggle_bump_reminder(
+                    session, self.guild_id, self.service_name
+                )
 
-        status = "有効" if new_state else "無効"
-        await interaction.response.edit_message(view=self)
-        await interaction.followup.send(
-            f"**{self.service_name}** の通知を **{status}** にしました。",
-            ephemeral=True,
-        )
-        logger.info(
-            "Bump notification toggled: guild=%s service=%s enabled=%s",
-            self.guild_id,
-            self.service_name,
-            new_state,
-        )
+            self._update_toggle_button(new_state)
+
+            status = "有効" if new_state else "無効"
+            await interaction.response.edit_message(view=self)
+            await interaction.followup.send(
+                f"**{self.service_name}** の通知を **{status}** にしました。",
+                ephemeral=True,
+            )
+            logger.info(
+                "Bump notification toggled: guild=%s service=%s enabled=%s",
+                self.guild_id,
+                self.service_name,
+                new_state,
+            )
 
     @discord.ui.button(label="通知ロールを変更", style=discord.ButtonStyle.primary)
     async def role_button(
@@ -224,21 +315,35 @@ class BumpNotificationView(discord.ui.View):
         _button: discord.ui.Button[BumpNotificationView],
     ) -> None:
         """通知先ロールの変更メニューを表示する。"""
-        # 現在の設定を取得
-        current_role_id: str | None = None
-        async with async_session() as session:
-            reminder = await get_bump_reminder(
-                session, self.guild_id, self.service_name
+        # クールダウンチェック (連打対策)
+        if is_bump_notification_on_cooldown(
+            interaction.user.id, self.guild_id, self.service_name
+        ):
+            await interaction.response.send_message(
+                "操作が早すぎます。少し待ってから再度お試しください。",
+                ephemeral=True,
             )
-            if reminder:
-                current_role_id = reminder.role_id
+            return
 
-        view = BumpRoleSelectView(self.guild_id, self.service_name, current_role_id)
-        await interaction.response.send_message(
-            f"**{self.service_name}** の通知先ロールを選択してください。",
-            view=view,
-            ephemeral=True,
-        )
+        # ギルド・サービスごとのロックで並行リクエストをシリアライズ
+        async with get_resource_lock(
+            f"bump_notification:{self.guild_id}:{self.service_name}"
+        ):
+            # 現在の設定を取得
+            current_role_id: str | None = None
+            async with async_session() as session:
+                reminder = await get_bump_reminder(
+                    session, self.guild_id, self.service_name
+                )
+                if reminder:
+                    current_role_id = reminder.role_id
+
+            view = BumpRoleSelectView(self.guild_id, self.service_name, current_role_id)
+            await interaction.response.send_message(
+                f"**{self.service_name}** の通知先ロールを選択してください。",
+                view=view,
+                ephemeral=True,
+            )
 
 
 class BumpCog(commands.Cog):
@@ -256,6 +361,50 @@ class BumpCog(commands.Cog):
         """Cog がアンロードされたときに呼ばれる。ループを停止する。"""
         if self._reminder_check.is_running():
             self._reminder_check.cancel()
+
+    # ==========================================================================
+    # クリーンアップリスナー
+    # ==========================================================================
+
+    @commands.Cog.listener()
+    async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
+        """チャンネル削除時に bump 監視設定を削除する。"""
+        guild_id = str(channel.guild.id)
+        channel_id = str(channel.id)
+
+        async with async_session() as session:
+            config = await get_bump_config(session, guild_id)
+
+            # 削除されたチャンネルが監視チャンネルと一致する場合のみ削除
+            if config and config.channel_id == channel_id:
+                await delete_bump_config(session, guild_id)
+                # リマインダーも削除 (チャンネルが存在しないため送信不可)
+                count = await delete_bump_reminders_by_guild(session, guild_id)
+                logger.info(
+                    "Cleaned up bump config and %d reminder(s) for deleted channel: "
+                    "guild=%s channel=%s",
+                    count,
+                    guild_id,
+                    channel_id,
+                )
+
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        """ギルドからボットが削除された時に関連する bump データを全て削除する。"""
+        guild_id = str(guild.id)
+
+        async with async_session() as session:
+            # 設定を削除
+            await delete_bump_config(session, guild_id)
+            # リマインダーを削除
+            count = await delete_bump_reminders_by_guild(session, guild_id)
+
+        if count > 0:
+            logger.info(
+                "Cleaned up bump config and %d reminder(s) for removed guild: guild=%s",
+                count,
+                guild_id,
+            )
 
     # ==========================================================================
     # メッセージ監視

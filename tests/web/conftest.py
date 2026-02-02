@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import (
 from src.constants import DEFAULT_TEST_DATABASE_URL
 from src.database.models import AdminUser, Base
 from src.web import app as web_app_module
-from src.web.app import app, get_db, hash_password
+from src.web.app import app, generate_csrf_token, get_db, hash_password
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
@@ -35,8 +35,9 @@ TEST_ADMIN_PASSWORD = "testpassword123"
 
 @pytest.fixture(autouse=True)
 def clear_rate_limit() -> None:
-    """各テスト前にレート制限をクリアする。"""
+    """各テスト前にレート制限とフォームクールタイムをクリアする。"""
     web_app_module.LOGIN_ATTEMPTS.clear()
+    web_app_module.FORM_SUBMIT_TIMES.clear()
 
 
 @pytest.fixture
@@ -124,11 +125,17 @@ async def authenticated_client(
     admin_user: AdminUser,
 ) -> AsyncClient:
     """認証済みのテストクライアントを提供する。"""
+    # ログインページから CSRF トークンを取得
+    from src.web.app import generate_csrf_token
+
+    csrf_token = generate_csrf_token()
+
     response = await client.post(
         "/login",
         data={
             "email": TEST_ADMIN_EMAIL,
             "password": TEST_ADMIN_PASSWORD,
+            "csrf_token": csrf_token,
         },
         follow_redirects=False,
     )
@@ -152,5 +159,32 @@ def mock_email_sending() -> Generator[None, None, None]:
         #     "src.web.app.send_password_reset_email",
         #     return_value=True,
         # ),
+    ):
+        yield
+
+
+@pytest.fixture
+def csrf_token() -> str:
+    """テスト用の CSRF トークンを生成する。"""
+    return generate_csrf_token()
+
+
+@pytest.fixture(autouse=True)
+def disable_csrf_validation(
+    request: pytest.FixtureRequest,
+) -> Generator[None, None, None]:
+    """CSRF 検証をデフォルトで無効化する (CSRFProtection テスト以外)。
+
+    TestCSRFProtection クラスのテストでは CSRF 検証を有効にする。
+    """
+    # TestCSRFProtection クラスのテストでは CSRF 検証を有効にする
+    if request.node.parent and "TestCSRFProtection" in request.node.parent.name:
+        yield
+        return
+
+    # その他のテストでは CSRF 検証を無効化
+    with patch(
+        "src.web.app.validate_csrf_token",
+        return_value=True,
     ):
         yield

@@ -15,13 +15,17 @@ from fastapi import Cookie, Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.config import settings
 from src.constants import (
     BCRYPT_MAX_PASSWORD_BYTES,
     EMAIL_CHANGE_TOKEN_EXPIRY_SECONDS,
+    FORM_COOLDOWN_CLEANUP_INTERVAL_SECONDS,
+    FORM_SUBMIT_COOLDOWN_SECONDS,
     LOGIN_MAX_ATTEMPTS,
     LOGIN_WINDOW_SECONDS,
     PASSWORD_MIN_LENGTH,
@@ -43,6 +47,7 @@ from src.database.models import (
     RolePanelItem,
     StickyMessage,
 )
+from src.utils import get_resource_lock, is_valid_emoji, normalize_emoji
 from src.web.email_service import (
     send_email_change_verification,  # noqa: F401  # SMTP 設定時に使用
     # send_password_reset_email,  # SMTP 未設定のため未使用
@@ -89,6 +94,56 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="Bot Admin", docs_url=None, redoc_url=None, lifespan=lifespan)
 
+
+# =============================================================================
+# セキュリティヘッダーミドルウェア
+# =============================================================================
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """レスポンスにセキュリティヘッダーを追加するミドルウェア."""
+
+    async def dispatch(self, request: Request, call_next: Any) -> Response:
+        """リクエストを処理し、セキュリティヘッダーを追加."""
+        response: Response = await call_next(request)
+
+        # クリックジャッキング防止
+        response.headers["X-Frame-Options"] = "DENY"
+
+        # MIME スニッフィング防止
+        response.headers["X-Content-Type-Options"] = "nosniff"
+
+        # XSS 防止 (レガシーブラウザ向け)
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+
+        # リファラーポリシー
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+        # Content Security Policy
+        # Tailwind CSS CDN と inline styles/scripts を許可
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+            "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+            "img-src 'self' data: https:; "
+            "font-src 'self' https:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
+
+        # キャッシュ制御 (機密データを含むページ)
+        if request.url.path not in ["/health", "/favicon.ico"]:
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+
 # セッション設定
 _session_secret_from_env = os.environ.get("SESSION_SECRET_KEY", "").strip()
 if not _session_secret_from_env:
@@ -110,56 +165,50 @@ SECURE_COOKIE = os.environ.get("SECURE_COOKIE", "true").lower() == "true"
 # レート制限 (インメモリ、再起動時にリセット)
 LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 
+# フォーム送信クールタイム (インメモリ、再起動時にリセット)
+# key: "user_email:path", value: 最終送信時刻
+FORM_SUBMIT_TIMES: dict[str, float] = {}
+_form_cooldown_last_cleanup_time: float = 0.0
+
 # メールアドレス検証パターン
 EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
-# Discord カスタム絵文字パターン: <:name:id> または <a:name:id> (アニメーション)
-DISCORD_CUSTOM_EMOJI_PATTERN = re.compile(r"^<a?:\w+:\d+>$")
-
-# Unicode 絵文字の範囲 (主要な絵文字ブロック)
-# 参考: https://unicode.org/emoji/charts/full-emoji-list.html
-UNICODE_EMOJI_PATTERN = re.compile(
-    r"^["
-    r"\U0001F300-\U0001F9FF"  # Misc Symbols, Emoticons, Dingbats, etc.
-    r"\U0001FA00-\U0001FAFF"  # Extended-A symbols
-    r"\U00002702-\U000027B0"  # Dingbats
-    r"\U0001F600-\U0001F64F"  # Emoticons
-    r"\U0001F680-\U0001F6FF"  # Transport/Map symbols
-    r"\U0001F1E0-\U0001F1FF"  # Flags (regional indicators)
-    r"\U00002600-\U000026FF"  # Misc symbols (sun, cloud, etc.)
-    r"\U00002700-\U000027BF"  # Dingbats
-    r"\U0000FE00-\U0000FE0F"  # Variation selectors
-    r"\U0001F900-\U0001F9FF"  # Supplemental symbols
-    r"\U0001FA70-\U0001FAFF"  # Symbols and Pictographs Extended-A
-    r"\U00002300-\U000023FF"  # Misc Technical (⌚ etc.)
-    r"\U00002B50"  # Star
-    r"\U0000200D"  # Zero Width Joiner (for combined emojis)
-    r"\U0000203C-\U00003299"  # Various symbols
-    r"]+$"
-)
-
-
-def is_valid_emoji(text: str) -> bool:
-    """絵文字として有効かどうかを検証する.
-
-    Args:
-        text: 検証する文字列
-
-    Returns:
-        Discordカスタム絵文字またはUnicode絵文字の場合True
-    """
-    if not text:
-        return False
-
-    # Discord カスタム絵文字 (<:name:id> or <a:name:id>)
-    if DISCORD_CUSTOM_EMOJI_PATTERN.match(text):
-        return True
-
-    # Unicode 絵文字
-    return bool(UNICODE_EMOJI_PATTERN.match(text))
-
 
 serializer = URLSafeTimedSerializer(SECRET_KEY)
+
+# CSRF トークン用シリアライザ (セッションとは別のソルトを使用)
+csrf_serializer = URLSafeTimedSerializer(SECRET_KEY, salt="csrf-token")
+
+# CSRF トークンの有効期限 (24時間)
+CSRF_TOKEN_MAX_AGE_SECONDS = 86400
+
+
+# =============================================================================
+# CSRF 保護
+# =============================================================================
+
+
+def generate_csrf_token() -> str:
+    """CSRF トークンを生成する."""
+    return csrf_serializer.dumps(secrets.token_hex(16))
+
+
+def validate_csrf_token(token: str | None) -> bool:
+    """CSRF トークンを検証する.
+
+    Args:
+        token: 検証するトークン
+
+    Returns:
+        トークンが有効な場合 True
+    """
+    if not token:
+        return False
+    try:
+        csrf_serializer.loads(token, max_age=CSRF_TOKEN_MAX_AGE_SECONDS)
+        return True
+    except BadSignature:
+        return False
 
 
 # =============================================================================
@@ -279,6 +328,67 @@ def record_failed_attempt(ip: str) -> None:
 
 
 # =============================================================================
+# フォーム送信クールタイム
+# =============================================================================
+
+
+def _cleanup_form_cooldown_entries() -> None:
+    """古いフォームクールタイムエントリをクリーンアップする。"""
+    global _form_cooldown_last_cleanup_time
+    now = time.time()
+
+    if now - _form_cooldown_last_cleanup_time < FORM_COOLDOWN_CLEANUP_INTERVAL_SECONDS:
+        return
+
+    _form_cooldown_last_cleanup_time = now
+
+    # 古いエントリを削除 (クールタイムの5倍以上経過したもの)
+    threshold = FORM_SUBMIT_COOLDOWN_SECONDS * 5
+    keys_to_remove = [
+        key
+        for key, submit_time in FORM_SUBMIT_TIMES.items()
+        if now - submit_time > threshold
+    ]
+    for key in keys_to_remove:
+        del FORM_SUBMIT_TIMES[key]
+
+
+def is_form_cooldown_active(user_email: str, path: str) -> bool:
+    """フォーム送信がクールタイム中かチェックする.
+
+    Args:
+        user_email: ユーザーのメールアドレス
+        path: リクエストパス
+
+    Returns:
+        クールタイム中の場合 True
+    """
+    _cleanup_form_cooldown_entries()
+
+    key = f"{user_email}:{path}"
+    now = time.time()
+
+    last_submit = FORM_SUBMIT_TIMES.get(key)
+    if last_submit is None:
+        return False
+
+    return now - last_submit < FORM_SUBMIT_COOLDOWN_SECONDS
+
+
+def record_form_submit(user_email: str, path: str) -> None:
+    """フォーム送信を記録する.
+
+    Args:
+        user_email: ユーザーのメールアドレス
+        path: リクエストパス
+    """
+    if not user_email:
+        return
+    key = f"{user_email}:{path}"
+    FORM_SUBMIT_TIMES[key] = time.time()
+
+
+# =============================================================================
 # セッションユーティリティ
 # =============================================================================
 
@@ -349,7 +459,7 @@ async def login_get(
     """Show login page."""
     if user:
         return RedirectResponse(url="/dashboard", status_code=302)
-    return HTMLResponse(content=login_page())
+    return HTMLResponse(content=login_page(csrf_token=generate_csrf_token()))
 
 
 @app.post("/login", response_model=None)
@@ -357,9 +467,20 @@ async def login_post(
     request: Request,
     email: Annotated[str, Form()],
     password: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Process login form."""
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return HTMLResponse(
+            content=login_page(
+                error="Invalid security token. Please try again.",
+                csrf_token=generate_csrf_token(),
+            ),
+            status_code=403,
+        )
+
     client_ip = request.client.host if request.client else "unknown"
 
     # メールアドレスは前後の空白をトリムする (パスワードはトリムしない)
@@ -367,7 +488,10 @@ async def login_post(
 
     if is_rate_limited(client_ip):
         return HTMLResponse(
-            content=login_page(error="Too many attempts. Try again later."),
+            content=login_page(
+                error="Too many attempts. Try again later.",
+                csrf_token=generate_csrf_token(),
+            ),
             status_code=429,
         )
 
@@ -375,7 +499,10 @@ async def login_post(
     admin = await get_or_create_admin(db)
     if admin is None:
         return HTMLResponse(
-            content=login_page(error="ADMIN_PASSWORD not configured"),
+            content=login_page(
+                error="ADMIN_PASSWORD not configured",
+                csrf_token=generate_csrf_token(),
+            ),
             status_code=500,
         )
 
@@ -383,7 +510,10 @@ async def login_post(
     if admin.email != email or not verify_password(password, admin.password_hash):
         record_failed_attempt(client_ip)
         return HTMLResponse(
-            content=login_page(error="Invalid email or password"),
+            content=login_page(
+                error="Invalid email or password",
+                csrf_token=generate_csrf_token(),
+            ),
             status_code=401,
         )
 
@@ -441,7 +571,11 @@ async def initial_setup_get(
             return RedirectResponse(url="/verify-email", status_code=302)
         return RedirectResponse(url="/dashboard", status_code=302)
 
-    return HTMLResponse(content=initial_setup_page(current_email=admin.email))
+    return HTMLResponse(
+        content=initial_setup_page(
+            current_email=admin.email, csrf_token=generate_csrf_token()
+        )
+    )
 
 
 @app.post("/initial-setup", response_model=None)
@@ -450,6 +584,7 @@ async def initial_setup_post(
     new_email: Annotated[str, Form()] = "",
     new_password: Annotated[str, Form()] = "",
     confirm_password: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Process initial setup form."""
@@ -460,6 +595,17 @@ async def initial_setup_post(
     if admin is None:
         return RedirectResponse(url="/login", status_code=302)
 
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return HTMLResponse(
+            content=initial_setup_page(
+                current_email=admin.email,
+                error="Invalid security token. Please try again.",
+                csrf_token=generate_csrf_token(),
+            ),
+            status_code=403,
+        )
+
     # 入力値のトリム (パスワードはトリムしない)
     new_email = new_email.strip() if new_email else ""
 
@@ -469,6 +615,7 @@ async def initial_setup_post(
             content=initial_setup_page(
                 current_email=admin.email,
                 error="Email address is required",
+                csrf_token=generate_csrf_token(),
             )
         )
 
@@ -477,6 +624,7 @@ async def initial_setup_post(
             content=initial_setup_page(
                 current_email=admin.email,
                 error="Invalid email format",
+                csrf_token=generate_csrf_token(),
             )
         )
 
@@ -486,6 +634,7 @@ async def initial_setup_post(
             content=initial_setup_page(
                 current_email=admin.email,
                 error="Password is required",
+                csrf_token=generate_csrf_token(),
             )
         )
 
@@ -494,6 +643,7 @@ async def initial_setup_post(
             content=initial_setup_page(
                 current_email=admin.email,
                 error="Passwords do not match",
+                csrf_token=generate_csrf_token(),
             )
         )
 
@@ -502,6 +652,7 @@ async def initial_setup_post(
             content=initial_setup_page(
                 current_email=admin.email,
                 error=f"Password must be at least {PASSWORD_MIN_LENGTH} characters",
+                csrf_token=generate_csrf_token(),
             )
         )
 
@@ -511,6 +662,7 @@ async def initial_setup_post(
             content=initial_setup_page(
                 current_email=admin.email,
                 error=f"Password must be at most {BCRYPT_MAX_PASSWORD_BYTES} bytes",
+                csrf_token=generate_csrf_token(),
             )
         )
 
@@ -584,13 +736,16 @@ async def verify_email_get(
         return RedirectResponse(url="/dashboard", status_code=302)
 
     return HTMLResponse(
-        content=email_verification_pending_page(pending_email=admin.pending_email)
+        content=email_verification_pending_page(
+            pending_email=admin.pending_email, csrf_token=generate_csrf_token()
+        )
     )
 
 
 @app.post("/resend-verification", response_model=None)
 async def resend_verification(
     user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Resend verification email."""
@@ -600,6 +755,17 @@ async def resend_verification(
     admin = await get_or_create_admin(db)
     if admin is None:
         return RedirectResponse(url="/login", status_code=302)
+
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return HTMLResponse(
+            content=email_verification_pending_page(
+                pending_email=admin.pending_email or "",
+                error="Invalid security token. Please try again.",
+                csrf_token=generate_csrf_token(),
+            ),
+            status_code=403,
+        )
 
     if not admin.pending_email:
         return RedirectResponse(url="/dashboard", status_code=302)
@@ -620,6 +786,7 @@ async def resend_verification(
             content=email_verification_pending_page(
                 pending_email=admin.pending_email,
                 success="Verification email sent.",
+                csrf_token=generate_csrf_token(),
             )
         )
     else:
@@ -627,6 +794,7 @@ async def resend_verification(
             content=email_verification_pending_page(
                 pending_email=admin.pending_email,
                 error="Failed to send verification email. Check SMTP configuration.",
+                csrf_token=generate_csrf_token(),
             )
         )
 
@@ -639,15 +807,26 @@ async def resend_verification(
 @app.get("/forgot-password", response_model=None)
 async def forgot_password_get() -> Response:
     """Show forgot password page."""
-    return HTMLResponse(content=forgot_password_page())
+    return HTMLResponse(content=forgot_password_page(csrf_token=generate_csrf_token()))
 
 
 @app.post("/forgot-password", response_model=None)
 async def forgot_password_post(
     email: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Process forgot password form."""
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return HTMLResponse(
+            content=forgot_password_page(
+                error="Invalid security token. Please try again.",
+                csrf_token=generate_csrf_token(),
+            ),
+            status_code=403,
+        )
+
     # 入力値のトリム
     email = email.strip() if email else ""
 
@@ -678,7 +857,8 @@ async def forgot_password_post(
     _ = email, db  # unused variable warning 回避
     return HTMLResponse(
         content=forgot_password_page(
-            error="Password reset is not available. SMTP is not configured."
+            error="Password reset is not available. SMTP is not configured.",
+            csrf_token=generate_csrf_token(),
         )
     )
 
@@ -711,7 +891,9 @@ async def reset_password_get(
             content=forgot_password_page(error="Reset token has expired.")
         )
 
-    return HTMLResponse(content=reset_password_page(token=token))
+    return HTMLResponse(
+        content=reset_password_page(token=token, csrf_token=generate_csrf_token())
+    )
 
 
 @app.post("/reset-password", response_model=None)
@@ -719,13 +901,29 @@ async def reset_password_post(
     token: Annotated[str, Form()],
     new_password: Annotated[str, Form()],
     confirm_password: Annotated[str, Form()],
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Process reset password form."""
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return HTMLResponse(
+            content=reset_password_page(
+                token=token,
+                error="Invalid security token. Please try again.",
+                csrf_token=generate_csrf_token(),
+            ),
+            status_code=403,
+        )
+
     # パスワードの一致を検証
     if new_password != confirm_password:
         return HTMLResponse(
-            content=reset_password_page(token=token, error="Passwords do not match")
+            content=reset_password_page(
+                token=token,
+                error="Passwords do not match",
+                csrf_token=generate_csrf_token(),
+            )
         )
 
     # パスワードの長さを検証
@@ -734,13 +932,18 @@ async def reset_password_post(
             content=reset_password_page(
                 token=token,
                 error=f"Password must be at least {PASSWORD_MIN_LENGTH} characters",
+                csrf_token=generate_csrf_token(),
             )
         )
 
     # bcrypt の制限を超えるパスワードは拒否
     if len(new_password.encode("utf-8")) > BCRYPT_MAX_PASSWORD_BYTES:
         error_msg = f"Password must be at most {BCRYPT_MAX_PASSWORD_BYTES} bytes"
-        return HTMLResponse(content=reset_password_page(token=token, error=error_msg))
+        return HTMLResponse(
+            content=reset_password_page(
+                token=token, error=error_msg, csrf_token=generate_csrf_token()
+            )
+        )
 
     # トークンで管理者を検索
     result = await db.execute(select(AdminUser).where(AdminUser.reset_token == token))
@@ -848,6 +1051,7 @@ async def settings_email_get(
         content=email_change_page(
             current_email=admin.email,
             pending_email=admin.pending_email,
+            csrf_token=generate_csrf_token(),
         )
     )
 
@@ -856,6 +1060,7 @@ async def settings_email_get(
 async def settings_email_post(
     user: dict[str, Any] | None = Depends(get_current_user),
     new_email: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Update email address."""
@@ -865,6 +1070,18 @@ async def settings_email_post(
     admin = await get_or_create_admin(db)
     if admin is None:
         return RedirectResponse(url="/login", status_code=302)
+
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return HTMLResponse(
+            content=email_change_page(
+                current_email=admin.email,
+                pending_email=admin.pending_email,
+                error="Invalid security token. Please try again.",
+                csrf_token=generate_csrf_token(),
+            ),
+            status_code=403,
+        )
 
     # 入力値のトリム
     new_email = new_email.strip() if new_email else ""
@@ -876,6 +1093,7 @@ async def settings_email_post(
                 current_email=admin.email,
                 pending_email=admin.pending_email,
                 error="Email address is required",
+                csrf_token=generate_csrf_token(),
             )
         )
 
@@ -885,6 +1103,7 @@ async def settings_email_post(
                 current_email=admin.email,
                 pending_email=admin.pending_email,
                 error="Invalid email format",
+                csrf_token=generate_csrf_token(),
             )
         )
 
@@ -894,6 +1113,7 @@ async def settings_email_post(
                 current_email=admin.email,
                 pending_email=admin.pending_email,
                 error="New email must be different from current email",
+                csrf_token=generate_csrf_token(),
             )
         )
 
@@ -967,7 +1187,7 @@ async def settings_password_get(
     if not admin.email_verified:
         return RedirectResponse(url="/verify-email", status_code=302)
 
-    return HTMLResponse(content=password_change_page())
+    return HTMLResponse(content=password_change_page(csrf_token=generate_csrf_token()))
 
 
 @app.post("/settings/password", response_model=None)
@@ -975,6 +1195,7 @@ async def settings_password_post(
     user: dict[str, Any] | None = Depends(get_current_user),
     new_password: Annotated[str, Form()] = "",
     confirm_password: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Update password."""
@@ -993,19 +1214,36 @@ async def settings_password_post(
     if not admin.email_verified:
         return RedirectResponse(url="/verify-email", status_code=302)
 
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return HTMLResponse(
+            content=password_change_page(
+                error="Invalid security token. Please try again.",
+                csrf_token=generate_csrf_token(),
+            ),
+            status_code=403,
+        )
+
     # バリデーション
     if not new_password:
-        return HTMLResponse(content=password_change_page(error="Password is required"))
+        return HTMLResponse(
+            content=password_change_page(
+                error="Password is required", csrf_token=generate_csrf_token()
+            )
+        )
 
     if new_password != confirm_password:
         return HTMLResponse(
-            content=password_change_page(error="Passwords do not match")
+            content=password_change_page(
+                error="Passwords do not match", csrf_token=generate_csrf_token()
+            )
         )
 
     if len(new_password) < PASSWORD_MIN_LENGTH:
         return HTMLResponse(
             content=password_change_page(
-                error=f"Password must be at least {PASSWORD_MIN_LENGTH} characters"
+                error=f"Password must be at least {PASSWORD_MIN_LENGTH} characters",
+                csrf_token=generate_csrf_token(),
             )
         )
 
@@ -1013,7 +1251,8 @@ async def settings_password_post(
     if len(new_password.encode("utf-8")) > BCRYPT_MAX_PASSWORD_BYTES:
         return HTMLResponse(
             content=password_change_page(
-                error=f"Password must be at most {BCRYPT_MAX_PASSWORD_BYTES} bytes"
+                error=f"Password must be at most {BCRYPT_MAX_PASSWORD_BYTES} bytes",
+                csrf_token=generate_csrf_token(),
             )
         )
 
@@ -1092,24 +1331,45 @@ async def lobbies_list(
         select(Lobby).options(selectinload(Lobby.sessions)).order_by(Lobby.id)
     )
     lobbies = list(result.scalars().all())
-    return HTMLResponse(content=lobbies_list_page(lobbies))
+    return HTMLResponse(
+        content=lobbies_list_page(lobbies, csrf_token=generate_csrf_token())
+    )
 
 
 @app.post("/lobbies/{lobby_id}/delete", response_model=None)
 async def lobbies_delete(
+    request: Request,
     lobby_id: int,
     user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Delete a lobby."""
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    result = await db.execute(select(Lobby).where(Lobby.id == lobby_id))
-    lobby = result.scalar_one_or_none()
-    if lobby:
-        await db.delete(lobby)
-        await db.commit()
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/lobbies", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    # クールタイムチェック
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/lobbies", status_code=302)
+
+    # 二重ロック: 同じリソースへの同時操作を防止
+    async with get_resource_lock(f"lobby:delete:{lobby_id}"):
+        result = await db.execute(select(Lobby).where(Lobby.id == lobby_id))
+        lobby = result.scalar_one_or_none()
+        if lobby:
+            await db.delete(lobby)
+            await db.commit()
+
+        # クールタイム記録
+        record_form_submit(user_email, path)
+
     return RedirectResponse(url="/lobbies", status_code=302)
 
 
@@ -1129,26 +1389,47 @@ async def sticky_list(
 
     result = await db.execute(select(StickyMessage).order_by(StickyMessage.created_at))
     stickies = list(result.scalars().all())
-    return HTMLResponse(content=sticky_list_page(stickies))
+    return HTMLResponse(
+        content=sticky_list_page(stickies, csrf_token=generate_csrf_token())
+    )
 
 
 @app.post("/sticky/{channel_id}/delete", response_model=None)
 async def sticky_delete(
+    request: Request,
     channel_id: str,
     user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Delete a sticky message."""
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    result = await db.execute(
-        select(StickyMessage).where(StickyMessage.channel_id == channel_id)
-    )
-    sticky = result.scalar_one_or_none()
-    if sticky:
-        await db.delete(sticky)
-        await db.commit()
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/sticky", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    # クールタイムチェック
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/sticky", status_code=302)
+
+    # 二重ロック: 同じリソースへの同時操作を防止
+    async with get_resource_lock(f"sticky:delete:{channel_id}"):
+        result = await db.execute(
+            select(StickyMessage).where(StickyMessage.channel_id == channel_id)
+        )
+        sticky = result.scalar_one_or_none()
+        if sticky:
+            await db.delete(sticky)
+            await db.commit()
+
+        # クールタイム記録
+        record_form_submit(user_email, path)
+
     return RedirectResponse(url="/sticky", status_code=302)
 
 
@@ -1174,64 +1455,125 @@ async def bump_list(
     )
     reminders = list(reminders_result.scalars().all())
 
-    return HTMLResponse(content=bump_list_page(configs, reminders))
+    return HTMLResponse(
+        content=bump_list_page(configs, reminders, csrf_token=generate_csrf_token())
+    )
 
 
 @app.post("/bump/config/{guild_id}/delete", response_model=None)
 async def bump_config_delete(
+    request: Request,
     guild_id: str,
     user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Delete a bump config."""
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    result = await db.execute(select(BumpConfig).where(BumpConfig.guild_id == guild_id))
-    config = result.scalar_one_or_none()
-    if config:
-        await db.delete(config)
-        await db.commit()
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/bump", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    # クールタイムチェック
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/bump", status_code=302)
+
+    # 二重ロック: 同じリソースへの同時操作を防止
+    async with get_resource_lock(f"bump_config:delete:{guild_id}"):
+        result = await db.execute(
+            select(BumpConfig).where(BumpConfig.guild_id == guild_id)
+        )
+        config = result.scalar_one_or_none()
+        if config:
+            await db.delete(config)
+            await db.commit()
+
+        # クールタイム記録
+        record_form_submit(user_email, path)
+
     return RedirectResponse(url="/bump", status_code=302)
 
 
 @app.post("/bump/reminder/{reminder_id}/delete", response_model=None)
 async def bump_reminder_delete(
+    request: Request,
     reminder_id: int,
     user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Delete a bump reminder."""
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    result = await db.execute(
-        select(BumpReminder).where(BumpReminder.id == reminder_id)
-    )
-    reminder = result.scalar_one_or_none()
-    if reminder:
-        await db.delete(reminder)
-        await db.commit()
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/bump", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    # クールタイムチェック
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/bump", status_code=302)
+
+    # 二重ロック: 同じリソースへの同時操作を防止
+    async with get_resource_lock(f"bump_reminder:delete:{reminder_id}"):
+        result = await db.execute(
+            select(BumpReminder).where(BumpReminder.id == reminder_id)
+        )
+        reminder = result.scalar_one_or_none()
+        if reminder:
+            await db.delete(reminder)
+            await db.commit()
+
+        # クールタイム記録
+        record_form_submit(user_email, path)
+
     return RedirectResponse(url="/bump", status_code=302)
 
 
 @app.post("/bump/reminder/{reminder_id}/toggle", response_model=None)
 async def bump_reminder_toggle(
+    request: Request,
     reminder_id: int,
     user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Toggle a bump reminder enabled state."""
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    result = await db.execute(
-        select(BumpReminder).where(BumpReminder.id == reminder_id)
-    )
-    reminder = result.scalar_one_or_none()
-    if reminder:
-        reminder.is_enabled = not reminder.is_enabled
-        await db.commit()
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/bump", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    # クールタイムチェック
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/bump", status_code=302)
+
+    # 二重ロック: 同じリソースへの同時操作を防止
+    async with get_resource_lock(f"bump_reminder:toggle:{reminder_id}"):
+        result = await db.execute(
+            select(BumpReminder).where(BumpReminder.id == reminder_id)
+        )
+        reminder = result.scalar_one_or_none()
+        if reminder:
+            reminder.is_enabled = not reminder.is_enabled
+            await db.commit()
+
+        # クールタイム記録
+        record_form_submit(user_email, path)
+
     return RedirectResponse(url="/bump", status_code=302)
 
 
@@ -1262,24 +1604,47 @@ async def rolepanels_list(
     for panel in panels:
         items_by_panel[panel.id] = sorted(panel.items, key=lambda x: x.position)
 
-    return HTMLResponse(content=role_panels_list_page(panels, items_by_panel))
+    return HTMLResponse(
+        content=role_panels_list_page(
+            panels, items_by_panel, csrf_token=generate_csrf_token()
+        )
+    )
 
 
 @app.post("/rolepanels/{panel_id}/delete", response_model=None)
 async def rolepanel_delete(
+    request: Request,
     panel_id: int,
     user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Delete a role panel."""
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    result = await db.execute(select(RolePanel).where(RolePanel.id == panel_id))
-    panel = result.scalar_one_or_none()
-    if panel:
-        await db.delete(panel)
-        await db.commit()
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/rolepanels", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    # クールタイムチェック
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/rolepanels", status_code=302)
+
+    # 二重ロック: 同じリソースへの同時操作を防止
+    async with get_resource_lock(f"rolepanel:delete:{panel_id}"):
+        result = await db.execute(select(RolePanel).where(RolePanel.id == panel_id))
+        panel = result.scalar_one_or_none()
+        if panel:
+            await db.delete(panel)
+            await db.commit()
+
+        # クールタイム記録
+        record_form_submit(user_email, path)
+
     return RedirectResponse(url="/rolepanels", status_code=302)
 
 
@@ -1428,6 +1793,7 @@ async def rolepanel_create_get(
             guilds_map=guilds_map,
             channels_map=channels_map,
             discord_roles=discord_roles,
+            csrf_token=generate_csrf_token(),
         )
     )
 
@@ -1442,6 +1808,7 @@ async def rolepanel_create_post(
     title: Annotated[str, Form()] = "",
     description: Annotated[str, Form()] = "",
     use_embed: Annotated[str, Form()] = "1",
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Create a new role panel with role items."""
@@ -1451,6 +1818,35 @@ async def rolepanel_create_post(
     # エラー時にも選択肢を表示するためにギルド/チャンネル/ロール情報を取得
     guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
     discord_roles = await _get_discord_roles_by_guild(db)
+
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return HTMLResponse(
+            content=role_panel_create_page(
+                error="Invalid security token. Please try again.",
+                guilds_map=guilds_map,
+                channels_map=channels_map,
+                discord_roles=discord_roles,
+                csrf_token=generate_csrf_token(),
+            ),
+            status_code=403,
+        )
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    # クールタイムチェック
+    if is_form_cooldown_active(user_email, path):
+        return HTMLResponse(
+            content=role_panel_create_page(
+                error="Please wait before submitting again.",
+                guilds_map=guilds_map,
+                channels_map=channels_map,
+                discord_roles=discord_roles,
+                csrf_token=generate_csrf_token(),
+            ),
+            status_code=429,
+        )
 
     # Trim input values
     guild_id = guild_id.strip()
@@ -1476,6 +1872,7 @@ async def rolepanel_create_post(
                 guilds_map=guilds_map,
                 channels_map=channels_map,
                 discord_roles=discord_roles,
+                csrf_token=generate_csrf_token(),
             )
         )
 
@@ -1567,32 +1964,45 @@ async def rolepanel_create_post(
             }
         )
 
-    # Create the role panel
-    panel = RolePanel(
-        guild_id=guild_id,
-        channel_id=channel_id,
-        panel_type=panel_type,
-        title=title,
-        description=description if description else None,
-        use_embed=use_embed_bool,
-    )
-    db.add(panel)
-    await db.flush()  # Get the panel ID without committing
-
-    # Create role items
-    for item_data in role_items_data:
-        item = RolePanelItem(
-            panel_id=panel.id,
-            role_id=str(item_data["role_id"]),
-            emoji=str(item_data["emoji"]),
-            label=item_data["label"] if item_data["label"] else None,
-            style="secondary",
-            position=int(item_data["position"]) if item_data["position"] else 0,
+    # 二重ロック: 同じユーザーによる同時パネル作成を防止
+    async with get_resource_lock(f"rolepanel:create:{user_email}"):
+        # Create the role panel
+        panel = RolePanel(
+            guild_id=guild_id,
+            channel_id=channel_id,
+            panel_type=panel_type,
+            title=title,
+            description=description if description else None,
+            use_embed=use_embed_bool,
         )
-        db.add(item)
+        db.add(panel)
+        await db.flush()  # Get the panel ID without committing
 
-    await db.commit()
-    await db.refresh(panel)
+        # Create role items
+        for item_data in role_items_data:
+            item = RolePanelItem(
+                panel_id=panel.id,
+                role_id=str(item_data["role_id"]),
+                emoji=normalize_emoji(str(item_data["emoji"])),
+                label=item_data["label"] if item_data["label"] else None,
+                style="secondary",
+                position=int(item_data["position"]) if item_data["position"] else 0,
+            )
+            db.add(item)
+
+        try:
+            await db.commit()
+        except IntegrityError as e:
+            await db.rollback()
+            # UniqueConstraint 違反 (panel_id, emoji) の場合
+            if "uq_panel_emoji" in str(e.orig):
+                return error_response("Duplicate emoji in role items")
+            raise
+
+        await db.refresh(panel)
+
+        # クールタイム記録
+        record_form_submit(user_email, path)
 
     # 作成後は詳細ページにリダイレクト
     return RedirectResponse(url=f"/rolepanels/{panel.id}", status_code=302)
@@ -1641,17 +2051,20 @@ async def rolepanel_detail(
             discord_roles=guild_discord_roles,
             guild_name=guild_name,
             channel_name=channel_name,
+            csrf_token=generate_csrf_token(),
         )
     )
 
 
 @app.post("/rolepanels/{panel_id}/items/add", response_model=None)
 async def rolepanel_add_item(
+    request: Request,
     panel_id: int,
     emoji: Annotated[str, Form()] = "",
     role_id: Annotated[str, Form()] = "",
     label: Annotated[str, Form()] = "",
     position: Annotated[int, Form()] = 0,
+    csrf_token: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
@@ -1698,7 +2111,41 @@ async def rolepanel_add_item(
                 discord_roles=guild_discord_roles,
                 guild_name=guild_name,
                 channel_name=channel_name,
+                csrf_token=generate_csrf_token(),
             )
+        )
+
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return HTMLResponse(
+            content=role_panel_detail_page(
+                panel,
+                items,
+                error="Invalid security token. Please try again.",
+                discord_roles=guild_discord_roles,
+                guild_name=guild_name,
+                channel_name=channel_name,
+                csrf_token=generate_csrf_token(),
+            ),
+            status_code=403,
+        )
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    # クールタイムチェック
+    if is_form_cooldown_active(user_email, path):
+        return HTMLResponse(
+            content=role_panel_detail_page(
+                panel,
+                items,
+                error="Please wait before submitting again.",
+                discord_roles=guild_discord_roles,
+                guild_name=guild_name,
+                channel_name=channel_name,
+                csrf_token=generate_csrf_token(),
+            ),
+            status_code=429,
         )
 
     # Validation
@@ -1724,21 +2171,36 @@ async def rolepanel_add_item(
         return error_response("Label must be 80 characters or less")
 
     # Check for duplicate emoji
+    # Normalize emoji for consistent comparison and storage
+    normalized_emoji = normalize_emoji(emoji)
+
     for item in items:
-        if item.emoji == emoji:
+        if item.emoji == normalized_emoji:
             return error_response(f"Emoji '{emoji}' is already used in this panel")
 
-    # Create the item
-    item = RolePanelItem(
-        panel_id=panel_id,
-        role_id=role_id,
-        emoji=emoji,
-        label=label if label else None,
-        style="secondary",
-        position=position,
-    )
-    db.add(item)
-    await db.commit()
+    # 二重ロック: 同じパネルへの同時アイテム追加を防止
+    async with get_resource_lock(f"rolepanel:add_item:{panel_id}"):
+        # Create the item
+        item = RolePanelItem(
+            panel_id=panel_id,
+            role_id=role_id,
+            emoji=normalized_emoji,
+            label=label if label else None,
+            style="secondary",
+            position=position,
+        )
+        db.add(item)
+
+        try:
+            await db.commit()
+        except IntegrityError as e:
+            await db.rollback()
+            if "uq_panel_emoji" in str(e.orig):
+                return error_response(f"Emoji '{emoji}' is already used in this panel")
+            raise
+
+        # クールタイム記録
+        record_form_submit(user_email, path)
 
     return RedirectResponse(
         url=f"/rolepanels/{panel_id}?success=Role+item+added", status_code=302
@@ -1747,14 +2209,27 @@ async def rolepanel_add_item(
 
 @app.post("/rolepanels/{panel_id}/items/{item_id}/delete", response_model=None)
 async def rolepanel_delete_item(
+    request: Request,
     panel_id: int,
     item_id: int,
     user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Delete a role item from a panel."""
     if not user:
         return RedirectResponse(url="/login", status_code=302)
+
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url=f"/rolepanels/{panel_id}", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    # クールタイムチェック
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url=f"/rolepanels/{panel_id}", status_code=302)
 
     # Check panel exists
     panel_result = await db.execute(select(RolePanel).where(RolePanel.id == panel_id))
@@ -1762,16 +2237,21 @@ async def rolepanel_delete_item(
     if not panel:
         return RedirectResponse(url="/rolepanels", status_code=302)
 
-    # Get and delete the item
-    result = await db.execute(
-        select(RolePanelItem).where(
-            RolePanelItem.id == item_id, RolePanelItem.panel_id == panel_id
+    # 二重ロック: 同じアイテムへの同時削除を防止
+    async with get_resource_lock(f"rolepanel:delete_item:{panel_id}:{item_id}"):
+        # Get and delete the item
+        result = await db.execute(
+            select(RolePanelItem).where(
+                RolePanelItem.id == item_id, RolePanelItem.panel_id == panel_id
+            )
         )
-    )
-    item = result.scalar_one_or_none()
-    if item:
-        await db.delete(item)
-        await db.commit()
+        item = result.scalar_one_or_none()
+        if item:
+            await db.delete(item)
+            await db.commit()
+
+        # クールタイム記録
+        record_form_submit(user_email, path)
 
     return RedirectResponse(
         url=f"/rolepanels/{panel_id}?success=Role+item+deleted", status_code=302

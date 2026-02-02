@@ -11,6 +11,7 @@ UI の構成:
 """
 
 import logging
+import time
 from typing import Any
 
 import discord
@@ -22,6 +23,69 @@ from src.services.db_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# クールダウン機能 (連打対策)
+# =============================================================================
+
+# クールダウン時間 (秒)
+ROLE_PANEL_COOLDOWN_SECONDS = 1.0
+
+# ユーザーごとの最終操作時刻を記録
+# key: (user_id, panel_id), value: timestamp (float)
+_cooldown_cache: dict[tuple[int, int], float] = {}
+
+# キャッシュクリーンアップ間隔
+_CLEANUP_INTERVAL = 300  # 5分
+_last_cleanup_time = 0.0
+
+
+def _cleanup_cooldown_cache() -> None:
+    """古いクールダウンエントリを削除する."""
+    global _last_cleanup_time
+    now = time.monotonic()
+
+    if now - _last_cleanup_time < _CLEANUP_INTERVAL:
+        return
+
+    _last_cleanup_time = now
+    # 古いエントリを削除 (5分以上経過したもの)
+    expired = [
+        key
+        for key, timestamp in _cooldown_cache.items()
+        if now - timestamp > _CLEANUP_INTERVAL
+    ]
+    for key in expired:
+        del _cooldown_cache[key]
+
+
+def is_on_cooldown(user_id: int, panel_id: int) -> bool:
+    """ユーザーがクールダウン中かどうかを確認する.
+
+    Args:
+        user_id: ユーザー ID
+        panel_id: パネル ID
+
+    Returns:
+        クールダウン中なら True
+    """
+    _cleanup_cooldown_cache()
+
+    key = (user_id, panel_id)
+    now = time.monotonic()
+
+    last_time = _cooldown_cache.get(key)
+    if last_time is not None and now - last_time < ROLE_PANEL_COOLDOWN_SECONDS:
+        return True
+
+    # クールダウンを記録/更新
+    _cooldown_cache[key] = now
+    return False
+
+
+def clear_cooldown_cache() -> None:
+    """クールダウンキャッシュをクリアする (テスト用)."""
+    _cooldown_cache.clear()
 
 
 def create_role_panel_embed(
@@ -120,6 +184,14 @@ class RoleButton(discord.ui.Button[Any]):
         if interaction.guild is None:
             await interaction.response.send_message(
                 "サーバー内でのみ使用できます。", ephemeral=True
+            )
+            return
+
+        # クールダウンチェック (連打対策)
+        if is_on_cooldown(interaction.user.id, self.panel_id):
+            await interaction.response.send_message(
+                "操作が早すぎます。少し待ってから再度お試しください。",
+                ephemeral=True,
             )
             return
 
@@ -369,6 +441,18 @@ async def handle_role_reaction(
     """
     # Bot 自身のリアクションは無視
     if payload.member is None and action == "add":
+        return
+
+    # クールダウンチェック (連打対策)
+    # リアクションの場合は message_id を panel_id として代用
+    # (実際の panel_id は DB クエリ後でないと分からないため)
+    if payload.user_id and is_on_cooldown(payload.user_id, payload.message_id):
+        # リアクションの場合は静かに無視 (ephemeral メッセージを送れない)
+        logger.debug(
+            "Rate limited reaction from user %d on message %d",
+            payload.user_id,
+            payload.message_id,
+        )
         return
 
     async with async_session() as db_session:

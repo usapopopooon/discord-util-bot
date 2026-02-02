@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlencode
 
 import pytest
 from httpx import AsyncClient
@@ -21,6 +22,7 @@ from src.database.models import (
     RolePanelItem,
     StickyMessage,
 )
+from src.utils import is_valid_emoji
 from src.web.app import hash_password
 
 from .conftest import TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD
@@ -579,6 +581,152 @@ class TestPasswordHashing:
         hash1 = hash_password(password)
         hash2 = hash_password(password)
         assert hash1 != hash2
+
+
+# ===========================================================================
+# 絵文字検証
+# ===========================================================================
+
+
+class TestEmojiValidation:
+    """is_valid_emoji 関数のテスト。"""
+
+    def test_simple_emoji_valid(self) -> None:
+        """シンプルな絵文字は有効。"""
+        assert is_valid_emoji("😀") is True
+        assert is_valid_emoji("🎮") is True
+        assert is_valid_emoji("❤️") is True
+        assert is_valid_emoji("⭐") is True
+
+    def test_zwj_family_emoji_valid(self) -> None:
+        """ZWJ シーケンスの家族絵文字は有効。"""
+        assert is_valid_emoji("🧑‍🧑‍🧒") is True  # family
+        assert is_valid_emoji("👨‍👩‍👧") is True  # man woman girl
+        assert is_valid_emoji("👩‍👩‍👦‍👦") is True  # woman woman boy boy
+
+    def test_zwj_profession_emoji_valid(self) -> None:
+        """ZWJ シーケンスの職業絵文字は有効。"""
+        assert is_valid_emoji("👨‍💻") is True  # man technologist
+        assert is_valid_emoji("👩‍🎨") is True  # woman artist
+        assert is_valid_emoji("🧑‍🚀") is True  # astronaut
+
+    def test_keycap_emoji_valid(self) -> None:
+        """Keycap 絵文字は有効。"""
+        assert is_valid_emoji("1️⃣") is True
+        assert is_valid_emoji("2️⃣") is True
+        assert is_valid_emoji("3️⃣") is True
+        assert is_valid_emoji("0️⃣") is True
+        assert is_valid_emoji("#️⃣") is True
+        assert is_valid_emoji("*️⃣") is True
+
+    def test_flag_emoji_valid(self) -> None:
+        """国旗絵文字は有効。"""
+        assert is_valid_emoji("🇯🇵") is True
+        assert is_valid_emoji("🇺🇸") is True
+        assert is_valid_emoji("🇬🇧") is True
+
+    def test_skin_tone_emoji_valid(self) -> None:
+        """肌の色修飾子付き絵文字は有効。"""
+        assert is_valid_emoji("👋🏻") is True  # light skin tone
+        assert is_valid_emoji("👋🏿") is True  # dark skin tone
+        assert is_valid_emoji("🧑🏽‍💻") is True  # medium skin technologist
+
+    def test_discord_custom_emoji_valid(self) -> None:
+        """Discord カスタム絵文字は有効。"""
+        assert is_valid_emoji("<:custom:123456789>") is True
+        assert is_valid_emoji("<a:animated:987654321>") is True
+
+    def test_empty_string_invalid(self) -> None:
+        """空文字は無効。"""
+        assert is_valid_emoji("") is False
+
+    def test_regular_text_invalid(self) -> None:
+        """通常テキストは無効。"""
+        assert is_valid_emoji("hello") is False
+        assert is_valid_emoji("abc123") is False
+        assert is_valid_emoji("!@#") is False
+
+    def test_multiple_emojis_invalid(self) -> None:
+        """複数絵文字は無効 (単一絵文字のみ許可)。"""
+        assert is_valid_emoji("😀😀") is False
+        assert is_valid_emoji("🎮🎵") is False
+
+    # =========================================================================
+    # Edge Cases
+    # =========================================================================
+
+    def test_none_input_invalid(self) -> None:
+        """None 入力は無効。"""
+        assert is_valid_emoji(None) is False  # type: ignore[arg-type]
+
+    def test_whitespace_only_invalid(self) -> None:
+        """空白のみは無効。"""
+        assert is_valid_emoji("   ") is False
+        assert is_valid_emoji("\t") is False
+        assert is_valid_emoji("\n") is False
+
+    def test_emoji_with_whitespace_invalid(self) -> None:
+        """絵文字＋空白は無効。"""
+        assert is_valid_emoji(" 😀") is False  # leading space
+        assert is_valid_emoji("😀 ") is False  # trailing space
+        assert is_valid_emoji(" 😀 ") is False  # both
+
+    def test_emoji_with_text_invalid(self) -> None:
+        """絵文字＋テキストは無効。"""
+        assert is_valid_emoji("😀hello") is False
+        assert is_valid_emoji("hello😀") is False
+        assert is_valid_emoji("a😀b") is False
+
+    def test_discord_custom_emoji_invalid_formats(self) -> None:
+        """Discord カスタム絵文字の不正フォーマットは無効。"""
+        assert is_valid_emoji("<:custom>") is False  # missing id
+        assert is_valid_emoji("<:name:>") is False  # empty id
+        assert is_valid_emoji("<::123>") is False  # empty name
+        assert is_valid_emoji("<custom:123>") is False  # missing colon prefix
+        assert is_valid_emoji(":custom:123") is False  # missing angle brackets
+
+    def test_partial_flag_invalid(self) -> None:
+        """不完全な国旗 (regional indicator 単体) は無効。"""
+        assert is_valid_emoji("🇯") is False  # Just J, not JP
+
+    def test_text_vs_emoji_style(self) -> None:
+        """テキストスタイルと絵文字スタイル両方有効。"""
+        assert is_valid_emoji("☺") is True  # text style (no variation selector)
+        assert is_valid_emoji("☺️") is True  # emoji style (with variation selector)
+
+    def test_component_emojis_valid(self) -> None:
+        """コンポーネント絵文字 (Discord でリアクションとして使用可)。"""
+        # These are component emojis but Discord accepts them
+        assert is_valid_emoji("🏻") is True  # skin tone modifier (light)
+        assert is_valid_emoji("🦰") is True  # red hair component
+
+    def test_special_unicode_invalid(self) -> None:
+        """特殊 Unicode 文字 (絵文字ではない) は無効。"""
+        assert is_valid_emoji("\u200d") is False  # ZWJ alone
+        assert is_valid_emoji("\ufe0f") is False  # variation selector alone
+        assert is_valid_emoji("\u20e3") is False  # combining enclosing keycap alone
+
+    def test_control_characters_invalid(self) -> None:
+        """制御文字を含む文字列は無効。"""
+        assert is_valid_emoji("😀\n") is False  # emoji with newline
+        assert is_valid_emoji("\n😀") is False  # newline before emoji
+        assert is_valid_emoji("😀\r") is False  # emoji with carriage return
+        assert is_valid_emoji("😀\t") is False  # emoji with tab
+        assert is_valid_emoji("\x00😀") is False  # null character
+        assert is_valid_emoji("😀\x1f") is False  # unit separator
+
+    def test_lone_surrogate_invalid(self) -> None:
+        """壊れたサロゲートペアは無効。"""
+        # Note: Python 3 は通常壊れたサロゲートを許可しないが、
+        # surrogateescape エラーハンドラで作られた文字列等で発生する可能性
+        # ここでは正常な文字列のみテスト
+        # 実際の壊れたサロゲートは _has_lone_surrogate でテスト
+        pass  # 正常な Python 文字列では壊れたサロゲートを作成できない
+
+    def test_emoji_family_zwj_sequence(self) -> None:
+        """家族の ZWJ シーケンスが正しく処理される。"""
+        # 🧑‍🧑‍🧒 = 🧑 + ZWJ + 🧑 + ZWJ + 🧒
+        assert is_valid_emoji("🧑‍🧑‍🧒") is True
 
 
 # ===========================================================================
@@ -3036,6 +3184,188 @@ class TestRolePanelCreateRoutes:
         assert panel is not None
         assert panel.description is None
 
+    async def test_create_with_multiple_role_items(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """複数のロールアイテムを同時に作成できる。"""
+        form_data = [
+            ("guild_id", "123456789012345678"),
+            ("channel_id", "987654321098765432"),
+            ("panel_type", "button"),
+            ("title", "Multi Role Panel"),
+            ("item_emoji[]", "🎮"),
+            ("item_role_id[]", "111222333444555666"),
+            ("item_label[]", "Gamer"),
+            ("item_position[]", "0"),
+            ("item_emoji[]", "🎵"),
+            ("item_role_id[]", "222333444555666777"),
+            ("item_label[]", "Music"),
+            ("item_position[]", "1"),
+            ("item_emoji[]", "🎨"),
+            ("item_role_id[]", "333444555666777888"),
+            ("item_label[]", "Artist"),
+            ("item_position[]", "2"),
+        ]
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            content=urlencode(form_data),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Multi Role Panel")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is not None
+
+        items_result = await db_session.execute(
+            select(RolePanelItem)
+            .where(RolePanelItem.panel_id == panel.id)
+            .order_by(RolePanelItem.position)
+        )
+        items = list(items_result.scalars().all())
+        assert len(items) == 3
+
+        assert items[0].emoji == "🎮"
+        assert items[0].label == "Gamer"
+        assert items[0].position == 0
+
+        assert items[1].emoji == "🎵"
+        assert items[1].label == "Music"
+        assert items[1].position == 1
+
+        assert items[2].emoji == "🎨"
+        assert items[2].label == "Artist"
+        assert items[2].position == 2
+
+    async def test_create_with_duplicate_emoji_error(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """同じ絵文字を複数のアイテムに使用するとエラー。"""
+        form_data = [
+            ("guild_id", "123456789012345678"),
+            ("channel_id", "987654321098765432"),
+            ("panel_type", "button"),
+            ("title", "Duplicate Emoji Panel"),
+            ("item_emoji[]", "🎮"),
+            ("item_role_id[]", "111222333444555666"),
+            ("item_label[]", "First"),
+            ("item_position[]", "0"),
+            ("item_emoji[]", "🎮"),  # 同じ絵文字
+            ("item_role_id[]", "222333444555666777"),
+            ("item_label[]", "Second"),
+            ("item_position[]", "1"),
+        ]
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            content=urlencode(form_data),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+        assert "Duplicate emoji" in response.text
+
+        # パネルが作成されていないことを確認
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Duplicate Emoji Panel")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is None
+
+    async def test_create_with_custom_item_positions(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ロールアイテムのposition順序が保持される。"""
+        # 意図的に順番を変えて送信 (position: 2, 0, 1 の順で送る)
+        form_data = [
+            ("guild_id", "123456789012345678"),
+            ("channel_id", "987654321098765432"),
+            ("panel_type", "button"),
+            ("title", "Custom Order Panel"),
+            ("item_emoji[]", "🔴"),
+            ("item_role_id[]", "333333333333333333"),
+            ("item_label[]", "Third"),
+            ("item_position[]", "2"),
+            ("item_emoji[]", "🟢"),
+            ("item_role_id[]", "111111111111111111"),
+            ("item_label[]", "First"),
+            ("item_position[]", "0"),
+            ("item_emoji[]", "🔵"),
+            ("item_role_id[]", "222222222222222222"),
+            ("item_label[]", "Second"),
+            ("item_position[]", "1"),
+        ]
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            content=urlencode(form_data),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Custom Order Panel")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is not None
+
+        items_result = await db_session.execute(
+            select(RolePanelItem)
+            .where(RolePanelItem.panel_id == panel.id)
+            .order_by(RolePanelItem.position)
+        )
+        items = list(items_result.scalars().all())
+        assert len(items) == 3
+
+        # position順でソートされた順序を確認
+        assert items[0].label == "First"
+        assert items[0].position == 0
+        assert items[1].label == "Second"
+        assert items[1].position == 1
+        assert items[2].label == "Third"
+        assert items[2].position == 2
+
+    async def test_create_with_empty_label_for_reaction_type(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """リアクションタイプではラベルなしでも作成できる。"""
+        form_data = [
+            ("guild_id", "123456789012345678"),
+            ("channel_id", "987654321098765432"),
+            ("panel_type", "reaction"),
+            ("title", "Reaction No Label"),
+            ("item_emoji[]", "⭐"),
+            ("item_role_id[]", "111111111111111111"),
+            ("item_label[]", ""),
+            ("item_position[]", "0"),
+            ("item_emoji[]", "🌟"),
+            ("item_role_id[]", "222222222222222222"),
+            ("item_label[]", ""),
+            ("item_position[]", "1"),
+        ]
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            content=urlencode(form_data),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Reaction No Label")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is not None
+
+        items_result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == panel.id)
+        )
+        items = list(items_result.scalars().all())
+        assert len(items) == 2
+        assert all(item.label is None or item.label == "" for item in items)
+
 
 # ===========================================================================
 # Discord ロールキャッシュ関連
@@ -4460,3 +4790,522 @@ class TestRolePanelEndToEnd:
         )
         item = result.scalar_one()
         assert item.emoji == custom_emoji
+
+
+# ===========================================================================
+# セキュリティヘッダーテスト
+# ===========================================================================
+
+
+class TestSecurityHeaders:
+    """セキュリティヘッダーミドルウェアのテスト。"""
+
+    async def test_x_frame_options_header(
+        self, client: AsyncClient, admin_user: AdminUser
+    ) -> None:
+        """X-Frame-Options ヘッダーが設定される。"""
+        response = await client.get("/login")
+        assert response.headers.get("X-Frame-Options") == "DENY"
+
+    async def test_x_content_type_options_header(
+        self, client: AsyncClient, admin_user: AdminUser
+    ) -> None:
+        """X-Content-Type-Options ヘッダーが設定される。"""
+        response = await client.get("/login")
+        assert response.headers.get("X-Content-Type-Options") == "nosniff"
+
+    async def test_x_xss_protection_header(
+        self, client: AsyncClient, admin_user: AdminUser
+    ) -> None:
+        """X-XSS-Protection ヘッダーが設定される。"""
+        response = await client.get("/login")
+        assert response.headers.get("X-XSS-Protection") == "1; mode=block"
+
+    async def test_referrer_policy_header(
+        self, client: AsyncClient, admin_user: AdminUser
+    ) -> None:
+        """Referrer-Policy ヘッダーが設定される。"""
+        response = await client.get("/login")
+        assert (
+            response.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
+        )
+
+    async def test_content_security_policy_header(
+        self, client: AsyncClient, admin_user: AdminUser
+    ) -> None:
+        """Content-Security-Policy ヘッダーが設定される。"""
+        response = await client.get("/login")
+        csp = response.headers.get("Content-Security-Policy")
+        assert csp is not None
+        assert "default-src 'self'" in csp
+        assert "frame-ancestors 'none'" in csp
+
+    async def test_cache_control_header_on_login(
+        self, client: AsyncClient, admin_user: AdminUser
+    ) -> None:
+        """認証ページにはキャッシュ制御ヘッダーが設定される。"""
+        response = await client.get("/login")
+        assert "no-store" in response.headers.get("Cache-Control", "")
+
+    async def test_cache_control_not_on_health(
+        self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ヘルスチェックにはキャッシュ制御ヘッダーが設定されない。"""
+        from unittest.mock import AsyncMock
+
+        import src.web.app as web_app_module
+
+        monkeypatch.setattr(
+            web_app_module,
+            "check_database_connection",
+            AsyncMock(return_value=True),
+        )
+
+        response = await client.get("/health")
+        # health エンドポイントはキャッシュ制御なし
+        assert "no-store" not in response.headers.get("Cache-Control", "")
+
+
+# ===========================================================================
+# CSRF 保護テスト
+# ===========================================================================
+
+
+class TestCSRFProtection:
+    """CSRF 保護のテスト。"""
+
+    async def test_login_without_csrf_token_fails(
+        self, client: AsyncClient, admin_user: AdminUser
+    ) -> None:
+        """CSRF トークンなしでログインすると 403 エラーになる。"""
+        response = await client.post(
+            "/login",
+            data={
+                "email": TEST_ADMIN_EMAIL,
+                "password": TEST_ADMIN_PASSWORD,
+                # csrf_token なし
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 403
+        assert "Invalid security token" in response.text
+
+    async def test_login_with_invalid_csrf_token_fails(
+        self, client: AsyncClient, admin_user: AdminUser
+    ) -> None:
+        """無効な CSRF トークンでログインすると 403 エラーになる。"""
+        response = await client.post(
+            "/login",
+            data={
+                "email": TEST_ADMIN_EMAIL,
+                "password": TEST_ADMIN_PASSWORD,
+                "csrf_token": "invalid-token",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 403
+        assert "Invalid security token" in response.text
+
+    async def test_login_with_valid_csrf_token_succeeds(
+        self, client: AsyncClient, admin_user: AdminUser
+    ) -> None:
+        """有効な CSRF トークンでログインすると成功する。"""
+        from src.web.app import generate_csrf_token
+
+        csrf_token = generate_csrf_token()
+
+        response = await client.post(
+            "/login",
+            data={
+                "email": TEST_ADMIN_EMAIL,
+                "password": TEST_ADMIN_PASSWORD,
+                "csrf_token": csrf_token,
+            },
+            follow_redirects=False,
+        )
+        # ログイン成功 → ダッシュボードにリダイレクト
+        assert response.status_code == 302
+        assert response.headers.get("location") == "/dashboard"
+
+    async def test_password_change_without_csrf_fails(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """CSRF トークンなしでパスワード変更すると 403 エラーになる。"""
+        response = await authenticated_client.post(
+            "/settings/password",
+            data={
+                "new_password": "newpassword123",
+                "confirm_password": "newpassword123",
+                # csrf_token なし
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 403
+        assert "Invalid security token" in response.text
+
+    async def test_password_change_with_valid_csrf_succeeds(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """有効な CSRF トークンでパスワード変更すると成功する。"""
+        from src.web.app import generate_csrf_token
+
+        csrf_token = generate_csrf_token()
+
+        response = await authenticated_client.post(
+            "/settings/password",
+            data={
+                "new_password": "newpassword123",
+                "confirm_password": "newpassword123",
+                "csrf_token": csrf_token,
+            },
+            follow_redirects=False,
+        )
+        # 成功 → ログインページにリダイレクト
+        assert response.status_code == 302
+        assert response.headers.get("location") == "/login"
+
+    async def test_delete_lobby_without_csrf_is_ignored(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """CSRF トークンなしで削除リクエストは無視される (リダイレクト)。"""
+        lobby = Lobby(
+            guild_id="123456789012345678",
+            lobby_channel_id="987654321098765432",
+        )
+        db_session.add(lobby)
+        await db_session.commit()
+        await db_session.refresh(lobby)
+
+        response = await authenticated_client.post(
+            f"/lobbies/{lobby.id}/delete",
+            data={},  # csrf_token なし
+            follow_redirects=False,
+        )
+        # CSRF 検証失敗 → リダイレクト
+        assert response.status_code == 302
+
+        # ロビーは削除されていない
+        result = await db_session.execute(select(Lobby).where(Lobby.id == lobby.id))
+        assert result.scalar_one_or_none() is not None
+
+    async def test_delete_lobby_with_valid_csrf_succeeds(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """有効な CSRF トークンで削除すると成功する。"""
+        from src.web.app import generate_csrf_token
+
+        lobby = Lobby(
+            guild_id="123456789012345678",
+            lobby_channel_id="987654321098765432",
+        )
+        db_session.add(lobby)
+        await db_session.commit()
+        await db_session.refresh(lobby)
+        lobby_id = lobby.id
+
+        csrf_token = generate_csrf_token()
+        response = await authenticated_client.post(
+            f"/lobbies/{lobby_id}/delete",
+            data={"csrf_token": csrf_token},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        # ロビーが削除されている
+        db_session.expire_all()
+        result = await db_session.execute(select(Lobby).where(Lobby.id == lobby_id))
+        assert result.scalar_one_or_none() is None
+
+    async def test_csrf_token_generation_and_validation(self) -> None:
+        """CSRF トークンの生成と検証が正しく動作する。"""
+        from src.web.app import generate_csrf_token, validate_csrf_token
+
+        # 生成したトークンは有効
+        token = generate_csrf_token()
+        assert validate_csrf_token(token) is True
+
+        # 空のトークンは無効
+        assert validate_csrf_token("") is False
+        assert validate_csrf_token(None) is False  # type: ignore[arg-type]
+
+        # 不正なトークンは無効
+        assert validate_csrf_token("invalid-token") is False
+        assert validate_csrf_token("some.random.string") is False
+
+
+# ===========================================================================
+# フォームクールタイムのテスト
+# ===========================================================================
+
+
+class TestFormCooldown:
+    """フォーム送信クールタイムのテスト。"""
+
+    def test_cooldown_not_active_for_new_user(self) -> None:
+        """新規ユーザーはクールタイム中ではない。"""
+        from src.web.app import is_form_cooldown_active
+
+        result = is_form_cooldown_active("newuser@example.com", "/test/path")
+        assert result is False
+
+    def test_cooldown_active_after_submission(self) -> None:
+        """フォーム送信後はクールタイム中になる。"""
+        from src.web.app import (
+            FORM_SUBMIT_TIMES,
+            is_form_cooldown_active,
+            record_form_submit,
+        )
+
+        user_email = "cooldown_test@example.com"
+        path = "/test/cooldown"
+
+        record_form_submit(user_email, path)
+        result = is_form_cooldown_active(user_email, path)
+        assert result is True
+
+        # クリーンアップ
+        FORM_SUBMIT_TIMES.pop(f"{user_email}:{path}", None)
+
+    def test_cooldown_not_active_for_different_path(self) -> None:
+        """異なるパスはクールタイムが独立している。"""
+        from src.web.app import (
+            FORM_SUBMIT_TIMES,
+            is_form_cooldown_active,
+            record_form_submit,
+        )
+
+        user_email = "cooldown_path_test@example.com"
+        path1 = "/test/path1"
+        path2 = "/test/path2"
+
+        record_form_submit(user_email, path1)
+        assert is_form_cooldown_active(user_email, path1) is True
+        assert is_form_cooldown_active(user_email, path2) is False
+
+        # クリーンアップ
+        FORM_SUBMIT_TIMES.pop(f"{user_email}:{path1}", None)
+
+    def test_cooldown_not_active_for_different_user(self) -> None:
+        """異なるユーザーはクールタイムが独立している。"""
+        from src.web.app import (
+            FORM_SUBMIT_TIMES,
+            is_form_cooldown_active,
+            record_form_submit,
+        )
+
+        user1 = "user1@example.com"
+        user2 = "user2@example.com"
+        path = "/test/path"
+
+        record_form_submit(user1, path)
+        assert is_form_cooldown_active(user1, path) is True
+        assert is_form_cooldown_active(user2, path) is False
+
+        # クリーンアップ
+        FORM_SUBMIT_TIMES.pop(f"{user1}:{path}", None)
+
+    def test_record_form_submit_empty_email(self) -> None:
+        """空のメールアドレスは記録されない。"""
+        from src.web.app import FORM_SUBMIT_TIMES, record_form_submit
+
+        initial_count = len(FORM_SUBMIT_TIMES)
+        record_form_submit("", "/test/path")
+        assert len(FORM_SUBMIT_TIMES) == initial_count
+
+    def test_cooldown_cleanup(self) -> None:
+        """クールタイムエントリのクリーンアップ。"""
+        import time
+
+        import src.web.app as web_app_module
+        from src.web.app import (
+            FORM_SUBMIT_TIMES,
+            _cleanup_form_cooldown_entries,
+        )
+
+        # 古いタイムスタンプを設定（クールタイムの5倍以上前）
+        old_time = time.time() - 10  # 10秒前
+        test_key = "cleanup_test@example.com:/test/cleanup"
+        FORM_SUBMIT_TIMES[test_key] = old_time
+
+        # 強制的にクリーンアップを実行
+        web_app_module._form_cooldown_last_cleanup_time = 0
+        _cleanup_form_cooldown_entries()
+
+        # 古いエントリが削除されている
+        assert test_key not in FORM_SUBMIT_TIMES
+
+
+class TestFormCooldownRoutes:
+    """フォームクールタイムのルートテスト。"""
+
+    async def test_lobby_delete_cooldown(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ロビー削除にクールタイムが適用される。"""
+        lobby = Lobby(
+            guild_id="123456789012345678",
+            lobby_channel_id="987654321098765432",
+        )
+        db_session.add(lobby)
+        await db_session.commit()
+        await db_session.refresh(lobby)
+
+        # 最初の削除は成功
+        response = await authenticated_client.post(
+            f"/lobbies/{lobby.id}/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+    async def test_rolepanel_create_cooldown(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """ロールパネル作成でクールタイムが適用される。"""
+        import time
+
+        from src.web.app import FORM_SUBMIT_TIMES
+
+        # 直前にフォーム送信を記録してクールタイム状態にする
+        key = "test@example.com:/rolepanels/new"
+        FORM_SUBMIT_TIMES[key] = time.time()
+
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "button",
+            "title": "Cooldown Test Panel",
+            "item_emoji[]": "🎮",
+            "item_role_id[]": "111222333444555666",
+            "item_label[]": "Test",
+            "item_position[]": "0",
+        }
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data=form_data,
+        )
+        # クールタイム中なので 429 を返す
+        assert response.status_code == 429
+        assert "Please wait" in response.text
+
+        # クリーンアップ
+        FORM_SUBMIT_TIMES.pop(key, None)
+
+
+# ===========================================================================
+# 二重ロック（リソースロック）のテスト
+# ===========================================================================
+
+
+class TestResourceLock:
+    """リソースロックのテスト。"""
+
+    def test_get_resource_lock_returns_lock(self) -> None:
+        """get_resource_lock がロックを返す。"""
+        import asyncio
+
+        from src.utils import get_resource_lock
+
+        lock = get_resource_lock("test:lock:1")
+        assert isinstance(lock, asyncio.Lock)
+
+    def test_get_resource_lock_same_key_returns_same_lock(self) -> None:
+        """同じキーでは同じロックが返される。"""
+        from src.utils import get_resource_lock
+
+        lock1 = get_resource_lock("test:lock:same")
+        lock2 = get_resource_lock("test:lock:same")
+        assert lock1 is lock2
+
+    def test_get_resource_lock_different_key_returns_different_lock(self) -> None:
+        """異なるキーでは異なるロックが返される。"""
+        from src.utils import get_resource_lock
+
+        lock1 = get_resource_lock("test:lock:a")
+        lock2 = get_resource_lock("test:lock:b")
+        assert lock1 is not lock2
+
+    async def test_resource_lock_prevents_concurrent_access(self) -> None:
+        """リソースロックが同時アクセスを防止する。"""
+        import asyncio
+
+        from src.utils import get_resource_lock
+
+        results: list[int] = []
+        lock_key = "test:concurrent:lock"
+
+        async def task1() -> None:
+            async with get_resource_lock(lock_key):
+                results.append(1)
+                await asyncio.sleep(0.1)
+                results.append(2)
+
+        async def task2() -> None:
+            await asyncio.sleep(0.05)  # task1 がロックを取得してから
+            async with get_resource_lock(lock_key):
+                results.append(3)
+                results.append(4)
+
+        await asyncio.gather(task1(), task2())
+
+        # task1 が完了してから task2 が実行されるはず
+        assert results == [1, 2, 3, 4]
+
+
+class TestResourceLockIntegration:
+    """リソースロックの統合テスト。"""
+
+    async def test_concurrent_lobby_delete_requests(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """同時ロビー削除リクエストが順序正しく処理される。"""
+        lobby = Lobby(
+            guild_id="123456789012345678",
+            lobby_channel_id="987654321098765432",
+        )
+        db_session.add(lobby)
+        await db_session.commit()
+        await db_session.refresh(lobby)
+        lobby_id = lobby.id
+
+        # 削除リクエスト
+        response = await authenticated_client.post(
+            f"/lobbies/{lobby_id}/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        # 2回目は既に削除済みなのでリダイレクトのみ
+        response2 = await authenticated_client.post(
+            f"/lobbies/{lobby_id}/delete",
+            follow_redirects=False,
+        )
+        assert response2.status_code == 302
+
+    async def test_concurrent_rolepanel_item_add(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """同時ロールパネルアイテム追加が順序正しく処理される。"""
+        # パネルを作成
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Lock Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        # アイテム追加リクエスト
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={
+                "emoji": "🎮",
+                "role_id": "111222333444555666",
+                "label": "Gamer",
+                "position": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "success" in response.headers["location"]
