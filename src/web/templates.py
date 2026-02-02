@@ -1467,6 +1467,7 @@ def role_panel_create_page(
     title: str = "",
     description: str = "",
     use_embed: bool = True,
+    remove_reaction: bool = False,
     guilds_map: dict[str, str] | None = None,
     channels_map: dict[str, list[tuple[str, str]]] | None = None,
     discord_roles: dict[str, list[tuple[str, str, int]]] | None = None,
@@ -1476,6 +1477,7 @@ def role_panel_create_page(
 
     Args:
         use_embed: メッセージ形式 (True: Embed, False: テキスト)
+        remove_reaction: リアクション自動削除フラグ (リアクション式のみ)
         guilds_map: ギルドID -> ギルド名 のマッピング
         channels_map: ギルドID -> [(channel_id, channel_name), ...] のマッピング
         discord_roles: ギルドID -> [(role_id, role_name, color), ...] のマッピング
@@ -1511,6 +1513,9 @@ def role_panel_create_page(
     # Message format selection
     embed_selected = "checked" if use_embed else ""
     text_selected = "" if use_embed else "checked"
+
+    # Remove reaction checkbox
+    remove_reaction_checked = "checked" if remove_reaction else ""
 
     # Guild select options (名前で表示)
     guild_options = ""
@@ -1630,6 +1635,22 @@ def role_panel_create_page(
                                 <span class="text-gray-400 text-xs">(simple plain text)</span>
                             </label>
                         </div>
+                    </div>
+
+                    <!-- Remove Reaction option (reaction type only) -->
+                    <div id="removeReactionOption" class="mb-4 hidden">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" name="remove_reaction" value="1"
+                                   id="removeReactionCheckbox"
+                                   {remove_reaction_checked}
+                                   class="rounded bg-gray-700 border-gray-600
+                                          text-blue-500 focus:ring-blue-500">
+                            <span>Auto-remove reactions</span>
+                        </label>
+                        <p class="text-gray-500 text-xs mt-1 ml-6">
+                            When enabled, reactions are automatically removed after toggling the role.
+                            Each reaction stays at count 1.
+                        </p>
                     </div>
 
                     <div class="mb-4">
@@ -1874,6 +1895,22 @@ def role_panel_create_page(
                         placeholder="Gamer"
                     >
                 </div>
+                <div class="style-field flex-1 min-w-[100px]">
+                    <label class="block text-xs font-medium mb-1 text-gray-300">
+                        Style
+                    </label>
+                    <select
+                        name="item_style[]"
+                        class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded
+                               focus:outline-none focus:ring-2 focus:ring-blue-500
+                               text-gray-100 text-sm"
+                    >
+                        <option value="secondary">Gray</option>
+                        <option value="primary">Blue</option>
+                        <option value="success">Green</option>
+                        <option value="danger">Red</option>
+                    </select>
+                </div>
                 <div class="flex-shrink-0">
                     <button
                         type="button"
@@ -1989,8 +2026,13 @@ def role_panel_create_page(
 
         function updateLabelFieldsVisibility() {{
             const showLabel = isButtonType();
+            // Hide both label and style fields for reaction panels
             const labelFields = document.querySelectorAll('.label-field');
             labelFields.forEach(field => {{
+                field.style.display = showLabel ? '' : 'none';
+            }});
+            const styleFields = document.querySelectorAll('.style-field');
+            styleFields.forEach(field => {{
                 field.style.display = showLabel ? '' : 'none';
             }});
         }}
@@ -1998,12 +2040,25 @@ def role_panel_create_page(
         // panel_type が変更されたときにラベルフィールドの表示を更新
         document.querySelectorAll('input[name="panel_type"]').forEach(radio => {{
             radio.addEventListener('change', updateLabelFieldsVisibility);
+            radio.addEventListener('change', updateRemoveReactionVisibility);
         }});
+
+        // リアクション式選択時のみ remove_reaction オプションを表示
+        function updateRemoveReactionVisibility() {{
+            const panelTypeRadio = document.querySelector('input[name="panel_type"]:checked');
+            const removeReactionOption = document.getElementById('removeReactionOption');
+            if (panelTypeRadio && panelTypeRadio.value === 'reaction') {{
+                removeReactionOption.classList.remove('hidden');
+            }} else {{
+                removeReactionOption.classList.add('hidden');
+            }}
+        }}
 
         // 初期状態を設定
         updateSubmitButton();
         updateRolesInfo();
         updateLabelFieldsVisibility();
+        updateRemoveReactionVisibility();
     }})();
     </script>
     """
@@ -2056,6 +2111,14 @@ def role_panel_detail_page(
         else '<span class="text-gray-300">Text</span>'
     )
 
+    # Auto-remove reactions badge (reaction type only)
+    remove_reaction_badge = ""
+    if panel.panel_type == "reaction":
+        if panel.remove_reaction:
+            remove_reaction_badge = '<span class="text-yellow-400">Enabled</span>'
+        else:
+            remove_reaction_badge = '<span class="text-gray-400">Disabled</span>'
+
     # ロールID -> ロール情報のマップを作成
     role_info_map: dict[str, tuple[str, int]] = {
         r[0]: (r[1], r[2]) for r in discord_roles
@@ -2065,9 +2128,19 @@ def role_panel_detail_page(
     is_button_type = panel.panel_type == "button"
 
     # Build items table
+    style_display_map = {
+        "primary": '<span class="text-blue-400">Blue</span>',
+        "secondary": '<span class="text-gray-400">Gray</span>',
+        "success": '<span class="text-green-400">Green</span>',
+        "danger": '<span class="text-red-400">Red</span>',
+    }
+
     items_rows = ""
     for item in items:
         label_display = escape(item.label) if item.label else "(no label)"
+        style_display = style_display_map.get(
+            item.style, '<span class="text-gray-400">Gray</span>'
+        )
         # ロール名を表示（存在する場合）
         role_info = role_info_map.get(item.role_id)
         if role_info:
@@ -2083,11 +2156,15 @@ def role_panel_detail_page(
         label_cell = (
             f'<td class="py-3 px-4">{label_display}</td>' if is_button_type else ""
         )
+        style_cell = (
+            f'<td class="py-3 px-4">{style_display}</td>' if is_button_type else ""
+        )
         items_rows += f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4 text-xl">{escape(item.emoji)}</td>
             <td class="py-3 px-4">{role_id_display}</td>
             {label_cell}
+            {style_cell}
             <td class="py-3 px-4">{item.position}</td>
             <td class="py-3 px-4">
                 <form method="POST" action="/rolepanels/{panel.id}/items/{item.id}/delete"
@@ -2102,7 +2179,7 @@ def role_panel_detail_page(
         </tr>
         """
 
-    col_count = 5 if is_button_type else 4
+    col_count = 6 if is_button_type else 4
     if not items:
         items_rows = f"""
         <tr>
@@ -2155,10 +2232,49 @@ def role_panel_detail_page(
         escape(panel.message_id or "(not posted)")
     }</span>
                 </div>
+                {
+        f'''<div>
+                    <span class="text-gray-400">Auto-remove:</span>
+                    {remove_reaction_badge}
+                    <form method="POST" action="/rolepanels/{panel.id}/toggle-remove-reaction"
+                          class="inline ml-2">
+                        {_csrf_field(csrf_token)}
+                        <button type="submit"
+                                class="text-xs text-blue-400 hover:text-blue-300 underline">
+                            Toggle
+                        </button>
+                    </form>
+                </div>'''
+        if panel.panel_type == "reaction"
+        else ""
+    }
             </div>
             <div class="mt-4">
                 <span class="text-gray-400">Description:</span>
                 <p class="mt-1">{escape(panel.description or "(no description)")}</p>
+            </div>
+            <div class="mt-6 pt-4 border-t border-gray-700">
+                {
+        f'''<form method="POST" action="/rolepanels/{panel.id}/post"
+                      onsubmit="return confirm('Post this panel to Discord?');">
+                    {_csrf_field(csrf_token)}
+                    <button type="submit"
+                            class="bg-green-600 hover:bg-green-700 px-6 py-2 rounded font-semibold
+                                   transition-colors">
+                        Post to Discord
+                    </button>
+                    <span class="ml-4 text-gray-400 text-sm">
+                        The panel will be posted to the channel above.
+                    </span>
+                </form>'''
+        if not panel.message_id
+        else f'''<div class="flex items-center">
+                    <span class="text-green-400 font-medium">✓ Posted to Discord</span>
+                    <span class="ml-4 text-gray-400 text-sm font-mono">
+                        Message ID: {escape(panel.message_id)}
+                    </span>
+                </div>'''
+    }
             </div>
         </div>
 
@@ -2172,7 +2288,9 @@ def role_panel_detail_page(
                             <th class="py-3 px-4 text-left">Emoji</th>
                             <th class="py-3 px-4 text-left">Role</th>
                             {
-        "" if not is_button_type else '<th class="py-3 px-4 text-left">Label</th>'
+        ""
+        if not is_button_type
+        else '<th class="py-3 px-4 text-left">Label</th><th class="py-3 px-4 text-left">Style</th>'
     }
                             <th class="py-3 px-4 text-left">Position</th>
                             <th class="py-3 px-4 text-left">Actions</th>
@@ -2244,6 +2362,23 @@ def role_panel_detail_page(
                                    text-gray-100"
                             placeholder="Gamer"
                         >
+                    </div>
+                    <div>
+                        <label for="style" class="block text-sm font-medium mb-2">
+                            Button Style
+                        </label>
+                        <select
+                            id="style"
+                            name="style"
+                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500
+                                   text-gray-100"
+                        >
+                            <option value="secondary">Gray (Secondary)</option>
+                            <option value="primary">Blue (Primary)</option>
+                            <option value="success">Green (Success)</option>
+                            <option value="danger">Red (Danger)</option>
+                        </select>
                     </div>'''
         if is_button_type
         else ""

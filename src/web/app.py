@@ -48,6 +48,7 @@ from src.database.models import (
     StickyMessage,
 )
 from src.utils import get_resource_lock, is_valid_emoji, normalize_emoji
+from src.web.discord_api import add_reactions_to_message, post_role_panel_to_discord
 from src.web.email_service import (
     send_email_change_verification,  # noqa: F401  # SMTP 設定時に使用
     # send_password_reset_email,  # SMTP 未設定のため未使用
@@ -1892,6 +1893,43 @@ async def rolepanel_delete(
     return RedirectResponse(url="/rolepanels", status_code=302)
 
 
+@app.post("/rolepanels/{panel_id}/toggle-remove-reaction", response_model=None)
+async def rolepanel_toggle_remove_reaction(
+    request: Request,
+    panel_id: int,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Toggle the remove_reaction flag for a role panel."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url=f"/rolepanels/{panel_id}", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    # クールタイムチェック
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url=f"/rolepanels/{panel_id}", status_code=302)
+
+    # 二重ロック: 同じリソースへの同時操作を防止
+    async with get_resource_lock(f"rolepanel:toggle:{panel_id}"):
+        result = await db.execute(select(RolePanel).where(RolePanel.id == panel_id))
+        panel = result.scalar_one_or_none()
+        if panel and panel.panel_type == "reaction":
+            panel.remove_reaction = not panel.remove_reaction
+            await db.commit()
+
+        # クールタイム記録
+        record_form_submit(user_email, path)
+
+    return RedirectResponse(url=f"/rolepanels/{panel_id}", status_code=302)
+
+
 async def _get_known_guilds_and_channels(
     db: AsyncSession,
 ) -> dict[str, list[str]]:
@@ -2052,6 +2090,7 @@ async def rolepanel_create_post(
     title: Annotated[str, Form()] = "",
     description: Annotated[str, Form()] = "",
     use_embed: Annotated[str, Form()] = "1",
+    remove_reaction: Annotated[str, Form()] = "",
     csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
@@ -2102,6 +2141,9 @@ async def rolepanel_create_post(
     # Convert use_embed to boolean
     use_embed_bool = use_embed == "1"
 
+    # Convert remove_reaction to boolean (only effective for reaction panels)
+    remove_reaction_bool = remove_reaction == "1" and panel_type == "reaction"
+
     # Validation helper
     def error_response(error: str) -> HTMLResponse:
         return HTMLResponse(
@@ -2113,6 +2155,7 @@ async def rolepanel_create_post(
                 title=title,
                 description=description,
                 use_embed=use_embed_bool,
+                remove_reaction=remove_reaction_bool,
                 guilds_map=guilds_map,
                 channels_map=channels_map,
                 discord_roles=discord_roles,
@@ -2150,6 +2193,7 @@ async def rolepanel_create_post(
     item_emojis = form_data.getlist("item_emoji[]")
     item_role_ids = form_data.getlist("item_role_id[]")
     item_labels = form_data.getlist("item_label[]")
+    item_styles = form_data.getlist("item_style[]")
     item_positions = form_data.getlist("item_position[]")
 
     # Validate at least one role item
@@ -2160,13 +2204,26 @@ async def rolepanel_create_post(
     role_items_data: list[dict[str, str | int | None]] = []
     seen_emojis: set[str] = set()
 
-    for i, (emoji, role_id, label, position) in enumerate(
-        zip(item_emojis, item_role_ids, item_labels, item_positions, strict=False)
-    ):
+    # Pad item_styles to match the length of other lists
+    while len(item_styles) < len(item_emojis):
+        item_styles.append("secondary")
+
+    valid_styles = {"primary", "secondary", "success", "danger"}
+
+    items_zip = zip(
+        item_emojis,
+        item_role_ids,
+        item_labels,
+        item_styles,
+        item_positions,
+        strict=False,
+    )
+    for i, (emoji, role_id, label, style, position) in enumerate(items_zip):
         # Trim values
         emoji = str(emoji).strip()
         role_id = str(role_id).strip()
         label = str(label).strip()
+        style = str(style).strip()
         position_str = str(position).strip()
 
         # Validate emoji
@@ -2193,6 +2250,10 @@ async def rolepanel_create_post(
         if label and len(label) > 80:
             return error_response(f"Role item {i + 1}: Label must be 80 chars or less")
 
+        # Validate style
+        if style not in valid_styles:
+            style = "secondary"
+
         # Parse position
         try:
             pos = int(position_str) if position_str else i
@@ -2204,6 +2265,7 @@ async def rolepanel_create_post(
                 "emoji": emoji,
                 "role_id": role_id,
                 "label": label if label else None,
+                "style": style,
                 "position": pos,
             }
         )
@@ -2218,6 +2280,7 @@ async def rolepanel_create_post(
             title=title,
             description=description if description else None,
             use_embed=use_embed_bool,
+            remove_reaction=remove_reaction_bool,
         )
         db.add(panel)
         await db.flush()  # Get the panel ID without committing
@@ -2229,7 +2292,7 @@ async def rolepanel_create_post(
                 role_id=str(item_data["role_id"]),
                 emoji=normalize_emoji(str(item_data["emoji"])),
                 label=item_data["label"] if item_data["label"] else None,
-                style="secondary",
+                style=str(item_data.get("style") or "secondary"),
                 position=int(item_data["position"]) if item_data["position"] else 0,
             )
             db.add(item)
@@ -2300,6 +2363,88 @@ async def rolepanel_detail(
     )
 
 
+@app.post("/rolepanels/{panel_id}/post", response_model=None)
+async def rolepanel_post_to_discord(
+    request: Request,
+    panel_id: int,
+    csrf_token: Annotated[str, Form()] = "",
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Post role panel to Discord channel."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(
+            url=f"/rolepanels/{panel_id}?success=Invalid+security+token",
+            status_code=302,
+        )
+
+    # クールタイムチェック
+    user_email = user.get("email", "")
+    path = str(request.url.path)
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(
+            url=f"/rolepanels/{panel_id}?success=Please+wait+before+posting+again",
+            status_code=302,
+        )
+
+    # パネルを取得
+    result = await db.execute(
+        select(RolePanel)
+        .options(selectinload(RolePanel.items))
+        .where(RolePanel.id == panel_id)
+    )
+    panel = result.scalar_one_or_none()
+    if not panel:
+        return RedirectResponse(url="/rolepanels", status_code=302)
+
+    # 既に投稿済みの場合はエラー
+    if panel.message_id:
+        return RedirectResponse(
+            url=f"/rolepanels/{panel_id}?success=Panel+is+already+posted",
+            status_code=302,
+        )
+
+    items = sorted(panel.items, key=lambda x: x.position)
+
+    # Discord に投稿
+    success, message_id, error_msg = await post_role_panel_to_discord(panel, items)
+
+    if not success:
+        error_encoded = (error_msg or "Unknown error").replace(" ", "+")
+        return RedirectResponse(
+            url=f"/rolepanels/{panel_id}?success=Failed:+{error_encoded}",
+            status_code=302,
+        )
+
+    # メッセージ ID を保存
+    panel.message_id = message_id
+    await db.commit()
+
+    # リアクション式の場合はリアクションを追加
+    if panel.panel_type == "reaction" and items and message_id:
+        react_success, react_error = await add_reactions_to_message(
+            panel.channel_id, message_id, items
+        )
+        if not react_success:
+            # リアクション追加失敗は警告のみ
+            return RedirectResponse(
+                url=f"/rolepanels/{panel_id}?success=Posted+but+reactions+failed:+{react_error}",
+                status_code=302,
+            )
+
+    # クールタイム記録
+    record_form_submit(user_email, path)
+
+    return RedirectResponse(
+        url=f"/rolepanels/{panel_id}?success=Posted+to+Discord",
+        status_code=302,
+    )
+
+
 @app.post("/rolepanels/{panel_id}/items/add", response_model=None)
 async def rolepanel_add_item(
     request: Request,
@@ -2307,6 +2452,7 @@ async def rolepanel_add_item(
     emoji: Annotated[str, Form()] = "",
     role_id: Annotated[str, Form()] = "",
     label: Annotated[str, Form()] = "",
+    style: Annotated[str, Form()] = "secondary",
     position: Annotated[int, Form()] = 0,
     csrf_token: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(get_current_user),
@@ -2422,6 +2568,11 @@ async def rolepanel_add_item(
         if item.emoji == normalized_emoji:
             return error_response(f"Emoji '{emoji}' is already used in this panel")
 
+    # Validate style
+    valid_styles = {"primary", "secondary", "success", "danger"}
+    if style not in valid_styles:
+        style = "secondary"
+
     # 二重ロック: 同じパネルへの同時アイテム追加を防止
     async with get_resource_lock(f"rolepanel:add_item:{panel_id}"):
         # Create the item
@@ -2430,7 +2581,7 @@ async def rolepanel_add_item(
             role_id=role_id,
             emoji=normalized_emoji,
             label=label if label else None,
-            style="secondary",
+            style=style,
             position=position,
         )
         db.add(item)

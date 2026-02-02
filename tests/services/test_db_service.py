@@ -2191,6 +2191,30 @@ class TestRolePanelOperations:
         assert updated.description == "Updated description"
         assert updated.color == 0x00FF00
 
+    async def test_update_role_panel_remove_reaction(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test updating a role panel's remove_reaction flag."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="reaction",
+            title="Reaction Panel",
+            remove_reaction=False,
+        )
+
+        assert panel.remove_reaction is False
+
+        updated = await update_role_panel(db_session, panel, remove_reaction=True)
+
+        assert updated.remove_reaction is True
+
+        # Toggle back
+        updated2 = await update_role_panel(db_session, panel, remove_reaction=False)
+
+        assert updated2.remove_reaction is False
+
     async def test_delete_role_panel(self, db_session: AsyncSession) -> None:
         """Test deleting a role panel."""
         panel = await create_role_panel(
@@ -2504,6 +2528,36 @@ class TestRolePanelItemOperations:
         )
 
         assert item.label == "ゲーマー"
+
+    async def test_add_role_panel_item_with_all_styles(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test adding items with all valid button styles."""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        styles = ["primary", "secondary", "success", "danger"]
+        emojis = ["🔵", "⚪", "🟢", "🔴"]
+
+        for style, emoji in zip(styles, emojis, strict=False):
+            item = await add_role_panel_item(
+                db_session,
+                panel_id=panel.id,
+                role_id=f"111{style}",
+                emoji=emoji,
+                style=style,
+            )
+            assert item.style == style
+
+        # Verify all items are saved
+        items = await get_role_panel_items(db_session, panel.id)
+        assert len(items) == 4
+        assert {item.style for item in items} == set(styles)
 
 
 # =============================================================================

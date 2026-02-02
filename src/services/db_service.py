@@ -1223,6 +1223,7 @@ async def update_role_panel(
     title: str | None = None,
     description: str | None = None,
     color: int | None = None,
+    remove_reaction: bool | None = None,
 ) -> RolePanel:
     """ロールパネルを更新する。
 
@@ -1235,6 +1236,7 @@ async def update_role_panel(
         title: 新しいタイトル
         description: 新しい説明文
         color: 新しい色
+        remove_reaction: リアクション自動削除フラグ
 
     Returns:
         更新後の RolePanel
@@ -1247,6 +1249,8 @@ async def update_role_panel(
         panel.description = description
     if color is not None:
         panel.color = color
+    if remove_reaction is not None:
+        panel.remove_reaction = remove_reaction
 
     await session.commit()
     await session.refresh(panel)

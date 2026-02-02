@@ -908,9 +908,9 @@ class TestRolePanelDetailPage:
     def test_button_panel_empty_items_has_correct_colspan(
         self, button_panel: RolePanel
     ) -> None:
-        """ボタン式パネルの空テーブルは colspan=5 (Label カラムあり)。"""
+        """ボタン式パネルの空テーブルは colspan=6 (Label + Style カラムあり)。"""
         result = role_panel_detail_page(button_panel, [])
-        assert 'colspan="5"' in result
+        assert 'colspan="6"' in result
 
     def test_role_with_zero_color_uses_default(self, button_panel: RolePanel) -> None:
         """color=0 のロールはデフォルト色で表示される。"""

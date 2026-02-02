@@ -4617,6 +4617,299 @@ class TestRolePanelReactionTypeEdgeCases:
 
 
 # ===========================================================================
+# Role Panel Remove Reaction Toggle ルート
+# ===========================================================================
+
+
+class TestRolePanelToggleRemoveReaction:
+    """toggle-remove-reaction エンドポイントのテスト。"""
+
+    async def test_toggle_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.post(
+            "/rolepanels/1/toggle-remove-reaction",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_toggle_enables_remove_reaction(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """False -> True にトグルできる。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Reaction Panel",
+            remove_reaction=False,
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/toggle-remove-reaction",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(panel)
+        assert panel.remove_reaction is True
+
+    async def test_toggle_disables_remove_reaction(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """True -> False にトグルできる。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Reaction Panel",
+            remove_reaction=True,
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/toggle-remove-reaction",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(panel)
+        assert panel.remove_reaction is False
+
+    async def test_toggle_only_affects_reaction_panels(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """ボタン式パネルでは toggle は効果なし。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",  # ボタン式
+            title="Button Panel",
+            remove_reaction=False,
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/toggle-remove-reaction",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(panel)
+        # ボタン式なので変化なし
+        assert panel.remove_reaction is False
+
+    async def test_toggle_shows_in_detail_page(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """詳細ページに Auto-remove トグルボタンが表示される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Reaction Panel",
+            remove_reaction=True,
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert response.status_code == 200
+        assert "Auto-remove:" in response.text
+        assert "Enabled" in response.text
+        assert "toggle-remove-reaction" in response.text
+
+
+# ===========================================================================
+# Role Panel Item Style テスト
+# ===========================================================================
+
+
+class TestRolePanelItemStyle:
+    """アイテムのスタイル (ボタン色) のテスト。"""
+
+    async def test_add_item_with_style(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """アイテム追加時にスタイルを指定できる。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Button Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={
+                "emoji": "🎮",
+                "role_id": "111222333444555666",
+                "label": "Game",
+                "style": "success",
+                "position": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        # アイテムが追加されたことを確認
+        from sqlalchemy import select
+
+        result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == panel.id)
+        )
+        item = result.scalar_one()
+        assert item.style == "success"
+
+    async def test_add_item_invalid_style_defaults_to_secondary(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """無効なスタイルは secondary にフォールバック。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Button Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={
+                "emoji": "🎮",
+                "role_id": "111222333444555666",
+                "label": "Game",
+                "style": "invalid_style",
+                "position": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        from sqlalchemy import select
+
+        result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == panel.id)
+        )
+        item = result.scalar_one()
+        assert item.style == "secondary"
+
+    async def test_detail_page_shows_style(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """詳細ページにスタイルが表示される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Button Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="111222333444555666",
+            emoji="🎮",
+            label="Game",
+            style="danger",
+            position=0,
+        )
+        db_session.add(item)
+        await db_session.commit()
+
+        response = await authenticated_client.get(f"/rolepanels/{panel.id}")
+        assert response.status_code == 200
+        # danger スタイルは Red で表示される
+        assert "Red" in response.text
+
+    async def test_create_panel_with_item_style(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """パネル作成時にアイテムのスタイルを指定できる。"""
+        # DiscordGuild を追加 (チャンネル検証用)
+        from src.database.models import DiscordChannel, DiscordGuild, DiscordRole
+
+        guild = DiscordGuild(guild_id="123456789012345678", guild_name="Test Guild")
+        db_session.add(guild)
+        await db_session.commit()
+
+        channel = DiscordChannel(
+            channel_id="987654321098765432",
+            guild_id="123456789012345678",
+            channel_name="test-channel",
+            channel_type=0,
+        )
+        db_session.add(channel)
+
+        role = DiscordRole(
+            role_id="111222333444555666",
+            guild_id="123456789012345678",
+            role_name="Test Role",
+            color=0xFF0000,
+        )
+        db_session.add(role)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "Test Panel",
+                "description": "",
+                "use_embed": "1",
+                "remove_reaction": "",
+                "item_emoji[]": "🎮",
+                "item_role_id[]": "111222333444555666",
+                "item_label[]": "Test",
+                "item_style[]": "primary",
+                "item_position[]": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        # アイテムのスタイルが primary であることを確認
+        from sqlalchemy import select
+
+        result = await db_session.execute(select(RolePanelItem))
+        item = result.scalar_one()
+        assert item.style == "primary"
+
+
+# ===========================================================================
 # Role Panel Item Add ルート 結合テスト
 # ===========================================================================
 
