@@ -7281,3 +7281,577 @@ class TestFormCooldownFunctions:
 
         # 古いエントリは削除される
         assert key not in app_module.FORM_SUBMIT_TIMES
+
+
+# ===========================================================================
+# Role Panel Post to Discord ルート 結合テスト
+# ===========================================================================
+
+
+class TestRolePanelPostToDiscord:
+    """ロールパネルをDiscordに投稿するエンドポイントのテスト。"""
+
+    async def test_post_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.post(
+            "/rolepanels/1/post",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_post_nonexistent_panel(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """存在しないパネルへの投稿は一覧にリダイレクト。"""
+        response = await authenticated_client.post(
+            "/rolepanels/99999/post",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/rolepanels"
+
+    async def test_post_already_posted_panel(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """既に投稿済みのパネルは再投稿できない。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Already Posted",
+            message_id="111111111111111111",  # 投稿済み
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/post",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "already+posted" in response.headers["location"].lower()
+
+    async def test_post_success(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Discord への投稿成功時はメッセージIDが保存される。"""
+        from unittest.mock import AsyncMock
+
+        import src.web.app as app_module
+
+        # Discord API をモック
+        monkeypatch.setattr(
+            app_module,
+            "post_role_panel_to_discord",
+            AsyncMock(return_value=(True, "222222222222222222", None)),
+        )
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/post",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "success=Posted" in response.headers["location"]
+
+        # メッセージIDが保存されていることを確認
+        await db_session.refresh(panel)
+        assert panel.message_id == "222222222222222222"
+
+    async def test_post_failure(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Discord API エラー時はエラーメッセージを表示。"""
+        from unittest.mock import AsyncMock
+
+        import src.web.app as app_module
+
+        # Discord API をモック (失敗)
+        monkeypatch.setattr(
+            app_module,
+            "post_role_panel_to_discord",
+            AsyncMock(return_value=(False, None, "Bot lacks permissions")),
+        )
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/post",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "Failed" in response.headers["location"]
+
+    async def test_post_reaction_panel_with_reactions(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """リアクション式パネル投稿後にリアクションが追加される。"""
+        from unittest.mock import AsyncMock
+
+        import src.web.app as app_module
+
+        # Discord API をモック
+        monkeypatch.setattr(
+            app_module,
+            "post_role_panel_to_discord",
+            AsyncMock(return_value=(True, "333333333333333333", None)),
+        )
+        monkeypatch.setattr(
+            app_module,
+            "add_reactions_to_message",
+            AsyncMock(return_value=(True, None)),
+        )
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",  # リアクション式
+            title="Test Reaction Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        # アイテムを追加
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="444444444444444444",
+            emoji="⭐",
+            position=0,
+        )
+        db_session.add(item)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/post",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "success=Posted" in response.headers["location"]
+
+        # add_reactions_to_message が呼ばれたことを確認
+        app_module.add_reactions_to_message.assert_called_once()
+
+    async def test_post_reaction_panel_with_reaction_failure(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """リアクション追加失敗時は警告メッセージを表示。"""
+        from unittest.mock import AsyncMock
+
+        import src.web.app as app_module
+
+        # Discord API をモック
+        monkeypatch.setattr(
+            app_module,
+            "post_role_panel_to_discord",
+            AsyncMock(return_value=(True, "333333333333333333", None)),
+        )
+        monkeypatch.setattr(
+            app_module,
+            "add_reactions_to_message",
+            AsyncMock(return_value=(False, "Rate limited")),
+        )
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Test Reaction Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="444444444444444444",
+            emoji="⭐",
+            position=0,
+        )
+        db_session.add(item)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/post",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "reactions+failed" in response.headers["location"].lower()
+
+    async def test_post_cooldown_active(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """クールタイム中は投稿できない。"""
+        from src.web.app import record_form_submit
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        # クールタイムを記録
+        record_form_submit("test@example.com", f"/rolepanels/{panel.id}/post")
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/post",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "wait" in response.headers["location"].lower()
+
+
+# ===========================================================================
+# Role Panel Item CSRF / Cooldown テスト
+# ===========================================================================
+
+
+class TestRolePanelItemCsrfAndCooldown:
+    """ロールアイテム操作の CSRF とクールダウンのテスト。"""
+
+    async def test_add_item_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+        db_session: AsyncSession,
+    ) -> None:
+        """CSRF トークン検証失敗時はエラーを返す。"""
+        # CSRF 検証をモックしない (テストで有効化)
+        from unittest.mock import patch
+
+        from src.web.app import generate_csrf_token
+
+        # ログイン
+        csrf_token = generate_csrf_token()
+        login_response = await client.post(
+            "/login",
+            data={
+                "email": TEST_ADMIN_EMAIL,
+                "password": TEST_ADMIN_PASSWORD,
+                "csrf_token": csrf_token,
+            },
+            follow_redirects=False,
+        )
+        client.cookies.set("session", login_response.cookies.get("session") or "")
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                f"/rolepanels/{panel.id}/items/add",
+                data={
+                    "emoji": "⭐",
+                    "role_id": "111222333444555666",
+                    "csrf_token": "invalid_token",
+                },
+                follow_redirects=False,
+            )
+        assert response.status_code == 403
+        assert "Invalid security token" in response.text
+
+    async def test_add_item_cooldown_active(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """クールタイム中はアイテム追加できない。"""
+        from src.web.app import record_form_submit
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        # クールタイムを記録
+        record_form_submit("test@example.com", f"/rolepanels/{panel.id}/items/add")
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={
+                "emoji": "⭐",
+                "role_id": "111222333444555666",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 429
+        assert "Please wait" in response.text
+
+    async def test_delete_item_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+        db_session: AsyncSession,
+    ) -> None:
+        """CSRF トークン検証失敗時はリダイレクト。"""
+        from unittest.mock import patch
+
+        from src.web.app import generate_csrf_token
+
+        # ログイン
+        csrf_token = generate_csrf_token()
+        login_response = await client.post(
+            "/login",
+            data={
+                "email": TEST_ADMIN_EMAIL,
+                "password": TEST_ADMIN_PASSWORD,
+                "csrf_token": csrf_token,
+            },
+            follow_redirects=False,
+        )
+        client.cookies.set("session", login_response.cookies.get("session") or "")
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="111222333444555666",
+            emoji="⭐",
+            position=0,
+        )
+        db_session.add(item)
+        await db_session.commit()
+        await db_session.refresh(item)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                f"/rolepanels/{panel.id}/items/{item.id}/delete",
+                data={"csrf_token": "invalid_token"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert f"/rolepanels/{panel.id}" in response.headers["location"]
+
+        # アイテムが削除されていないことを確認
+        result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.id == item.id)
+        )
+        assert result.scalar_one_or_none() is not None
+
+    async def test_delete_item_cooldown_active(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """クールタイム中はアイテム削除がスキップされる。"""
+        from src.web.app import record_form_submit
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="111222333444555666",
+            emoji="⭐",
+            position=0,
+        )
+        db_session.add(item)
+        await db_session.commit()
+        await db_session.refresh(item)
+
+        # クールタイムを記録
+        record_form_submit(
+            "test@example.com", f"/rolepanels/{panel.id}/items/{item.id}/delete"
+        )
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/{item.id}/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        # アイテムが削除されていないことを確認
+        result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.id == item.id)
+        )
+        assert result.scalar_one_or_none() is not None
+
+
+# ===========================================================================
+# Role Panel Item Duplicate Emoji テスト
+# ===========================================================================
+
+
+class TestRolePanelItemDuplicateEmoji:
+    """同じ絵文字のアイテム追加時のエラーハンドリングテスト。"""
+
+    async def test_add_duplicate_emoji_returns_error(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """同じ絵文字は追加できない (IntegrityError)。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        # 最初のアイテムを追加
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="111222333444555666",
+            emoji="⭐",
+            position=0,
+        )
+        db_session.add(item)
+        await db_session.commit()
+
+        # 同じ絵文字で2つ目のアイテムを追加しようとする
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={
+                "emoji": "⭐",
+                "role_id": "222333444555666777",
+                "position": "1",
+            },
+            follow_redirects=False,
+        )
+        # IntegrityError がキャッチされエラーレスポンスが返される
+        assert response.status_code == 200
+        assert "already used" in response.text
+
+
+# ===========================================================================
+# Role Panel Get Known Roles by Guild テスト
+# ===========================================================================
+
+
+class TestGetKnownRolesByGuild:
+    """_get_known_roles_by_guild 関数のテスト。"""
+
+    async def test_returns_role_ids_grouped_by_guild(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """ギルドごとにロールIDがグループ化される。"""
+        from src.web.app import _get_known_roles_by_guild
+
+        # 2つのギルドに属するパネルとアイテムを作成
+        panel1 = RolePanel(
+            guild_id="111111111111111111",
+            channel_id="123456789012345678",
+            panel_type="button",
+            title="Guild 1 Panel",
+        )
+        panel2 = RolePanel(
+            guild_id="222222222222222222",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Guild 2 Panel",
+        )
+        db_session.add_all([panel1, panel2])
+        await db_session.commit()
+        await db_session.refresh(panel1)
+        await db_session.refresh(panel2)
+
+        # アイテムを追加
+        items = [
+            RolePanelItem(
+                panel_id=panel1.id,
+                role_id="role_a",
+                emoji="⭐",
+                position=0,
+            ),
+            RolePanelItem(
+                panel_id=panel1.id,
+                role_id="role_b",
+                emoji="🎮",
+                position=1,
+            ),
+            RolePanelItem(
+                panel_id=panel2.id,
+                role_id="role_c",
+                emoji="🎵",
+                position=0,
+            ),
+        ]
+        db_session.add_all(items)
+        await db_session.commit()
+
+        result = await _get_known_roles_by_guild(db_session)
+
+        assert "111111111111111111" in result
+        assert "222222222222222222" in result
+        assert sorted(result["111111111111111111"]) == ["role_a", "role_b"]
+        assert result["222222222222222222"] == ["role_c"]
+
+    async def test_returns_empty_dict_when_no_items(
+        self,
+        db_session: AsyncSession,
+    ) -> None:
+        """アイテムがない場合は空の辞書を返す。"""
+        from src.web.app import _get_known_roles_by_guild
+
+        result = await _get_known_roles_by_guild(db_session)
+        assert result == {}

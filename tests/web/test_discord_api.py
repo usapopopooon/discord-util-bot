@@ -272,6 +272,62 @@ class TestCreateComponentsPayload:
         button = result[0]["components"][0]
         assert button["emoji"]["animated"] is True
 
+    def test_unicode_emoji_in_button(self) -> None:
+        """Unicode 絵文字がボタンに設定される。"""
+        panel = RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+        items = [
+            RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮"),
+        ]
+        result = _create_components_payload(panel, items)
+
+        button = result[0]["components"][0]
+        assert button["emoji"]["name"] == "🎮"
+
+    def test_malformed_custom_emoji_no_crash(self) -> None:
+        """不正なカスタム絵文字形式でもクラッシュしない。"""
+        panel = RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+        # パーツが3未満の不正な形式
+        items = [
+            RolePanelItem(id=1, panel_id=1, role_id="111", emoji="<:bad>"),
+        ]
+        result = _create_components_payload(panel, items)
+
+        # クラッシュせずにボタンが作成される (emoji キーなし)
+        assert len(result) == 1
+        button = result[0]["components"][0]
+        assert "emoji" not in button
+
+    def test_button_without_label_or_emoji(self) -> None:
+        """ラベルも絵文字もないボタンが作成できる。"""
+        panel = RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+        items = [
+            RolePanelItem(id=1, panel_id=1, role_id="111", emoji=None, label=None),
+        ]
+        result = _create_components_payload(panel, items)
+
+        assert len(result) == 1
+        button = result[0]["components"][0]
+        assert "label" not in button
+        assert "emoji" not in button
+
 
 # ===========================================================================
 # Discord API 投稿テスト
@@ -424,6 +480,95 @@ class TestPostRolePanelToDiscord:
         assert success is False
         assert "タイムアウト" in error
 
+    async def test_unauthorized_error(
+        self,
+        panel: RolePanel,
+        items: list[RolePanelItem],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """401 エラー時はトークン無効エラーを返す。"""
+        from unittest.mock import MagicMock
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.content = b'{"message": "Unauthorized"}'
+        mock_response.json.return_value = {"message": "Unauthorized"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+                return_value=mock_response
+            )
+
+            success, message_id, error = await post_role_panel_to_discord(panel, items)
+
+        assert success is False
+        assert "トークン" in error
+
+    async def test_request_error(
+        self,
+        panel: RolePanel,
+        items: list[RolePanelItem],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """RequestError 時は接続エラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post.side_effect = (
+                httpx.RequestError("Connection failed")
+            )
+
+            success, message_id, error = await post_role_panel_to_discord(panel, items)
+
+        assert success is False
+        assert "接続" in error
+
+    async def test_post_without_embed(
+        self,
+        items: list[RolePanelItem],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """use_embed=False でテキストメッセージを投稿できる。"""
+        from unittest.mock import MagicMock
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        panel = RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+            description="Test",
+            use_embed=False,  # Embed を使わない
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "999888777"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_post = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.post = mock_post
+
+            success, message_id, error = await post_role_panel_to_discord(panel, items)
+
+        assert success is True
+        assert message_id == "999888777"
+        # content がペイロードに含まれることを確認
+        call_args = mock_post.call_args
+        payload = call_args.kwargs.get("json", {})
+        assert "content" in payload
+        assert "embeds" not in payload
+
 
 # ===========================================================================
 # リアクション追加テスト
@@ -481,3 +626,100 @@ class TestAddReactionsToMessage:
 
         assert success is True
         assert error is None
+
+    async def test_custom_emoji_reaction(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """カスタム絵文字のリアクションを追加できる。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 204
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_put = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.put = mock_put
+
+            items = [
+                RolePanelItem(id=1, panel_id=1, role_id="111", emoji="<:custom:123456>")
+            ]
+            success, error = await add_reactions_to_message("123", "456", items)
+
+        assert success is True
+        # URL にカスタム絵文字がエンコードされていることを確認
+        call_args = mock_put.call_args
+        url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
+        assert "custom:123456" in url
+
+    async def test_reaction_error_continues(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """リアクション追加エラーが発生しても他のリアクションは続行する。"""
+        from unittest.mock import MagicMock
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        # 最初は失敗、次は成功
+        error_response = MagicMock()
+        error_response.status_code = 400
+        error_response.content = b'{"message": "Bad emoji"}'
+        error_response.json.return_value = {"message": "Bad emoji"}
+
+        success_response = MagicMock()
+        success_response.status_code = 204
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_put = AsyncMock(side_effect=[error_response, success_response])
+            mock_client.return_value.__aenter__.return_value.put = mock_put
+
+            items = [
+                RolePanelItem(id=1, panel_id=1, role_id="111", emoji="bad"),
+                RolePanelItem(id=2, panel_id=1, role_id="222", emoji="🎮"),
+            ]
+            success, error = await add_reactions_to_message("123", "456", items)
+
+        # 部分的な失敗でも全体としては成功
+        assert success is True
+        assert error is None
+        # 2回呼ばれた
+        assert mock_put.call_count == 2
+
+    async def test_reaction_timeout_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """リアクション追加時のタイムアウトエラー。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.put.side_effect = (
+                httpx.TimeoutException("timeout")
+            )
+
+            items = [RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮")]
+            success, error = await add_reactions_to_message("123", "456", items)
+
+        assert success is False
+        assert "タイムアウト" in error
+
+    async def test_reaction_request_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """リアクション追加時の接続エラー。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.put.side_effect = (
+                httpx.RequestError("Connection failed")
+            )
+
+            items = [RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮")]
+            success, error = await add_reactions_to_message("123", "456", items)
+
+        assert success is False
+        assert "接続" in error

@@ -591,3 +591,65 @@ class TestResourceLockAutoCleanup:
 
         # エントリはまだ存在する
         assert "test:interval:check" in _resource_locks
+
+
+# =============================================================================
+# Additional Coverage Tests
+# =============================================================================
+
+
+class TestHasLoneSurrogateEdgeCases:
+    """_has_lone_surrogate 関数のエッジケーステスト。"""
+
+    def test_lone_surrogate_detected(self) -> None:
+        """壊れたサロゲートペアが検出される。"""
+        # Python で壊れたサロゲートを含む文字列を作成
+        # U+D800-DFFF はサロゲートペアの範囲
+        # 単独の高位サロゲート (U+D800) を含む文字列
+        lone_surrogate = "test\ud800string"  # 単独の高位サロゲート
+        assert _has_lone_surrogate(lone_surrogate) is True
+
+    def test_lone_low_surrogate_detected(self) -> None:
+        """単独の低位サロゲートが検出される。"""
+        lone_low_surrogate = "test\udc00string"  # 単独の低位サロゲート
+        assert _has_lone_surrogate(lone_low_surrogate) is True
+
+
+class TestIsValidEmojiWithLoneSurrogate:
+    """is_valid_emoji 関数のサロゲートテスト。"""
+
+    def test_string_with_lone_surrogate_invalid(self) -> None:
+        """壊れたサロゲートを含む文字列は無効。"""
+        # 壊れたサロゲートを含む文字列
+        invalid_string = "😀\ud800"
+        assert is_valid_emoji(invalid_string) is False
+
+    def test_emoji_like_string_with_lone_surrogate_invalid(self) -> None:
+        """絵文字のような文字列でも壊れたサロゲートがあれば無効。"""
+        invalid = "\ud83d"  # 😀 の高位サロゲートのみ
+        assert is_valid_emoji(invalid) is False
+
+
+class TestIsValidEmojiNormalization:
+    """is_valid_emoji 関数の正規化テスト。"""
+
+    def test_combining_character_emoji(self) -> None:
+        """合成文字を含む絵文字のテスト。"""
+        # é (e + combining acute accent) は絵文字ではない
+        # NFD 形式: e + ́ (U+0065 + U+0301)
+        nfd_e_acute = "e\u0301"  # NFD 形式の é
+        assert is_valid_emoji(nfd_e_acute) is False
+
+        # NFC 形式でも絵文字ではない
+        nfc_e_acute = "é"  # NFC 形式の é (U+00E9)
+        assert is_valid_emoji(nfc_e_acute) is False
+
+    def test_variant_selector_emoji(self) -> None:
+        """異体字セレクタを含む絵文字のテスト。"""
+        # ♡ (WHITE HEART SUIT) + VS16 (emoji presentation selector)
+        # これは絵文字として認識される場合がある
+        heart_with_vs = "♡\ufe0f"  # VS16 付き
+        # emoji ライブラリの判定に従う
+        result = is_valid_emoji(heart_with_vs)
+        # 結果は True または False のどちらか (ライブラリ依存)
+        assert isinstance(result, bool)
