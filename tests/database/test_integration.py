@@ -600,6 +600,245 @@ class TestVoiceSessionMemberManagement:
         assert len(members) == 0
 
 
+class TestLockStateIntegration:
+    """ロック状態の統合テスト。"""
+
+    async def test_lock_state_isolation_between_sessions(
+        self, db_session: AsyncSession
+    ) -> None:
+        """異なるセッション間でロック状態が分離されている。"""
+        lobby = await create_lobby(
+            db_session,
+            guild_id=snowflake(),
+            lobby_channel_id=snowflake(),
+        )
+
+        # 3つのセッションを作成
+        ch1, ch2, ch3 = snowflake(), snowflake(), snowflake()
+        _vs1 = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=ch1,
+            owner_id=snowflake(),
+            name="session1",
+        )
+        vs2 = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=ch2,
+            owner_id=snowflake(),
+            name="session2",
+        )
+        _vs3 = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=ch3,
+            owner_id=snowflake(),
+            name="session3",
+        )
+
+        # vs2 のみロック
+        await update_voice_session(db_session, vs2, is_locked=True)
+
+        # 各セッションのロック状態を確認
+        s1 = await get_voice_session(db_session, ch1)
+        s2 = await get_voice_session(db_session, ch2)
+        s3 = await get_voice_session(db_session, ch3)
+
+        assert s1 is not None and s1.is_locked is False
+        assert s2 is not None and s2.is_locked is True
+        assert s3 is not None and s3.is_locked is False
+
+    async def test_lock_persists_through_other_updates(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ロック後に他のフィールドを更新してもロック状態が維持される。"""
+        lobby = await create_lobby(
+            db_session,
+            guild_id=snowflake(),
+            lobby_channel_id=snowflake(),
+        )
+        ch_id = snowflake()
+        vs = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=ch_id,
+            owner_id=snowflake(),
+            name="original",
+        )
+
+        # ロック
+        await update_voice_session(db_session, vs, is_locked=True)
+
+        # 名前変更
+        reloaded = await get_voice_session(db_session, ch_id)
+        assert reloaded is not None
+        await update_voice_session(db_session, reloaded, name="renamed")
+
+        # ロック状態は維持
+        final = await get_voice_session(db_session, ch_id)
+        assert final is not None
+        assert final.name == "renamed"
+        assert final.is_locked is True
+
+    async def test_lock_unlock_with_member_operations(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ロック/アンロック操作はメンバー管理に影響しない。"""
+        lobby = await create_lobby(
+            db_session,
+            guild_id=snowflake(),
+            lobby_channel_id=snowflake(),
+        )
+        ch_id = snowflake()
+        vs = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=ch_id,
+            owner_id=snowflake(),
+            name="test",
+        )
+
+        # メンバー追加
+        m1, m2 = snowflake(), snowflake()
+        await add_voice_session_member(db_session, vs.id, m1)
+        await add_voice_session_member(db_session, vs.id, m2)
+
+        # ロック
+        reloaded = await get_voice_session(db_session, ch_id)
+        assert reloaded is not None
+        await update_voice_session(db_session, reloaded, is_locked=True)
+
+        # メンバーは影響を受けない
+        members = await get_voice_session_members_ordered(db_session, vs.id)
+        assert len(members) == 2
+
+        # アンロック後もメンバーは維持
+        reloaded2 = await get_voice_session(db_session, ch_id)
+        assert reloaded2 is not None
+        await update_voice_session(db_session, reloaded2, is_locked=False)
+
+        members = await get_voice_session_members_ordered(db_session, vs.id)
+        assert len(members) == 2
+
+    async def test_multiple_sessions_mixed_lock_hidden_states(
+        self, db_session: AsyncSession
+    ) -> None:
+        """異なるロック/非表示状態のセッションが共存できる。"""
+        lobby = await create_lobby(
+            db_session,
+            guild_id=snowflake(),
+            lobby_channel_id=snowflake(),
+        )
+
+        sessions = []
+        for i in range(4):
+            ch_id = snowflake()
+            vs = await create_voice_session(
+                db_session,
+                lobby_id=lobby.id,
+                channel_id=ch_id,
+                owner_id=snowflake(),
+                name=f"session{i}",
+            )
+            sessions.append((ch_id, vs))
+
+        # 各セッションに異なる状態を設定
+        # session0: 通常
+        # session1: ロックのみ
+        await update_voice_session(db_session, sessions[1][1], is_locked=True)
+        # session2: 非表示のみ
+        await update_voice_session(db_session, sessions[2][1], is_hidden=True)
+        # session3: ロック＋非表示
+        await update_voice_session(
+            db_session, sessions[3][1], is_locked=True, is_hidden=True
+        )
+
+        # 各状態を確認
+        s0 = await get_voice_session(db_session, sessions[0][0])
+        s1 = await get_voice_session(db_session, sessions[1][0])
+        s2 = await get_voice_session(db_session, sessions[2][0])
+        s3 = await get_voice_session(db_session, sessions[3][0])
+
+        assert s0 is not None
+        assert s0.is_locked is False and s0.is_hidden is False
+        assert s1 is not None
+        assert s1.is_locked is True and s1.is_hidden is False
+        assert s2 is not None
+        assert s2.is_locked is False and s2.is_hidden is True
+        assert s3 is not None
+        assert s3.is_locked is True and s3.is_hidden is True
+
+    async def test_lock_state_after_owner_transfer(
+        self, db_session: AsyncSession
+    ) -> None:
+        """オーナー譲渡後もロック状態が維持される。"""
+        lobby = await create_lobby(
+            db_session,
+            guild_id=snowflake(),
+            lobby_channel_id=snowflake(),
+        )
+        ch_id = snowflake()
+        original_owner = snowflake()
+        vs = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=ch_id,
+            owner_id=original_owner,
+            name="test",
+        )
+
+        # ロックしてからオーナー譲渡
+        await update_voice_session(db_session, vs, is_locked=True)
+
+        reloaded = await get_voice_session(db_session, ch_id)
+        assert reloaded is not None
+        new_owner = snowflake()
+        await update_voice_session(db_session, reloaded, owner_id=new_owner)
+
+        # ロック状態と新オーナーを確認
+        final = await get_voice_session(db_session, ch_id)
+        assert final is not None
+        assert final.is_locked is True
+        assert final.owner_id == new_owner
+
+    async def test_lobby_deletion_clears_locked_sessions(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ロビー削除時にロック中のセッションも削除される。"""
+        lobby = await create_lobby(
+            db_session,
+            guild_id=snowflake(),
+            lobby_channel_id=snowflake(),
+        )
+
+        ch1, ch2 = snowflake(), snowflake()
+        vs1 = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=ch1,
+            owner_id=snowflake(),
+            name="locked",
+        )
+        await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=ch2,
+            owner_id=snowflake(),
+            name="unlocked",
+        )
+
+        # vs1 をロック
+        await update_voice_session(db_session, vs1, is_locked=True)
+
+        # ロビー削除
+        await delete_lobby(db_session, lobby.id)
+
+        # 両方のセッションが削除されている
+        assert await get_voice_session(db_session, ch1) is None
+        assert await get_voice_session(db_session, ch2) is None
+
+
 class TestBulkOperations:
     """一括操作テスト。"""
 

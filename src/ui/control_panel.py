@@ -17,6 +17,7 @@ discord.py の UI コンポーネント:
   - ephemeral=True: 操作者にだけ見えるメッセージ
 """
 
+import contextlib
 import logging
 from typing import Any
 
@@ -999,6 +1000,10 @@ class ControlPanelView(discord.ui.View):
                         mute_members=True,
                         deafen_members=True,
                     )
+                # チャンネル名の先頭に🔒を追加 (まだない場合のみ)
+                if not channel.name.startswith("🔒"):
+                    with contextlib.suppress(discord.HTTPException):
+                        await channel.edit(name=f"🔒{channel.name}")
                 # ボタンの表示を「解除」に変更
                 button.label = "解除"
                 button.emoji = "🔓"
@@ -1008,6 +1013,10 @@ class ControlPanelView(discord.ui.View):
                 await channel.set_permissions(
                     interaction.guild.default_role, overwrite=None
                 )
+                # チャンネル名の先頭から🔒を削除 (ある場合のみ)
+                if channel.name.startswith("🔒"):
+                    with contextlib.suppress(discord.HTTPException):
+                        await channel.edit(name=channel.name[1:])
                 button.label = "ロック"
                 button.emoji = "🔒"
 

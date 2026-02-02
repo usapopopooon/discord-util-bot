@@ -3013,3 +3013,412 @@ class TestTransferSelectMenuPermissionMigration:
             new_owner,
             read_message_history=True,
         )
+
+
+# ===========================================================================
+# Lock Button Channel Rename Tests
+# ===========================================================================
+
+
+class TestLockButtonChannelRename:
+    """ロック/解除時のチャンネル名変更テスト。"""
+
+    async def test_lock_adds_emoji_prefix(self) -> None:
+        """ロック時にチャンネル名の先頭に🔒が追加される。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "テストチャンネル"
+        interaction.channel.edit = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1", is_locked=False)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        # チャンネル名が🔒付きに変更される
+        interaction.channel.edit.assert_awaited_once_with(name="🔒テストチャンネル")
+
+    async def test_lock_skips_if_already_has_emoji(self) -> None:
+        """すでに🔒がある場合は追加しない。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "🔒テストチャンネル"
+        interaction.channel.edit = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1", is_locked=False)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        # すでに🔒があるので edit は呼ばれない
+        interaction.channel.edit.assert_not_awaited()
+
+    async def test_unlock_removes_emoji_prefix(self) -> None:
+        """解除時にチャンネル名の先頭から🔒が削除される。"""
+        view = ControlPanelView(session_id=1, is_locked=True)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "🔒テストチャンネル"
+        interaction.channel.edit = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1", is_locked=True)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        # チャンネル名から🔒が削除される
+        interaction.channel.edit.assert_awaited_once_with(name="テストチャンネル")
+
+    async def test_unlock_skips_if_no_emoji(self) -> None:
+        """🔒がない場合は削除しない。"""
+        view = ControlPanelView(session_id=1, is_locked=True)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "テストチャンネル"
+        interaction.channel.edit = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1", is_locked=True)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        # 🔒がないので edit は呼ばれない
+        interaction.channel.edit.assert_not_awaited()
+
+    async def test_lock_with_different_emoji_at_start(self) -> None:
+        """先頭に別の絵文字がある場合でも🔒を追加する。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "🎮ゲームチャンネル"
+        interaction.channel.edit = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1", is_locked=False)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        # 別の絵文字の前に🔒が追加される
+        interaction.channel.edit.assert_awaited_once_with(name="🔒🎮ゲームチャンネル")
+
+    async def test_unlock_preserves_other_emoji(self) -> None:
+        """🔒を削除しても他の絵文字は保持される。"""
+        view = ControlPanelView(session_id=1, is_locked=True)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "🔒🎮ゲームチャンネル"
+        interaction.channel.edit = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1", is_locked=True)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        # 🔒のみ削除され、🎮は保持される
+        interaction.channel.edit.assert_awaited_once_with(name="🎮ゲームチャンネル")
+
+
+# ===========================================================================
+# Lock Button Channel Rename Edge Cases
+# ===========================================================================
+
+
+class TestLockButtonChannelRenameEdgeCases:
+    """ロック/解除時のチャンネル名変更エッジケーステスト。"""
+
+    async def test_lock_empty_channel_name(self) -> None:
+        """空のチャンネル名でもロックできる。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = ""
+        interaction.channel.edit = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1", is_locked=False)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        # 空の名前に🔒が追加される
+        interaction.channel.edit.assert_awaited_once_with(name="🔒")
+
+    async def test_unlock_only_lock_emoji(self) -> None:
+        """チャンネル名が🔒のみの場合、空文字になる。"""
+        view = ControlPanelView(session_id=1, is_locked=True)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "🔒"
+        interaction.channel.edit = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1", is_locked=True)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        # 🔒が削除されて空文字になる
+        interaction.channel.edit.assert_awaited_once_with(name="")
+
+    async def test_unlock_does_not_remove_middle_lock_emoji(self) -> None:
+        """🔒が途中にある場合は削除しない。"""
+        view = ControlPanelView(session_id=1, is_locked=True)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "テスト🔒チャンネル"
+        interaction.channel.edit = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1", is_locked=True)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        # 先頭に🔒がないので edit は呼ばれない
+        interaction.channel.edit.assert_not_awaited()
+
+    async def test_lock_channel_edit_error_handled(self) -> None:
+        """channel.edit がエラーでも処理は継続する。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "テストチャンネル"
+        interaction.channel.edit = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "error")
+        )
+        voice_session = _make_voice_session(owner_id="1", is_locked=False)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ) as mock_update,
+        ):
+            # エラーが発生しても例外は投げられない
+            await view.lock_button.callback(interaction)
+
+        # DB更新は行われる（エラーはチャンネル名変更だけ）
+        mock_update.assert_awaited_once()
+
+    async def test_lock_with_spaces_only_name(self) -> None:
+        """スペースのみのチャンネル名でもロックできる。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "   "
+        interaction.channel.edit = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1", is_locked=False)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        # スペースの前に🔒が追加される
+        interaction.channel.edit.assert_awaited_once_with(name="🔒   ")
+
+    async def test_lock_with_unicode_name(self) -> None:
+        """Unicode文字を含むチャンネル名でもロックできる。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "日本語チャンネル🎵"
+        interaction.channel.edit = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1", is_locked=False)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        interaction.channel.edit.assert_awaited_once_with(name="🔒日本語チャンネル🎵")
+
+    async def test_unlock_with_unicode_name(self) -> None:
+        """Unicode文字を含むチャンネル名でも解除できる。"""
+        view = ControlPanelView(session_id=1, is_locked=True)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "🔒日本語チャンネル🎵"
+        interaction.channel.edit = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1", is_locked=True)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        interaction.channel.edit.assert_awaited_once_with(name="日本語チャンネル🎵")
+
+    async def test_lock_multiple_consecutive_locks_ignored(self) -> None:
+        """連続して🔒がある場合は追加しない。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "🔒🔒テスト"
+        interaction.channel.edit = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1", is_locked=False)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        # 既に🔒で始まっているので edit は呼ばれない
+        interaction.channel.edit.assert_not_awaited()
+
+    async def test_unlock_removes_only_first_lock_emoji(self) -> None:
+        """連続した🔒の場合、最初の1つだけ削除される。"""
+        view = ControlPanelView(session_id=1, is_locked=True)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "🔒🔒テスト"
+        interaction.channel.edit = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1", is_locked=True)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        # 最初の🔒のみ削除
+        interaction.channel.edit.assert_awaited_once_with(name="🔒テスト")

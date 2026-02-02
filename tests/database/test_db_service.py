@@ -247,12 +247,34 @@ class TestUpdateVoiceSession:
         updated = await update_voice_session(db_session, voice_session, is_locked=True)
         assert updated.is_locked is True
 
+    async def test_update_is_locked_toggle(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """is_locked をトグルできる (True → False)。"""
+        # まずロック
+        locked = await update_voice_session(db_session, voice_session, is_locked=True)
+        assert locked.is_locked is True
+        # 次にアンロック
+        unlocked = await update_voice_session(db_session, locked, is_locked=False)
+        assert unlocked.is_locked is False
+
     async def test_update_is_hidden(
         self, db_session: AsyncSession, voice_session: VoiceSession
     ) -> None:
         """is_hidden だけ更新できる。"""
         updated = await update_voice_session(db_session, voice_session, is_hidden=True)
         assert updated.is_hidden is True
+
+    async def test_update_is_hidden_toggle(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """is_hidden をトグルできる (True → False)。"""
+        # まず非表示
+        hidden = await update_voice_session(db_session, voice_session, is_hidden=True)
+        assert hidden.is_hidden is True
+        # 次に表示
+        visible = await update_voice_session(db_session, hidden, is_hidden=False)
+        assert visible.is_hidden is False
 
     async def test_update_owner_id(
         self, db_session: AsyncSession, voice_session: VoiceSession
@@ -292,6 +314,121 @@ class TestUpdateVoiceSession:
         updated = await update_voice_session(db_session, voice_session)
         assert updated.name == original_name
         assert updated.owner_id == original_owner
+
+
+class TestUpdateVoiceSessionEdgeCases:
+    """update_voice_session のエッジケーステスト。"""
+
+    async def test_update_is_locked_same_value_no_op(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """同じ値で更新しても問題ない (is_locked=False → False)。"""
+        assert voice_session.is_locked is False
+        updated = await update_voice_session(db_session, voice_session, is_locked=False)
+        assert updated.is_locked is False
+
+    async def test_update_is_locked_rapid_toggle(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """連続してトグルしても正しく動作する。"""
+        # False → True
+        s1 = await update_voice_session(db_session, voice_session, is_locked=True)
+        assert s1.is_locked is True
+        # True → False
+        s2 = await update_voice_session(db_session, s1, is_locked=False)
+        assert s2.is_locked is False
+        # False → True
+        s3 = await update_voice_session(db_session, s2, is_locked=True)
+        assert s3.is_locked is True
+        # True → False
+        s4 = await update_voice_session(db_session, s3, is_locked=False)
+        assert s4.is_locked is False
+
+    async def test_update_both_locked_and_hidden(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """ロックと非表示を同時に設定できる。"""
+        updated = await update_voice_session(
+            db_session, voice_session, is_locked=True, is_hidden=True
+        )
+        assert updated.is_locked is True
+        assert updated.is_hidden is True
+
+    async def test_update_unlock_while_hidden(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """非表示のままロック解除できる。"""
+        # まず両方設定
+        locked_hidden = await update_voice_session(
+            db_session, voice_session, is_locked=True, is_hidden=True
+        )
+        # ロックだけ解除
+        unlocked = await update_voice_session(
+            db_session, locked_hidden, is_locked=False
+        )
+        assert unlocked.is_locked is False
+        assert unlocked.is_hidden is True  # 非表示は維持
+
+    async def test_update_lock_with_name_change(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """ロックと同時に名前変更できる。"""
+        new_name = "🔒ロック済みチャンネル"
+        updated = await update_voice_session(
+            db_session, voice_session, name=new_name, is_locked=True
+        )
+        assert updated.name == new_name
+        assert updated.is_locked is True
+
+    async def test_update_preserves_other_fields_when_locking(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """ロック時に他のフィールドは変更されない。"""
+        original_name = voice_session.name
+        original_owner = voice_session.owner_id
+        original_user_limit = voice_session.user_limit
+
+        updated = await update_voice_session(db_session, voice_session, is_locked=True)
+
+        assert updated.is_locked is True
+        assert updated.name == original_name
+        assert updated.owner_id == original_owner
+        assert updated.user_limit == original_user_limit
+
+    async def test_update_lock_state_persists_after_refresh(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """ロック状態がDB再取得後も維持される。"""
+        channel_id = voice_session.channel_id
+
+        # ロック
+        await update_voice_session(db_session, voice_session, is_locked=True)
+
+        # 再取得して確認
+        refreshed = await get_voice_session(db_session, channel_id)
+        assert refreshed is not None
+        assert refreshed.is_locked is True
+
+    async def test_update_empty_name_with_lock(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """空の名前でもロックできる。"""
+        updated = await update_voice_session(
+            db_session, voice_session, name="", is_locked=True
+        )
+        assert updated.name == ""
+        assert updated.is_locked is True
+
+    async def test_update_unicode_name_with_lock(
+        self, db_session: AsyncSession, voice_session: VoiceSession
+    ) -> None:
+        """Unicode文字を含む名前でロックできる。"""
+        unicode_name = "🔒日本語チャンネル🎵"
+        updated = await update_voice_session(
+            db_session, voice_session, name=unicode_name, is_locked=True
+        )
+        assert updated.name == unicode_name
+        assert updated.is_locked is True
 
 
 class TestDeleteVoiceSession:
