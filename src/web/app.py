@@ -162,7 +162,7 @@ else:
 # 空白のみのパスワードは空として扱う
 INIT_ADMIN_EMAIL = settings.admin_email.strip()
 INIT_ADMIN_PASSWORD = settings.admin_password.strip() if settings.admin_password else ""
-SECURE_COOKIE = os.environ.get("SECURE_COOKIE", "true").lower() == "true"
+SECURE_COOKIE = os.environ.get("SECURE_COOKIE", "false").lower() == "true"
 
 # レート制限 (インメモリ、再起動時にリセット)
 LOGIN_ATTEMPTS: dict[str, list[float]] = {}
