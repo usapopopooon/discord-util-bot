@@ -1716,11 +1716,21 @@ class TestDiscordChannelOperations:
         )
         assert text_ch.channel_type == 0
 
+        # Voice channel (for lobbies)
+        voice_ch = await upsert_discord_channel(
+            db_session,
+            guild_id="123",
+            channel_id="2",
+            channel_name="voice-lobby",
+            channel_type=2,
+        )
+        assert voice_ch.channel_type == 2
+
         # News/Announcement channel
         news_ch = await upsert_discord_channel(
             db_session,
             guild_id="123",
-            channel_id="2",
+            channel_id="3",
             channel_name="announcement",
             channel_type=5,
         )
@@ -1730,7 +1740,7 @@ class TestDiscordChannelOperations:
         forum_ch = await upsert_discord_channel(
             db_session,
             guild_id="123",
-            channel_id="3",
+            channel_id="4",
             channel_name="forum",
             channel_type=15,
         )

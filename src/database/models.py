@@ -860,16 +860,16 @@ class DiscordGuild(Base):
 class DiscordChannel(Base):
     """Discord チャンネル情報のキャッシュテーブル。
 
-    Bot が参加しているサーバーのテキストチャンネル情報を保存し、
+    Bot が参加しているサーバーのチャンネル情報を保存し、
     Web 管理画面でチャンネル名を表示できるようにする。
-    テキストチャンネルのみ同期 (VC やカテゴリは除外)。
+    カテゴリは除外。
 
     Attributes:
         id (int): 自動採番の主キー。
         guild_id (str): Discord サーバーの ID。インデックス付き。
         channel_id (str): Discord チャンネルの ID。
         channel_name (str): チャンネル名。
-        channel_type (int): チャンネルタイプ (0=テキスト, 5=アナウンス, 15=フォーラム)。
+        channel_type (int): チャンネルタイプ (0=text, 2=voice, 5=news, 15=forum)。
         position (int): チャンネルの表示順序。
         category_id (str | None): 親カテゴリの ID。
         updated_at (datetime): 最終更新日時 (UTC)。
@@ -877,7 +877,7 @@ class DiscordChannel(Base):
     Notes:
         - テーブル名: ``discord_channels``
         - (guild_id, channel_id) でユニーク制約
-        - テキストチャンネル (type 0, 5, 15) のみ同期
+        - テキスト/ボイス/アナウンス/フォーラム (type 0, 2, 5, 15) を同期
         - チャンネル作成/更新/削除イベントで自動更新
 
     Examples:

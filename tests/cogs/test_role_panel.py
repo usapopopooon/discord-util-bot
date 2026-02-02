@@ -3304,10 +3304,10 @@ class TestGuildInfoAndChannelSyncEventListeners:
         call_args = mock_upsert.call_args
         assert call_args.kwargs["channel_type"] == discord.ChannelType.forum.value
 
-    async def test_sync_guild_channels_skips_voice_channel(
+    async def test_sync_guild_channels_syncs_voice_channel(
         self, mock_bot: MagicMock, mock_guild: MagicMock
     ) -> None:
-        """_sync_guild_channels がボイスチャンネルをスキップする。"""
+        """_sync_guild_channels がボイスチャンネルを同期する。"""
         from src.cogs.role_panel import RolePanelCog
 
         voice_channel = MagicMock()
@@ -3315,6 +3315,8 @@ class TestGuildInfoAndChannelSyncEventListeners:
         voice_channel.name = "Voice"
         voice_channel.type = discord.ChannelType.voice
         voice_channel.guild = mock_guild
+        voice_channel.position = 0
+        voice_channel.category_id = None
         perms = MagicMock()
         perms.view_channel = True
         voice_channel.permissions_for.return_value = perms
@@ -3330,8 +3332,8 @@ class TestGuildInfoAndChannelSyncEventListeners:
             with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
                 count = await cog._sync_guild_channels(mock_guild)
 
-        assert count == 0
-        mock_upsert.assert_not_called()
+        assert count == 1
+        mock_upsert.assert_called_once()
 
     async def test_sync_guild_channels_skips_category(
         self, mock_bot: MagicMock, mock_guild: MagicMock
@@ -3398,7 +3400,7 @@ class TestGuildInfoAndChannelSyncEventListeners:
             [
                 ("general", discord.ChannelType.text),
                 ("announcements", discord.ChannelType.news),
-                ("voice", discord.ChannelType.voice),  # スキップ対象
+                ("voice", discord.ChannelType.voice),
                 ("help", discord.ChannelType.forum),
             ]
         ):
@@ -3425,9 +3427,9 @@ class TestGuildInfoAndChannelSyncEventListeners:
             with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
                 count = await cog._sync_guild_channels(mock_guild)
 
-        # text, news, forum の 3 つ (voice はスキップ)
-        assert count == 3
-        assert mock_upsert.call_count == 3
+        # text, voice, news, forum の 4 つ
+        assert count == 4
+        assert mock_upsert.call_count == 4
 
     async def test_sync_guild_channels_with_empty_guild(
         self, mock_bot: MagicMock, mock_guild: MagicMock
@@ -3537,14 +3539,18 @@ class TestGuildInfoAndChannelSyncEventListeners:
             category_id=None,
         )
 
-    async def test_on_guild_channel_create_skips_voice_channel(
+    async def test_on_guild_channel_create_syncs_voice_channel(
         self, mock_bot: MagicMock, mock_guild: MagicMock
     ) -> None:
-        """on_guild_channel_create がボイスチャンネルをスキップする。"""
+        """on_guild_channel_create がボイスチャンネルを同期する。"""
         from src.cogs.role_panel import RolePanelCog
 
         voice_channel = MagicMock()
+        voice_channel.id = 111
+        voice_channel.name = "voice-lobby"
         voice_channel.type = discord.ChannelType.voice
+        voice_channel.position = 0
+        voice_channel.category_id = None
         voice_channel.guild = mock_guild
         perms = MagicMock()
         perms.view_channel = True
@@ -3552,10 +3558,14 @@ class TestGuildInfoAndChannelSyncEventListeners:
 
         cog = RolePanelCog(mock_bot)
 
-        with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
-            await cog.on_guild_channel_create(voice_channel)
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
 
-        mock_upsert.assert_not_called()
+            with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
+                await cog.on_guild_channel_create(voice_channel)
+
+            mock_upsert.assert_called_once()
 
     async def test_on_guild_channel_create_skips_no_view_permission(
         self, mock_bot: MagicMock, mock_text_channel: MagicMock
@@ -3622,7 +3632,7 @@ class TestGuildInfoAndChannelSyncEventListeners:
         call_args = mock_upsert.call_args
         assert call_args.kwargs["channel_name"] == "new-name"
 
-    async def test_on_guild_channel_update_deletes_when_type_changes_to_voice(
+    async def test_on_guild_channel_update_deletes_when_type_changes_to_category(
         self, mock_bot: MagicMock, mock_text_channel: MagicMock
     ) -> None:
         """on_guild_channel_update がタイプが非対象に変わった場合削除する。"""
@@ -3631,9 +3641,9 @@ class TestGuildInfoAndChannelSyncEventListeners:
         before = MagicMock()
         before.type = discord.ChannelType.text
 
-        # タイプがボイスに変更
+        # タイプがカテゴリーに変更 (非対象)
         after = MagicMock()
-        after.type = discord.ChannelType.voice
+        after.type = discord.ChannelType.category
         after.guild = mock_text_channel.guild
         after.id = mock_text_channel.id
 

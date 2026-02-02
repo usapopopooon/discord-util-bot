@@ -273,6 +273,24 @@ class TestLobbiesListPage:
         # yellow スタイルが2箇所（guild と channel の両方）
         assert result.count("text-yellow-400") >= 1
 
+    def test_displays_voice_channel_lobby_name(self) -> None:
+        """ボイスチャンネル（ロビー）の名前が正しく表示される。"""
+        lobby = Lobby(
+            id=1,
+            guild_id="111222333",
+            lobby_channel_id="444555666",
+            default_user_limit=5,
+        )
+        guilds_map = {"111222333": "Gaming Server"}
+        # ボイスチャンネルも channels_map に含まれる
+        channels_map = {"111222333": [("444555666", "🎮 Voice Lobby")]}
+        result = lobbies_list_page(
+            [lobby], guilds_map=guilds_map, channels_map=channels_map
+        )
+        assert "Gaming Server" in result
+        assert "#🎮 Voice Lobby" in result
+        assert "444555666" in result  # ID も表示される
+
 
 # ===========================================================================
 # Sticky 一覧ページ

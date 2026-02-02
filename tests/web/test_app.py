@@ -4225,6 +4225,161 @@ class TestGetDiscordGuildsAndChannels:
         assert guilds_map == {}
         assert channels_map == {}
 
+    async def test_includes_voice_channels(self, db_session: AsyncSession) -> None:
+        """ボイスチャンネルも含まれる (ロビー用)。"""
+        from src.web.app import _get_discord_guilds_and_channels
+
+        db_session.add(DiscordGuild(guild_id="123", guild_name="Test Guild"))
+        # テキストチャンネル
+        db_session.add(
+            DiscordChannel(
+                guild_id="123",
+                channel_id="1",
+                channel_name="general",
+                channel_type=0,
+                position=0,
+            )
+        )
+        # ボイスチャンネル (ロビー)
+        db_session.add(
+            DiscordChannel(
+                guild_id="123",
+                channel_id="2",
+                channel_name="voice-lobby",
+                channel_type=2,
+                position=1,
+            )
+        )
+        await db_session.commit()
+
+        _, channels_map = await _get_discord_guilds_and_channels(db_session)
+
+        assert len(channels_map["123"]) == 2
+        channel_names = [ch[1] for ch in channels_map["123"]]
+        assert "general" in channel_names
+        assert "voice-lobby" in channel_names
+
+
+class TestGetKnownGuildsAndChannels:
+    """_get_known_guilds_and_channels のテスト。"""
+
+    async def test_collects_lobby_channels(self, db_session: AsyncSession) -> None:
+        """Lobby からチャンネルIDを収集する。"""
+        from src.web.app import _get_known_guilds_and_channels
+
+        db_session.add(
+            Lobby(guild_id="123", lobby_channel_id="456", default_user_limit=10)
+        )
+        db_session.add(
+            Lobby(guild_id="123", lobby_channel_id="789", default_user_limit=5)
+        )
+        await db_session.commit()
+
+        result = await _get_known_guilds_and_channels(db_session)
+
+        assert "123" in result
+        assert "456" in result["123"]
+        assert "789" in result["123"]
+
+    async def test_collects_bump_config_channels(
+        self, db_session: AsyncSession
+    ) -> None:
+        """BumpConfig からチャンネルIDを収集する。"""
+        from src.web.app import _get_known_guilds_and_channels
+
+        db_session.add(BumpConfig(guild_id="111", channel_id="222"))
+        await db_session.commit()
+
+        result = await _get_known_guilds_and_channels(db_session)
+
+        assert "111" in result
+        assert "222" in result["111"]
+
+    async def test_collects_sticky_channels(self, db_session: AsyncSession) -> None:
+        """StickyMessage からチャンネルIDを収集する。"""
+        from src.web.app import _get_known_guilds_and_channels
+
+        db_session.add(
+            StickyMessage(
+                guild_id="333",
+                channel_id="444",
+                message_type="text",
+                title="",
+                description="Test sticky",
+            )
+        )
+        await db_session.commit()
+
+        result = await _get_known_guilds_and_channels(db_session)
+
+        assert "333" in result
+        assert "444" in result["333"]
+
+    async def test_collects_role_panel_channels(self, db_session: AsyncSession) -> None:
+        """RolePanel からチャンネルIDを収集する。"""
+        from src.web.app import _get_known_guilds_and_channels
+
+        db_session.add(
+            RolePanel(
+                guild_id="555",
+                channel_id="666",
+                message_id="777",
+                panel_type="button",
+                title="Test Panel",
+            )
+        )
+        await db_session.commit()
+
+        result = await _get_known_guilds_and_channels(db_session)
+
+        assert "555" in result
+        assert "666" in result["555"]
+
+    async def test_returns_empty_when_no_data(self, db_session: AsyncSession) -> None:
+        """データがない場合は空の辞書を返す。"""
+        from src.web.app import _get_known_guilds_and_channels
+
+        result = await _get_known_guilds_and_channels(db_session)
+
+        assert result == {}
+
+    async def test_collects_from_multiple_sources(
+        self, db_session: AsyncSession
+    ) -> None:
+        """複数のソースからチャンネルIDを収集する。"""
+        from src.web.app import _get_known_guilds_and_channels
+
+        # 同じギルドに複数のソースからチャンネルを追加
+        db_session.add(
+            Lobby(guild_id="100", lobby_channel_id="1", default_user_limit=10)
+        )
+        db_session.add(BumpConfig(guild_id="100", channel_id="2"))
+        db_session.add(
+            StickyMessage(
+                guild_id="100",
+                channel_id="3",
+                message_type="text",
+                title="",
+                description="Test",
+            )
+        )
+        db_session.add(
+            RolePanel(
+                guild_id="100",
+                channel_id="4",
+                message_id="999",
+                panel_type="button",
+                title="Test",
+            )
+        )
+        await db_session.commit()
+
+        result = await _get_known_guilds_and_channels(db_session)
+
+        assert "100" in result
+        assert len(result["100"]) == 4
+        assert set(result["100"]) == {"1", "2", "3", "4"}
+
 
 class TestRolePanelCreatePageWithGuildChannelNames:
     """ギルド・チャンネル名を含むパネル作成ページのテスト。"""
