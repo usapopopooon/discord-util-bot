@@ -8,7 +8,9 @@ import time
 import pytest
 
 from src.utils import (
+    _cleanup_resource_locks,
     _has_lone_surrogate,
+    _resource_locks,
     clear_resource_locks,
     get_resource_lock,
     get_resource_lock_count,
@@ -35,6 +37,69 @@ class TestHasLoneSurrogate:
     def test_empty_string_no_surrogate(self) -> None:
         """空文字には壊れたサロゲートがない。"""
         assert _has_lone_surrogate("") is False
+
+
+class TestIsValidEmojiBasic:
+    """is_valid_emoji 関数の基本テスト。"""
+
+    def test_empty_string_invalid(self) -> None:
+        """空文字は無効。"""
+        assert is_valid_emoji("") is False
+
+    def test_none_invalid(self) -> None:
+        """None は無効。"""
+        assert is_valid_emoji(None) is False
+
+    def test_simple_emoji_valid(self) -> None:
+        """シンプルな絵文字は有効。"""
+        assert is_valid_emoji("😀") is True
+        assert is_valid_emoji("🎮") is True
+        assert is_valid_emoji("❤️") is True
+
+    def test_zwj_emoji_valid(self) -> None:
+        """ZWJ 絵文字は有効。"""
+        assert is_valid_emoji("🧑‍🧑‍🧒") is True
+        assert is_valid_emoji("👨‍💻") is True
+
+    def test_keycap_emoji_valid(self) -> None:
+        """Keycap 絵文字は有効。"""
+        assert is_valid_emoji("1️⃣") is True
+        assert is_valid_emoji("#️⃣") is True
+
+    def test_flag_emoji_valid(self) -> None:
+        """国旗絵文字は有効。"""
+        assert is_valid_emoji("🇯🇵") is True
+        assert is_valid_emoji("🇺🇸") is True
+
+    def test_discord_custom_emoji_valid(self) -> None:
+        """Discord カスタム絵文字は有効。"""
+        assert is_valid_emoji("<:custom:123456789>") is True
+        assert is_valid_emoji("<a:animated:987654321>") is True
+
+    def test_discord_custom_emoji_invalid_format(self) -> None:
+        """不正な形式の Discord カスタム絵文字は無効。"""
+        assert is_valid_emoji("<custom:123>") is False
+        assert is_valid_emoji(":custom:123:") is False
+        assert is_valid_emoji("<:custom:>") is False
+        assert is_valid_emoji("<:custom:abc>") is False
+
+    def test_control_characters_invalid(self) -> None:
+        """制御文字を含む文字列は無効。"""
+        assert is_valid_emoji("😀\n") is False
+        assert is_valid_emoji("\t😀") is False
+        assert is_valid_emoji("😀\r") is False
+        assert is_valid_emoji("\x00😀") is False
+
+    def test_plain_text_invalid(self) -> None:
+        """通常のテキストは無効。"""
+        assert is_valid_emoji("hello") is False
+        assert is_valid_emoji("123") is False
+        assert is_valid_emoji("abc") is False
+
+    def test_single_character_numbers_invalid(self) -> None:
+        """単体の数字は無効。"""
+        assert is_valid_emoji("1") is False
+        assert is_valid_emoji("9") is False
 
 
 class TestIsValidEmojiRobustness:
@@ -423,3 +488,106 @@ class TestResourceLockCooldownIntegration:
 
         # 2回処理された
         assert len(processed_timestamps) == 2
+
+
+# =============================================================================
+# Resource Lock Auto Cleanup Tests
+# =============================================================================
+
+
+class TestResourceLockAutoCleanup:
+    """リソースロックの自動クリーンアップテスト。"""
+
+    def test_cleanup_removes_old_unlocked_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """古い未ロックエントリがクリーンアップされる。"""
+        import src.utils as utils_module
+
+        # ロックを作成
+        get_resource_lock("test:cleanup:old")
+
+        # 最終クリーンアップ時刻を古くする (クリーンアップ間隔より前に設定)
+        monkeypatch.setattr(
+            utils_module, "_lock_last_cleanup_time", time.monotonic() - 700
+        )
+
+        # アクセス時刻を古くする (5分以上前)
+        old_time = time.monotonic() - 400  # 約6.6分前
+        lock, _ = _resource_locks["test:cleanup:old"]
+        _resource_locks["test:cleanup:old"] = (lock, old_time)
+
+        # クリーンアップをトリガー
+        get_resource_lock("test:cleanup:trigger")
+
+        # 古いエントリは削除される (ロックされていない場合)
+        assert "test:cleanup:old" not in _resource_locks
+
+    def test_cleanup_preserves_locked_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ロック中のエントリはクリーンアップされない。"""
+        import src.utils as utils_module
+
+        # ロックを作成して取得
+        lock = get_resource_lock("test:cleanup:locked")
+
+        # 最終クリーンアップ時刻を古くする (クリーンアップ間隔より前に設定)
+        monkeypatch.setattr(
+            utils_module, "_lock_last_cleanup_time", time.monotonic() - 700
+        )
+
+        # アクセス時刻を古くする
+        old_time = time.monotonic() - 400
+        _resource_locks["test:cleanup:locked"] = (lock, old_time)
+
+        async def test_with_lock() -> None:
+            async with lock:
+                # ロック中にクリーンアップをトリガー
+                get_resource_lock("test:cleanup:trigger2")
+                # ロック中のエントリは削除されない
+                assert "test:cleanup:locked" in _resource_locks
+
+        asyncio.get_event_loop().run_until_complete(test_with_lock())
+
+    def test_cleanup_preserves_recent_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """最近アクセスされたエントリはクリーンアップされない。"""
+        import src.utils as utils_module
+
+        # ロックを作成 (アクセス時刻は現在)
+        get_resource_lock("test:cleanup:recent")
+
+        # 最終クリーンアップ時刻を古くする (クリーンアップ間隔より前に設定)
+        monkeypatch.setattr(
+            utils_module, "_lock_last_cleanup_time", time.monotonic() - 700
+        )
+
+        # クリーンアップをトリガー
+        get_resource_lock("test:cleanup:trigger3")
+
+        # 最近のエントリは削除されない
+        assert "test:cleanup:recent" in _resource_locks
+
+    def test_cleanup_interval_respected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """クリーンアップ間隔が尊重される。"""
+        import src.utils as utils_module
+
+        # 最終クリーンアップ時刻を最近に設定
+        recent_cleanup = time.monotonic() - 1  # 1秒前
+        monkeypatch.setattr(utils_module, "_lock_last_cleanup_time", recent_cleanup)
+
+        # ロックを作成
+        get_resource_lock("test:interval:check")
+
+        # 古いエントリを作成
+        old_time = time.monotonic() - 400
+        lock, _ = _resource_locks["test:interval:check"]
+        _resource_locks["test:interval:check"] = (lock, old_time)
+
+        # クリーンアップはまだ実行されない (間隔未経過)
+        _cleanup_resource_locks()
+
+        # エントリはまだ存在する
+        assert "test:interval:check" in _resource_locks

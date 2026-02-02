@@ -10,6 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.constants import BCRYPT_MAX_PASSWORD_BYTES, LOGIN_MAX_ATTEMPTS
 from src.database.models import (
     AdminUser,
     BumpConfig,
@@ -23,7 +24,16 @@ from src.database.models import (
     StickyMessage,
 )
 from src.utils import is_valid_emoji
-from src.web.app import hash_password
+from src.web.app import (
+    _cleanup_form_cooldown_entries,
+    _cleanup_old_rate_limit_entries,
+    hash_password,
+    is_form_cooldown_active,
+    is_rate_limited,
+    record_failed_attempt,
+    record_form_submit,
+    verify_password,
+)
 
 from .conftest import TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD
 
@@ -518,6 +528,365 @@ class TestBumpRoutes:
             follow_redirects=False,
         )
         assert response.status_code == 302
+
+
+# ===========================================================================
+# ギルド・チャンネル名表示 (一覧ページ)
+# ===========================================================================
+
+
+class TestLobbiesListWithGuildChannelNames:
+    """ロビー一覧ページのギルド・チャンネル名表示テスト。"""
+
+    async def test_displays_guild_name_when_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュにギルド名がある場合、サーバー名が表示される。"""
+        # ロビーとギルド情報を作成
+        lobby = Lobby(
+            guild_id="123456789012345678",
+            lobby_channel_id="987654321098765432",
+        )
+        guild = DiscordGuild(
+            guild_id="123456789012345678",
+            guild_name="My Test Server",
+        )
+        db_session.add_all([lobby, guild])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/lobbies")
+        assert response.status_code == 200
+        assert "My Test Server" in response.text
+        # ID もグレーで表示される
+        assert "123456789012345678" in response.text
+
+    async def test_displays_channel_name_when_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュにチャンネル名がある場合、チャンネル名が表示される。"""
+        lobby = Lobby(
+            guild_id="123456789012345678",
+            lobby_channel_id="987654321098765432",
+        )
+        channel = DiscordChannel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            channel_name="lobby-voice",
+            position=0,
+        )
+        db_session.add_all([lobby, channel])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/lobbies")
+        assert response.status_code == 200
+        assert "#lobby-voice" in response.text
+
+    async def test_displays_yellow_id_when_not_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュにない場合、ID が黄色で表示される。"""
+        lobby = Lobby(
+            guild_id="123456789012345678",
+            lobby_channel_id="987654321098765432",
+        )
+        db_session.add(lobby)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/lobbies")
+        assert response.status_code == 200
+        # 黄色スタイルで ID 表示
+        assert "text-yellow-400" in response.text
+
+
+class TestStickyListWithGuildChannelNames:
+    """Sticky 一覧ページのギルド・チャンネル名表示テスト。"""
+
+    async def test_displays_guild_name_when_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュにギルド名がある場合、サーバー名が表示される。"""
+        sticky = StickyMessage(
+            channel_id="987654321098765432",
+            guild_id="123456789012345678",
+            title="Test Sticky",
+            description="Test",
+        )
+        guild = DiscordGuild(
+            guild_id="123456789012345678",
+            guild_name="Sticky Server",
+        )
+        db_session.add_all([sticky, guild])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/sticky")
+        assert response.status_code == 200
+        assert "Sticky Server" in response.text
+
+    async def test_displays_channel_name_when_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュにチャンネル名がある場合、チャンネル名が表示される。"""
+        sticky = StickyMessage(
+            channel_id="987654321098765432",
+            guild_id="123456789012345678",
+            title="Test Sticky",
+            description="Test",
+        )
+        channel = DiscordChannel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            channel_name="announcements",
+            position=0,
+        )
+        db_session.add_all([sticky, channel])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/sticky")
+        assert response.status_code == 200
+        assert "#announcements" in response.text
+
+    async def test_displays_yellow_id_when_not_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュにない場合、ID が黄色で表示される。"""
+        sticky = StickyMessage(
+            channel_id="987654321098765432",
+            guild_id="123456789012345678",
+            title="Test Sticky",
+            description="Test",
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/sticky")
+        assert response.status_code == 200
+        assert "text-yellow-400" in response.text
+
+
+class TestBumpListWithGuildChannelNames:
+    """Bump 一覧ページのギルド・チャンネル名表示テスト。"""
+
+    async def test_config_displays_guild_name_when_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """Config でキャッシュにギルド名がある場合、サーバー名が表示される。"""
+        config = BumpConfig(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+        )
+        guild = DiscordGuild(
+            guild_id="123456789012345678",
+            guild_name="Bump Server",
+        )
+        db_session.add_all([config, guild])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/bump")
+        assert response.status_code == 200
+        assert "Bump Server" in response.text
+
+    async def test_config_displays_channel_name_when_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """Config でキャッシュにチャンネル名がある場合、チャンネル名が表示される。"""
+        config = BumpConfig(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+        )
+        channel = DiscordChannel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            channel_name="bump-channel",
+            position=0,
+        )
+        db_session.add_all([config, channel])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/bump")
+        assert response.status_code == 200
+        assert "#bump-channel" in response.text
+
+    async def test_reminder_displays_guild_name_when_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """Reminder でキャッシュにギルド名がある場合、サーバー名が表示される。"""
+        reminder = BumpReminder(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            service_name="DISBOARD",
+        )
+        guild = DiscordGuild(
+            guild_id="123456789012345678",
+            guild_name="Reminder Server",
+        )
+        db_session.add_all([reminder, guild])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/bump")
+        assert response.status_code == 200
+        assert "Reminder Server" in response.text
+
+    async def test_reminder_displays_channel_name_when_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """Reminder でキャッシュにチャンネル名がある場合、チャンネル名が表示される。"""
+        reminder = BumpReminder(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            service_name="DISBOARD",
+        )
+        channel = DiscordChannel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            channel_name="reminder-channel",
+            position=0,
+        )
+        db_session.add_all([reminder, channel])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/bump")
+        assert response.status_code == 200
+        assert "#reminder-channel" in response.text
+
+    async def test_displays_yellow_id_when_not_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュにない場合、ID が黄色で表示される。"""
+        config = BumpConfig(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+        )
+        db_session.add(config)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/bump")
+        assert response.status_code == 200
+        assert "text-yellow-400" in response.text
+
+
+class TestRolePanelsListWithGuildChannelNames:
+    """ロールパネル一覧ページのギルド・チャンネル名表示テスト。"""
+
+    async def test_displays_guild_name_when_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュにギルド名がある場合、サーバー名が表示される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        guild = DiscordGuild(
+            guild_id="123456789012345678",
+            guild_name="Panel Server",
+        )
+        db_session.add_all([panel, guild])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/rolepanels")
+        assert response.status_code == 200
+        assert "Panel Server" in response.text
+
+    async def test_displays_channel_name_when_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュにチャンネル名がある場合、チャンネル名が表示される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        channel = DiscordChannel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            channel_name="roles-channel",
+            position=0,
+        )
+        db_session.add_all([panel, channel])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/rolepanels")
+        assert response.status_code == 200
+        assert "#roles-channel" in response.text
+
+    async def test_displays_yellow_id_when_not_cached(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュにない場合、ID が黄色で表示される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/rolepanels")
+        assert response.status_code == 200
+        assert "text-yellow-400" in response.text
+
+    async def test_displays_both_guild_and_channel_names(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """ギルド名とチャンネル名の両方がある場合、両方表示される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        guild = DiscordGuild(
+            guild_id="123456789012345678",
+            guild_name="Full Server",
+        )
+        channel = DiscordChannel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            channel_name="full-channel",
+            position=0,
+        )
+        db_session.add_all([panel, guild, channel])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/rolepanels")
+        assert response.status_code == 200
+        assert "Full Server" in response.text
+        assert "#full-channel" in response.text
+        # ID はグレーで表示
+        assert "text-gray-500" in response.text
 
 
 # ===========================================================================
@@ -2356,7 +2725,6 @@ class TestRateLimitCleanup:
         import src.web.app as web_app_module
         from src.web.app import (
             LOGIN_ATTEMPTS,
-            _cleanup_old_rate_limit_entries,
         )
 
         # 古いタイムスタンプを設定（5分以上前）
@@ -2378,7 +2746,6 @@ class TestRateLimitCleanup:
         import src.web.app as web_app_module
         from src.web.app import (
             LOGIN_ATTEMPTS,
-            _cleanup_old_rate_limit_entries,
         )
 
         # 新しいタイムスタンプを設定
@@ -5309,3 +5676,1160 @@ class TestResourceLockIntegration:
         )
         assert response.status_code == 302
         assert "success" in response.headers["location"]
+
+
+# ===========================================================================
+# メンテナンスルート
+# ===========================================================================
+
+
+class TestMaintenanceRoutes:
+    """/settings/maintenance ルートのテスト。"""
+
+    async def test_maintenance_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.get("/settings/maintenance", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_maintenance_page_renders(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """メンテナンスページが表示される。"""
+        response = await authenticated_client.get("/settings/maintenance")
+        assert response.status_code == 200
+        assert "Database Maintenance" in response.text
+        assert "Database Statistics" in response.text
+        assert "Actions" in response.text
+        assert "Refresh Stats" in response.text
+
+    async def test_maintenance_shows_stats(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """統計情報が表示される。"""
+        # ギルドを追加
+        guild = DiscordGuild(
+            guild_id="123456789012345678",
+            guild_name="Test Guild",
+            member_count=100,
+        )
+        db_session.add(guild)
+
+        # アクティブなギルドに属するデータを追加
+        lobby = Lobby(
+            guild_id="123456789012345678",
+            lobby_channel_id="987654321098765432",
+        )
+        db_session.add(lobby)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/settings/maintenance")
+        assert response.status_code == 200
+        # ロビー数が表示される
+        assert "Lobbies" in response.text
+
+    async def test_maintenance_shows_orphaned_count(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """孤立データの数が表示される。"""
+        # アクティブなギルド (DiscordGuild にある)
+        active_guild = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="Active Guild",
+            member_count=100,
+        )
+        db_session.add(active_guild)
+
+        # アクティブなギルドのロビー
+        active_lobby = Lobby(
+            guild_id="111111111111111111",
+            lobby_channel_id="222222222222222222",
+        )
+        db_session.add(active_lobby)
+
+        # 孤立したロビー (DiscordGuild にない)
+        orphaned_lobby = Lobby(
+            guild_id="999999999999999999",
+            lobby_channel_id="888888888888888888",
+        )
+        db_session.add(orphaned_lobby)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/settings/maintenance")
+        assert response.status_code == 200
+        # 孤立数: 1 が表示される
+        assert "Orphaned: 1" in response.text
+
+    async def test_maintenance_cleanup_requires_auth(self, client: AsyncClient) -> None:
+        """クリーンアップは認証が必要。"""
+        response = await client.post(
+            "/settings/maintenance/cleanup",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_maintenance_cleanup_deletes_orphaned_lobbies(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """孤立したロビーがクリーンアップで削除される。"""
+        # アクティブなギルド
+        active_guild = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="Active Guild",
+            member_count=100,
+        )
+        db_session.add(active_guild)
+
+        # アクティブなギルドのロビー
+        active_lobby = Lobby(
+            guild_id="111111111111111111",
+            lobby_channel_id="222222222222222222",
+        )
+        db_session.add(active_lobby)
+
+        # 孤立したロビー
+        orphaned_lobby = Lobby(
+            guild_id="999999999999999999",
+            lobby_channel_id="888888888888888888",
+        )
+        db_session.add(orphaned_lobby)
+        await db_session.commit()
+
+        # クリーンアップを実行
+        response = await authenticated_client.post(
+            "/settings/maintenance/cleanup",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "success" in response.headers["location"].lower()
+
+        # 孤立したロビーが削除されていることを確認
+        db_session.expire_all()
+        result = await db_session.execute(select(Lobby))
+        lobbies = list(result.scalars().all())
+        assert len(lobbies) == 1
+        assert lobbies[0].guild_id == "111111111111111111"
+
+    async def test_maintenance_cleanup_deletes_orphaned_bump_configs(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """孤立した Bump 設定がクリーンアップで削除される。"""
+        # アクティブなギルド
+        active_guild = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="Active Guild",
+            member_count=100,
+        )
+        db_session.add(active_guild)
+
+        # アクティブなギルドの Bump 設定
+        active_bump = BumpConfig(
+            guild_id="111111111111111111",
+            channel_id="222222222222222222",
+        )
+        db_session.add(active_bump)
+
+        # 孤立した Bump 設定
+        orphaned_bump = BumpConfig(
+            guild_id="999999999999999999",
+            channel_id="888888888888888888",
+        )
+        db_session.add(orphaned_bump)
+
+        # 孤立した Bump 設定のリマインダー
+        orphaned_reminder = BumpReminder(
+            guild_id="999999999999999999",
+            channel_id="888888888888888888",
+            service_name="DISBOARD",
+        )
+        db_session.add(orphaned_reminder)
+        await db_session.commit()
+
+        # クリーンアップを実行
+        response = await authenticated_client.post(
+            "/settings/maintenance/cleanup",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        # 孤立した Bump 設定とリマインダーが削除されていることを確認
+        db_session.expire_all()
+        bump_result = await db_session.execute(select(BumpConfig))
+        bump_configs = list(bump_result.scalars().all())
+        assert len(bump_configs) == 1
+        assert bump_configs[0].guild_id == "111111111111111111"
+
+        reminder_result = await db_session.execute(select(BumpReminder))
+        reminders = list(reminder_result.scalars().all())
+        assert len(reminders) == 0
+
+    async def test_maintenance_cleanup_deletes_orphaned_stickies(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """孤立した Sticky メッセージがクリーンアップで削除される。"""
+        # アクティブなギルド
+        active_guild = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="Active Guild",
+            member_count=100,
+        )
+        db_session.add(active_guild)
+
+        # アクティブなギルドの Sticky
+        active_sticky = StickyMessage(
+            guild_id="111111111111111111",
+            channel_id="222222222222222222",
+            title="Active sticky",
+            description="Active sticky message",
+        )
+        db_session.add(active_sticky)
+
+        # 孤立した Sticky
+        orphaned_sticky = StickyMessage(
+            guild_id="999999999999999999",
+            channel_id="888888888888888888",
+            title="Orphaned sticky",
+            description="Orphaned sticky message",
+        )
+        db_session.add(orphaned_sticky)
+        await db_session.commit()
+
+        # クリーンアップを実行
+        response = await authenticated_client.post(
+            "/settings/maintenance/cleanup",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        # 孤立した Sticky が削除されていることを確認
+        db_session.expire_all()
+        result = await db_session.execute(select(StickyMessage))
+        stickies = list(result.scalars().all())
+        assert len(stickies) == 1
+        assert stickies[0].guild_id == "111111111111111111"
+
+    async def test_maintenance_cleanup_deletes_orphaned_role_panels(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """孤立したロールパネルがクリーンアップで削除される。"""
+        # アクティブなギルド
+        active_guild = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="Active Guild",
+            member_count=100,
+        )
+        db_session.add(active_guild)
+
+        # アクティブなギルドのパネル
+        active_panel = RolePanel(
+            guild_id="111111111111111111",
+            channel_id="222222222222222222",
+            panel_type="button",
+            title="Active Panel",
+        )
+        db_session.add(active_panel)
+
+        # 孤立したパネル
+        orphaned_panel = RolePanel(
+            guild_id="999999999999999999",
+            channel_id="888888888888888888",
+            panel_type="button",
+            title="Orphaned Panel",
+        )
+        db_session.add(orphaned_panel)
+        await db_session.commit()
+
+        # クリーンアップを実行
+        response = await authenticated_client.post(
+            "/settings/maintenance/cleanup",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        # 孤立したパネルが削除されていることを確認
+        db_session.expire_all()
+        result = await db_session.execute(select(RolePanel))
+        panels = list(result.scalars().all())
+        assert len(panels) == 1
+        assert panels[0].guild_id == "111111111111111111"
+
+    async def test_maintenance_cleanup_no_orphaned_data(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """孤立データがない場合のクリーンアップ。"""
+        # アクティブなギルドのみ
+        active_guild = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="Active Guild",
+            member_count=100,
+        )
+        db_session.add(active_guild)
+
+        # アクティブなギルドのロビーのみ
+        active_lobby = Lobby(
+            guild_id="111111111111111111",
+            lobby_channel_id="222222222222222222",
+        )
+        db_session.add(active_lobby)
+        await db_session.commit()
+
+        # クリーンアップを実行
+        response = await authenticated_client.post(
+            "/settings/maintenance/cleanup",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "No+orphaned+data+found" in response.headers["location"]
+
+        # ロビーは削除されていない
+        db_session.expire_all()
+        result = await db_session.execute(select(Lobby))
+        lobbies = list(result.scalars().all())
+        assert len(lobbies) == 1
+
+    async def test_maintenance_refresh_requires_auth(self, client: AsyncClient) -> None:
+        """リフレッシュは認証が必要。"""
+        response = await client.post(
+            "/settings/maintenance/refresh",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_maintenance_refresh_redirects_with_success(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """リフレッシュ成功時はメンテナンスページにリダイレクトされる。"""
+        response = await authenticated_client.post(
+            "/settings/maintenance/refresh",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "success=Stats+refreshed" in response.headers["location"]
+
+    async def test_maintenance_refresh_rate_limited(
+        self,
+        authenticated_client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """リフレッシュはレート制限される。"""
+        import src.web.app as web_app_module
+
+        # クールダウンをアクティブにモック
+        monkeypatch.setattr(
+            web_app_module,
+            "is_form_cooldown_active",
+            lambda *_args: True,
+        )
+
+        response = await authenticated_client.post(
+            "/settings/maintenance/refresh",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "Please+wait" in response.headers["location"]
+
+    async def test_maintenance_cleanup_rate_limited(
+        self,
+        authenticated_client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """クリーンアップはレート制限される。"""
+        import src.web.app as web_app_module
+
+        # クールダウンをアクティブにモック
+        monkeypatch.setattr(
+            web_app_module,
+            "is_form_cooldown_active",
+            lambda *_args: True,
+        )
+
+        response = await authenticated_client.post(
+            "/settings/maintenance/cleanup",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "Please+wait" in response.headers["location"]
+
+    async def test_maintenance_page_contains_cleanup_modal(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """メンテナンスページに確認モーダルが含まれる。"""
+        # 孤立データを作成
+        orphaned_lobby = Lobby(
+            guild_id="999999999999999999",
+            lobby_channel_id="888888888888888888",
+        )
+        db_session.add(orphaned_lobby)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/settings/maintenance")
+        assert response.status_code == 200
+        # モーダルの要素が含まれる
+        assert "cleanup-modal" in response.text
+        assert "Confirm Cleanup" in response.text
+        assert "permanently deleted" in response.text
+        assert "This action cannot be undone" in response.text
+
+    async def test_cleanup_modal_shows_breakdown(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """確認モーダルに削除対象の内訳が表示される。"""
+        # 複数種類の孤立データを作成
+        orphaned_lobby = Lobby(
+            guild_id="999999999999999999",
+            lobby_channel_id="888888888888888888",
+        )
+        orphaned_bump = BumpConfig(
+            guild_id="999999999999999999",
+            channel_id="777777777777777777",
+        )
+        orphaned_sticky = StickyMessage(
+            channel_id="666666666666666666",
+            guild_id="999999999999999999",
+            title="Orphaned Sticky",
+            description="Test",
+        )
+        orphaned_panel = RolePanel(
+            guild_id="999999999999999999",
+            channel_id="555555555555555555",
+            panel_type="button",
+            title="Orphaned Panel",
+        )
+        db_session.add_all(
+            [orphaned_lobby, orphaned_bump, orphaned_sticky, orphaned_panel]
+        )
+        await db_session.commit()
+
+        response = await authenticated_client.get("/settings/maintenance")
+        assert response.status_code == 200
+        # 内訳が表示される
+        assert "Lobbies:" in response.text
+        assert "Bump Configs:" in response.text
+        assert "Stickies:" in response.text
+        assert "Role Panels:" in response.text
+        # 合計が表示される
+        assert "Total:" in response.text
+        # 確認ボタンにレコード数が表示される
+        assert "Delete 4 Records" in response.text
+
+    async def test_cleanup_modal_has_cancel_button(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """確認モーダルにキャンセルボタンがある。"""
+        orphaned_lobby = Lobby(
+            guild_id="999999999999999999",
+            lobby_channel_id="888888888888888888",
+        )
+        db_session.add(orphaned_lobby)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/settings/maintenance")
+        assert response.status_code == 200
+        # キャンセルボタン
+        assert "Cancel" in response.text
+        assert "hideCleanupModal" in response.text
+
+    async def test_cleanup_button_triggers_modal(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """クリーンアップボタンがモーダルを表示する。"""
+        orphaned_lobby = Lobby(
+            guild_id="999999999999999999",
+            lobby_channel_id="888888888888888888",
+        )
+        db_session.add(orphaned_lobby)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/settings/maintenance")
+        assert response.status_code == 200
+        # ボタンがモーダルを表示する JavaScript を呼び出す
+        assert "showCleanupModal()" in response.text
+
+
+# ===========================================================================
+# クリーンアップモーダル エッジケーステスト
+# ===========================================================================
+
+
+class TestCleanupModalEdgeCases:
+    """クリーンアップモーダルのエッジケーステスト。"""
+
+    async def test_cleanup_button_disabled_when_no_orphaned_data(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """孤立データがない場合、クリーンアップボタンが非活性。"""
+        # アクティブなギルドを作成
+        active_guild = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="Active Guild",
+            member_count=100,
+        )
+        db_session.add(active_guild)
+
+        # アクティブなギルドのデータのみ
+        active_lobby = Lobby(
+            guild_id="111111111111111111",
+            lobby_channel_id="222222222222222222",
+        )
+        db_session.add(active_lobby)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/settings/maintenance")
+        assert response.status_code == 200
+        # 孤立データなしのボタンが表示される
+        assert "No Orphaned Data" in response.text
+        # disabled 属性がボタンに付いている
+        assert "disabled" in response.text
+
+    async def test_cleanup_modal_with_only_lobbies_orphaned(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ロビーだけが孤立している場合の表示。"""
+        # 孤立したロビーのみ
+        orphaned_lobby1 = Lobby(
+            guild_id="999999999999999999",
+            lobby_channel_id="888888888888888888",
+        )
+        orphaned_lobby2 = Lobby(
+            guild_id="999999999999999999",
+            lobby_channel_id="777777777777777777",
+        )
+        db_session.add_all([orphaned_lobby1, orphaned_lobby2])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/settings/maintenance")
+        assert response.status_code == 200
+        # Lobbies の数が表示される
+        assert "Delete 2 Records" in response.text
+        # モーダル内のLobbies行
+        assert "Lobbies:" in response.text
+
+    async def test_cleanup_modal_with_only_panels_orphaned(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ロールパネルだけが孤立している場合の表示。"""
+        orphaned_panel = RolePanel(
+            guild_id="999999999999999999",
+            channel_id="888888888888888888",
+            panel_type="button",
+            title="Orphaned Panel",
+        )
+        db_session.add(orphaned_panel)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/settings/maintenance")
+        assert response.status_code == 200
+        assert "Delete 1 Records" in response.text
+        assert "Role Panels:" in response.text
+
+    async def test_cleanup_modal_shows_mixed_orphaned_types(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """複数種類の孤立データが混在する場合の表示。"""
+        # アクティブなギルド
+        active_guild = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="Active Guild",
+        )
+        db_session.add(active_guild)
+
+        # アクティブなデータ (カウントされない)
+        active_lobby = Lobby(
+            guild_id="111111111111111111",
+            lobby_channel_id="222222222222222222",
+        )
+        active_bump = BumpConfig(
+            guild_id="111111111111111111",
+            channel_id="222222222222222222",
+        )
+        db_session.add_all([active_lobby, active_bump])
+
+        # 孤立データ
+        orphaned_lobbies = [
+            Lobby(guild_id="999999999999999999", lobby_channel_id=f"8888{i}")
+            for i in range(3)
+        ]
+        orphaned_stickies = [
+            StickyMessage(
+                channel_id=f"7777{i}",
+                guild_id="999999999999999999",
+                title=f"Sticky {i}",
+                description="Test",
+            )
+            for i in range(2)
+        ]
+        db_session.add_all(orphaned_lobbies + orphaned_stickies)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/settings/maintenance")
+        assert response.status_code == 200
+        # 合計: 3 (lobbies) + 2 (stickies) = 5
+        assert "Delete 5 Records" in response.text
+        assert "Lobbies:" in response.text
+        assert "Stickies:" in response.text
+
+    async def test_refresh_stats_updates_counts(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """統計更新ボタンが正しく動作する。"""
+        response = await authenticated_client.post(
+            "/settings/maintenance/refresh",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/settings/maintenance" in response.headers["location"]
+
+    async def test_cleanup_with_large_number_of_orphaned_records(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """大量の孤立レコードがある場合のクリーンアップ。"""
+        # 50件の孤立ロビーを作成
+        orphaned_lobbies = [
+            Lobby(
+                guild_id="999999999999999999",
+                lobby_channel_id=f"10000000000000000{i:02d}",
+            )
+            for i in range(50)
+        ]
+        db_session.add_all(orphaned_lobbies)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/settings/maintenance")
+        assert response.status_code == 200
+        assert "Delete 50 Records" in response.text
+
+        # クリーンアップ実行
+        cleanup_response = await authenticated_client.post(
+            "/settings/maintenance/cleanup",
+            follow_redirects=False,
+        )
+        assert cleanup_response.status_code == 302
+
+        # 全て削除されたことを確認
+        db_session.expire_all()
+        result = await db_session.execute(select(Lobby))
+        remaining_lobbies = list(result.scalars().all())
+        assert len(remaining_lobbies) == 0
+
+    async def test_cleanup_preserves_active_guild_data(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """クリーンアップがアクティブギルドのデータを保持する。"""
+        # 複数のアクティブギルド
+        active_guild1 = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="Active Guild 1",
+        )
+        active_guild2 = DiscordGuild(
+            guild_id="222222222222222222",
+            guild_name="Active Guild 2",
+        )
+        db_session.add_all([active_guild1, active_guild2])
+
+        # 各アクティブギルドのデータ
+        active_lobby1 = Lobby(
+            guild_id="111111111111111111",
+            lobby_channel_id="100000000000000001",
+        )
+        active_lobby2 = Lobby(
+            guild_id="222222222222222222",
+            lobby_channel_id="200000000000000001",
+        )
+        active_bump = BumpConfig(
+            guild_id="111111111111111111",
+            channel_id="100000000000000001",
+        )
+        db_session.add_all([active_lobby1, active_lobby2, active_bump])
+
+        # 孤立データ
+        orphaned_lobby = Lobby(
+            guild_id="999999999999999999",
+            lobby_channel_id="900000000000000001",
+        )
+        db_session.add(orphaned_lobby)
+        await db_session.commit()
+
+        # クリーンアップ実行
+        await authenticated_client.post(
+            "/settings/maintenance/cleanup",
+            follow_redirects=False,
+        )
+
+        # アクティブギルドのデータが保持されていることを確認
+        db_session.expire_all()
+        lobby_result = await db_session.execute(select(Lobby))
+        lobbies = list(lobby_result.scalars().all())
+        assert len(lobbies) == 2
+        guild_ids = {lobby.guild_id for lobby in lobbies}
+        assert "111111111111111111" in guild_ids
+        assert "222222222222222222" in guild_ids
+        assert "999999999999999999" not in guild_ids
+
+        bump_result = await db_session.execute(select(BumpConfig))
+        bumps = list(bump_result.scalars().all())
+        assert len(bumps) == 1
+        assert bumps[0].guild_id == "111111111111111111"
+
+
+# ===========================================================================
+# ギルド・チャンネル名表示 統合テスト
+# ===========================================================================
+
+
+class TestGuildChannelNameDisplayIntegration:
+    """ギルド・チャンネル名表示の統合テスト。"""
+
+    async def test_all_list_pages_display_cached_names(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """全ての一覧ページでキャッシュされた名前が表示される。"""
+        # 共通のギルド・チャンネルキャッシュを作成
+        guild = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="Integration Test Server",
+        )
+        channel = DiscordChannel(
+            guild_id="111111111111111111",
+            channel_id="222222222222222222",
+            channel_name="test-channel",
+            position=0,
+        )
+        db_session.add_all([guild, channel])
+
+        # 各機能のデータを作成
+        lobby = Lobby(
+            guild_id="111111111111111111",
+            lobby_channel_id="222222222222222222",
+        )
+        sticky = StickyMessage(
+            channel_id="222222222222222222",
+            guild_id="111111111111111111",
+            title="Test Sticky",
+            description="Test",
+        )
+        bump_config = BumpConfig(
+            guild_id="111111111111111111",
+            channel_id="222222222222222222",
+        )
+        role_panel = RolePanel(
+            guild_id="111111111111111111",
+            channel_id="222222222222222222",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add_all([lobby, sticky, bump_config, role_panel])
+        await db_session.commit()
+
+        # 全ページで名前が表示されることを確認
+        lobbies_response = await authenticated_client.get("/lobbies")
+        assert lobbies_response.status_code == 200
+        assert "Integration Test Server" in lobbies_response.text
+        assert "#test-channel" in lobbies_response.text
+
+        sticky_response = await authenticated_client.get("/sticky")
+        assert sticky_response.status_code == 200
+        assert "Integration Test Server" in sticky_response.text
+        assert "#test-channel" in sticky_response.text
+
+        bump_response = await authenticated_client.get("/bump")
+        assert bump_response.status_code == 200
+        assert "Integration Test Server" in bump_response.text
+        assert "#test-channel" in bump_response.text
+
+        rolepanels_response = await authenticated_client.get("/rolepanels")
+        assert rolepanels_response.status_code == 200
+        assert "Integration Test Server" in rolepanels_response.text
+        assert "#test-channel" in rolepanels_response.text
+
+    async def test_mixed_cached_and_uncached_guilds(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュ済みとキャッシュなしのギルドが混在する場合の表示。"""
+        # キャッシュ済みギルド
+        cached_guild = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="Cached Server",
+        )
+        db_session.add(cached_guild)
+
+        # キャッシュ済みギルドのロビー
+        cached_lobby = Lobby(
+            guild_id="111111111111111111",
+            lobby_channel_id="222222222222222222",
+        )
+        # キャッシュなしギルドのロビー
+        uncached_lobby = Lobby(
+            guild_id="999999999999999999",
+            lobby_channel_id="888888888888888888",
+        )
+        db_session.add_all([cached_lobby, uncached_lobby])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/lobbies")
+        assert response.status_code == 200
+
+        # キャッシュ済みはサーバー名が表示
+        assert "Cached Server" in response.text
+        # キャッシュなしは黄色 ID 表示
+        assert "text-yellow-400" in response.text
+        # キャッシュなしの ID が表示
+        assert "999999999999999999" in response.text
+
+    async def test_multiple_channels_same_guild(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """同一ギルドの複数チャンネルが正しく表示される。"""
+        guild = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="Multi Channel Server",
+        )
+        channel1 = DiscordChannel(
+            guild_id="111111111111111111",
+            channel_id="222222222222222222",
+            channel_name="channel-one",
+            position=0,
+        )
+        channel2 = DiscordChannel(
+            guild_id="111111111111111111",
+            channel_id="333333333333333333",
+            channel_name="channel-two",
+            position=1,
+        )
+        db_session.add_all([guild, channel1, channel2])
+
+        # 異なるチャンネルのスティッキー
+        sticky1 = StickyMessage(
+            channel_id="222222222222222222",
+            guild_id="111111111111111111",
+            title="Sticky One",
+            description="Test",
+        )
+        sticky2 = StickyMessage(
+            channel_id="333333333333333333",
+            guild_id="111111111111111111",
+            title="Sticky Two",
+            description="Test",
+        )
+        db_session.add_all([sticky1, sticky2])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/sticky")
+        assert response.status_code == 200
+        assert "Multi Channel Server" in response.text
+        assert "#channel-one" in response.text
+        assert "#channel-two" in response.text
+
+    async def test_guild_name_with_special_characters(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """特殊文字を含むサーバー名が正しくエスケープされる。"""
+        guild = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="Test <Server> & 'Guild'",
+        )
+        channel = DiscordChannel(
+            guild_id="111111111111111111",
+            channel_id="222222222222222222",
+            channel_name="general",
+            position=0,
+        )
+        lobby = Lobby(
+            guild_id="111111111111111111",
+            lobby_channel_id="222222222222222222",
+        )
+        db_session.add_all([guild, channel, lobby])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/lobbies")
+        assert response.status_code == 200
+        # HTML エスケープされた形で表示
+        assert "&lt;Server&gt;" in response.text
+        assert "&amp;" in response.text
+        # 生の特殊文字は含まれない
+        assert "<Server>" not in response.text
+
+    async def test_japanese_guild_and_channel_names(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """日本語のサーバー名・チャンネル名が正しく表示される。"""
+        guild = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="日本語サーバー",
+        )
+        channel = DiscordChannel(
+            guild_id="111111111111111111",
+            channel_id="222222222222222222",
+            channel_name="一般チャット",
+            position=0,
+        )
+        bump_config = BumpConfig(
+            guild_id="111111111111111111",
+            channel_id="222222222222222222",
+        )
+        db_session.add_all([guild, channel, bump_config])
+        await db_session.commit()
+
+        response = await authenticated_client.get("/bump")
+        assert response.status_code == 200
+        assert "日本語サーバー" in response.text
+        assert "#一般チャット" in response.text
+
+    async def test_display_after_cache_update(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """キャッシュ更新後に新しい名前が反映される。"""
+        # 初期のキャッシュ
+        guild = DiscordGuild(
+            guild_id="111111111111111111",
+            guild_name="Old Server Name",
+        )
+        lobby = Lobby(
+            guild_id="111111111111111111",
+            lobby_channel_id="222222222222222222",
+        )
+        db_session.add_all([guild, lobby])
+        await db_session.commit()
+
+        # 初回リクエスト
+        response1 = await authenticated_client.get("/lobbies")
+        assert "Old Server Name" in response1.text
+
+        # キャッシュを更新
+        guild.guild_name = "New Server Name"
+        await db_session.commit()
+
+        # 更新後のリクエスト
+        response2 = await authenticated_client.get("/lobbies")
+        assert "New Server Name" in response2.text
+        assert "Old Server Name" not in response2.text
+
+
+# ===========================================================================
+# パスワードユーティリティのテスト
+# ===========================================================================
+
+
+class TestPasswordUtilities:
+    """hash_password / verify_password のテスト。"""
+
+    def test_hash_password_normal(self) -> None:
+        """通常のパスワードがハッシュ化される。"""
+        password = "testpassword123"
+        hashed = hash_password(password)
+        assert hashed != password
+        assert hashed.startswith("$2")  # bcrypt プレフィックス
+
+    def test_verify_password_correct(self) -> None:
+        """正しいパスワードで検証が成功する。"""
+        password = "testpassword123"
+        hashed = hash_password(password)
+        assert verify_password(password, hashed) is True
+
+    def test_verify_password_incorrect(self) -> None:
+        """間違ったパスワードで検証が失敗する。"""
+        password = "testpassword123"
+        hashed = hash_password(password)
+        assert verify_password("wrongpassword", hashed) is False
+
+    def test_verify_password_empty_password(self) -> None:
+        """空のパスワードで検証が失敗する。"""
+        hashed = hash_password("testpassword123")
+        assert verify_password("", hashed) is False
+
+    def test_verify_password_empty_hash(self) -> None:
+        """空のハッシュで検証が失敗する。"""
+        assert verify_password("testpassword123", "") is False
+
+    def test_verify_password_invalid_hash(self) -> None:
+        """無効なハッシュ形式で検証が失敗する。"""
+        assert verify_password("testpassword123", "invalid_hash") is False
+
+    def test_verify_password_corrupted_hash(self) -> None:
+        """破損したハッシュで検証が失敗する。"""
+        # bcrypt っぽいが無効なハッシュ
+        corrupted = "$2b$12$invalid_hash_data_here"
+        assert verify_password("testpassword123", corrupted) is False
+
+    def test_hash_password_long_password_truncation(self) -> None:
+        """72バイトを超えるパスワードが切り詰められる。"""
+        # 73バイト以上のパスワード (ASCII文字で73文字)
+        long_password = "a" * 100
+        hashed = hash_password(long_password)
+        # 切り詰められた72バイトで検証
+        truncated = "a" * 72
+        assert verify_password(truncated, hashed) is True
+
+    def test_hash_password_exactly_72_bytes(self) -> None:
+        """ちょうど72バイトのパスワードは切り詰められない。"""
+        password = "a" * BCRYPT_MAX_PASSWORD_BYTES
+        hashed = hash_password(password)
+        assert verify_password(password, hashed) is True
+
+    def test_hash_password_utf8_truncation(self) -> None:
+        """UTF-8 マルチバイト文字を含むパスワードの切り詰め。"""
+        # 日本語1文字は3バイト (UTF-8)
+        # 72バイト / 3バイト = 24文字で72バイト
+        password_24_chars = "あ" * 24  # 72バイト
+        password_25_chars = "あ" * 25  # 75バイト (切り詰められる)
+
+        hashed_24 = hash_password(password_24_chars)
+        hashed_25 = hash_password(password_25_chars)
+
+        # 24文字は切り詰めなしで検証成功
+        assert verify_password(password_24_chars, hashed_24) is True
+        # 25文字は切り詰められて24文字と同じハッシュになる
+        assert verify_password(password_24_chars, hashed_25) is True
+
+    def test_hash_password_unicode(self) -> None:
+        """Unicode 文字を含むパスワードがハッシュ化される。"""
+        password = "パスワード123"
+        hashed = hash_password(password)
+        assert verify_password(password, hashed) is True
+
+
+# ===========================================================================
+# レート制限ユーティリティのテスト
+# ===========================================================================
+
+
+class TestRateLimitingFunctions:
+    """is_rate_limited / record_failed_attempt のテスト。"""
+
+    def test_is_rate_limited_new_ip(self) -> None:
+        """新しい IP はレート制限されない。"""
+        assert is_rate_limited("192.168.1.1") is False
+
+    def test_is_rate_limited_under_limit(self) -> None:
+        """試行回数が上限未満ならレート制限されない。"""
+        ip = "192.168.1.1"
+        for _ in range(LOGIN_MAX_ATTEMPTS - 1):
+            record_failed_attempt(ip)
+        assert is_rate_limited(ip) is False
+
+    def test_is_rate_limited_at_limit(self) -> None:
+        """試行回数が上限に達するとレート制限される。"""
+        ip = "192.168.1.1"
+        for _ in range(LOGIN_MAX_ATTEMPTS):
+            record_failed_attempt(ip)
+        assert is_rate_limited(ip) is True
+
+    def test_is_rate_limited_over_limit(self) -> None:
+        """試行回数が上限を超えてもレート制限が維持される。"""
+        ip = "192.168.1.1"
+        for _ in range(LOGIN_MAX_ATTEMPTS + 5):
+            record_failed_attempt(ip)
+        assert is_rate_limited(ip) is True
+
+    def test_rate_limit_per_ip(self) -> None:
+        """IP ごとに独立してレート制限される。"""
+        ip1 = "192.168.1.1"
+        ip2 = "192.168.1.2"
+
+        for _ in range(LOGIN_MAX_ATTEMPTS):
+            record_failed_attempt(ip1)
+
+        assert is_rate_limited(ip1) is True
+        assert is_rate_limited(ip2) is False
+
+    def test_record_failed_attempt_empty_ip(self) -> None:
+        """空の IP では記録されない。"""
+        record_failed_attempt("")
+        # エラーが発生しないことを確認
+        assert True
+
+    def test_cleanup_old_rate_limit_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """古いレート制限エントリがクリーンアップされる。"""
+        import time
+
+        import src.web.app as app_module
+
+        ip = "192.168.1.1"
+        # 古い試行を記録
+        old_time = time.time() - 400  # 5分以上前
+        app_module.LOGIN_ATTEMPTS[ip] = [old_time]
+
+        # クリーンアップ間隔を超えた状態にする
+        app_module._last_cleanup_time = time.time() - 4000
+
+        # is_rate_limited 呼び出しでクリーンアップがトリガーされる
+        is_rate_limited(ip)
+
+        # 古いエントリは削除される (空になるか、有効なものだけ残る)
+        assert (
+            ip not in app_module.LOGIN_ATTEMPTS
+            or len(app_module.LOGIN_ATTEMPTS[ip]) == 0
+        )
+
+
+# ===========================================================================
+# フォーム送信クールタイムユーティリティのテスト
+# ===========================================================================
+
+
+class TestFormCooldownFunctions:
+    """is_form_cooldown_active / record_form_submit のテスト。"""
+
+    def test_form_cooldown_not_active_initially(self) -> None:
+        """初回送信時はクールタイムがアクティブでない。"""
+        assert is_form_cooldown_active("user@example.com", "/settings") is False
+
+    def test_form_cooldown_active_after_submission(self) -> None:
+        """送信後はクールタイムがアクティブになる。"""
+        email = "user@example.com"
+        path = "/settings"
+        record_form_submit(email, path)
+        assert is_form_cooldown_active(email, path) is True
+
+    def test_form_cooldown_per_path(self) -> None:
+        """パスごとに独立してクールタイムが適用される。"""
+        email = "user@example.com"
+        record_form_submit(email, "/settings")
+
+        assert is_form_cooldown_active(email, "/settings") is True
+        assert is_form_cooldown_active(email, "/password") is False
+
+    def test_form_cooldown_per_user(self) -> None:
+        """ユーザーごとに独立してクールタイムが適用される。"""
+        path = "/settings"
+        record_form_submit("user1@example.com", path)
+
+        assert is_form_cooldown_active("user1@example.com", path) is True
+        assert is_form_cooldown_active("user2@example.com", path) is False
+
+    def test_cleanup_form_cooldown_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """古いフォームクールタイムエントリがクリーンアップされる。"""
+        import time
+
+        import src.web.app as app_module
+
+        key = "user@example.com:/settings"
+        # 古いエントリを記録 (クールタイムの5倍以上前)
+        old_time = time.time() - 100  # 十分古い時間
+        app_module.FORM_SUBMIT_TIMES[key] = old_time
+
+        # クリーンアップ間隔を超えた状態にする
+        app_module._form_cooldown_last_cleanup_time = time.time() - 4000
+
+        # クリーンアップを実行
+        _cleanup_form_cooldown_entries()
+
+        # 古いエントリは削除される
+        assert key not in app_module.FORM_SUBMIT_TIMES

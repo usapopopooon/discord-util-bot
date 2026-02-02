@@ -222,6 +222,19 @@ async def delete_lobbies_by_guild(session: AsyncSession, guild_id: str) -> int:
     return count
 
 
+async def get_all_lobbies(session: AsyncSession) -> list[Lobby]:
+    """全てのロビーを取得する。
+
+    Args:
+        session: DB セッション
+
+    Returns:
+        全ロビーのリスト
+    """
+    result = await session.execute(select(Lobby))
+    return list(result.scalars().all())
+
+
 # =============================================================================
 # VoiceSession (一時 VC セッション) 操作
 # =============================================================================
@@ -872,6 +885,19 @@ async def delete_bump_reminders_by_guild(session: AsyncSession, guild_id: str) -
     return count
 
 
+async def get_all_bump_configs(session: AsyncSession) -> list[BumpConfig]:
+    """全ての bump 設定を取得する。
+
+    Args:
+        session: DB セッション
+
+    Returns:
+        全 bump 設定のリスト
+    """
+    result = await session.execute(select(BumpConfig))
+    return list(result.scalars().all())
+
+
 # =============================================================================
 # StickyMessage (sticky メッセージ) 操作
 # =============================================================================
@@ -1249,6 +1275,31 @@ async def delete_role_panel(
         await session.commit()
         return True
     return False
+
+
+async def delete_role_panels_by_guild(session: AsyncSession, guild_id: str) -> int:
+    """指定ギルドの全ロールパネルを削除する。
+
+    Bot がギルドから退出したときにクリーンアップとして使用。
+    カスケード削除により、関連する RolePanelItem も自動削除される。
+
+    Args:
+        session: DB セッション
+        guild_id: Discord サーバーの ID
+
+    Returns:
+        削除したロールパネルの数
+    """
+    result = await session.execute(
+        select(RolePanel).where(RolePanel.guild_id == guild_id)
+    )
+    panels = list(result.scalars().all())
+    count = len(panels)
+    for panel in panels:
+        await session.delete(panel)
+    if count > 0:
+        await session.commit()
+    return count
 
 
 # =============================================================================

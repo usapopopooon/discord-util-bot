@@ -502,3 +502,223 @@ class TestSendEmailChangeVerificationPort465:
 
             result = send_email_change_verification("new@example.com", "token123")
             assert result is False
+
+
+# ===========================================================================
+# SMTP 認証エラーのテスト
+# ===========================================================================
+
+
+class TestSmtpAuthenticationErrors:
+    """SMTP 認証エラーのテスト。"""
+
+    def test_returns_false_on_auth_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """認証エラー時は False を返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "smtp_host", "smtp.example.com")
+        monkeypatch.setattr(settings, "smtp_port", 587)
+        monkeypatch.setattr(settings, "smtp_user", "user@example.com")
+        monkeypatch.setattr(settings, "smtp_password", "wrong_password")
+        monkeypatch.setattr(settings, "smtp_from_email", "noreply@example.com")
+        monkeypatch.setattr(settings, "smtp_use_tls", True)
+        monkeypatch.setattr(settings, "app_url", "http://localhost:8000")
+
+        mock_smtp = MagicMock()
+        mock_smtp.__enter__ = MagicMock(return_value=mock_smtp)
+        mock_smtp.__exit__ = MagicMock(return_value=False)
+        mock_smtp.login.side_effect = smtplib.SMTPAuthenticationError(
+            535, b"Authentication failed"
+        )
+
+        smtp_patch = "src.web.email_service.smtplib.SMTP"
+        with patch(smtp_patch, return_value=mock_smtp):
+            from src.web.email_service import send_password_reset_email
+
+            result = send_password_reset_email("test@example.com", "token123")
+            assert result is False
+
+    def test_returns_false_on_auth_error_port_465(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ポート 465 での認証エラー時は False を返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "smtp_host", "smtp.example.com")
+        monkeypatch.setattr(settings, "smtp_port", SMTP_SSL_PORT)
+        monkeypatch.setattr(settings, "smtp_user", "user@example.com")
+        monkeypatch.setattr(settings, "smtp_password", "wrong_password")
+        monkeypatch.setattr(settings, "smtp_from_email", "noreply@example.com")
+        monkeypatch.setattr(settings, "smtp_use_tls", False)
+        monkeypatch.setattr(settings, "app_url", "http://localhost:8000")
+
+        mock_smtp_ssl = MagicMock()
+        mock_smtp_ssl.__enter__ = MagicMock(return_value=mock_smtp_ssl)
+        mock_smtp_ssl.__exit__ = MagicMock(return_value=False)
+        mock_smtp_ssl.login.side_effect = smtplib.SMTPAuthenticationError(
+            535, b"Authentication credentials invalid"
+        )
+
+        ssl_patch = "src.web.email_service.smtplib.SMTP_SSL"
+        with patch(ssl_patch, return_value=mock_smtp_ssl):
+            from src.web.email_service import send_password_reset_email
+
+            result = send_password_reset_email("test@example.com", "token123")
+            assert result is False
+
+    def test_returns_false_on_connection_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """接続拒否時は False を返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "smtp_host", "smtp.example.com")
+        monkeypatch.setattr(settings, "smtp_port", 587)
+        monkeypatch.setattr(settings, "smtp_user", "user@example.com")
+        monkeypatch.setattr(settings, "smtp_password", "password")
+        monkeypatch.setattr(settings, "smtp_from_email", "noreply@example.com")
+        monkeypatch.setattr(settings, "smtp_use_tls", True)
+        monkeypatch.setattr(settings, "app_url", "http://localhost:8000")
+
+        smtp_patch = "src.web.email_service.smtplib.SMTP"
+        with patch(
+            smtp_patch, side_effect=ConnectionRefusedError("Connection refused")
+        ):
+            from src.web.email_service import send_password_reset_email
+
+            result = send_password_reset_email("test@example.com", "token123")
+            assert result is False
+
+    def test_returns_false_on_recipient_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """受信者拒否時は False を返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "smtp_host", "smtp.example.com")
+        monkeypatch.setattr(settings, "smtp_port", 587)
+        monkeypatch.setattr(settings, "smtp_user", "user@example.com")
+        monkeypatch.setattr(settings, "smtp_password", "password")
+        monkeypatch.setattr(settings, "smtp_from_email", "noreply@example.com")
+        monkeypatch.setattr(settings, "smtp_use_tls", True)
+        monkeypatch.setattr(settings, "app_url", "http://localhost:8000")
+
+        mock_smtp = MagicMock()
+        mock_smtp.__enter__ = MagicMock(return_value=mock_smtp)
+        mock_smtp.__exit__ = MagicMock(return_value=False)
+        mock_smtp.send_message.side_effect = smtplib.SMTPRecipientsRefused(
+            {"bad@example.com": (550, b"User unknown")}
+        )
+
+        smtp_patch = "src.web.email_service.smtplib.SMTP"
+        with patch(smtp_patch, return_value=mock_smtp):
+            from src.web.email_service import send_password_reset_email
+
+            result = send_password_reset_email("bad@example.com", "token123")
+            assert result is False
+
+
+# ===========================================================================
+# メール内容検証のテスト
+# ===========================================================================
+
+
+class TestEmailContent:
+    """メール内容の検証テスト。"""
+
+    def test_password_reset_email_contains_token_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """パスワードリセットメールにトークンURLが含まれる。"""
+        from email.mime.multipart import MIMEMultipart
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "smtp_host", "smtp.example.com")
+        monkeypatch.setattr(settings, "smtp_port", 587)
+        monkeypatch.setattr(settings, "smtp_user", "user@example.com")
+        monkeypatch.setattr(settings, "smtp_password", "password")
+        monkeypatch.setattr(settings, "smtp_from_email", "noreply@example.com")
+        monkeypatch.setattr(settings, "smtp_use_tls", True)
+        monkeypatch.setattr(settings, "app_url", "https://example.com")
+
+        mock_smtp = MagicMock()
+        mock_smtp.__enter__ = MagicMock(return_value=mock_smtp)
+        mock_smtp.__exit__ = MagicMock(return_value=False)
+        sent_message = None
+
+        def capture_message(msg: MIMEMultipart) -> None:
+            nonlocal sent_message
+            sent_message = msg
+
+        mock_smtp.send_message.side_effect = capture_message
+
+        smtp_patch = "src.web.email_service.smtplib.SMTP"
+        with patch(smtp_patch, return_value=mock_smtp):
+            from src.web.email_service import send_password_reset_email
+
+            result = send_password_reset_email("test@example.com", "my_reset_token")
+            assert result is True
+
+        # メッセージが送信された
+        assert sent_message is not None
+        assert sent_message["To"] == "test@example.com"
+        assert sent_message["From"] == "noreply@example.com"
+        assert sent_message["Subject"] == "Password Reset Request"
+
+        # 本文にトークンURLが含まれる
+        for part in sent_message.walk():
+            if part.get_content_type() in ("text/plain", "text/html"):
+                content = part.get_payload(decode=True).decode()
+                assert (
+                    "https://example.com/reset-password?token=my_reset_token" in content
+                )
+
+    def test_email_change_verification_contains_token_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """メールアドレス変更確認メールにトークンURLが含まれる。"""
+        from email.mime.multipart import MIMEMultipart
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "smtp_host", "smtp.example.com")
+        monkeypatch.setattr(settings, "smtp_port", 587)
+        monkeypatch.setattr(settings, "smtp_user", "user@example.com")
+        monkeypatch.setattr(settings, "smtp_password", "password")
+        monkeypatch.setattr(settings, "smtp_from_email", "noreply@example.com")
+        monkeypatch.setattr(settings, "smtp_use_tls", True)
+        monkeypatch.setattr(settings, "app_url", "https://example.com")
+
+        mock_smtp = MagicMock()
+        mock_smtp.__enter__ = MagicMock(return_value=mock_smtp)
+        mock_smtp.__exit__ = MagicMock(return_value=False)
+        sent_message = None
+
+        def capture_message(msg: MIMEMultipart) -> None:
+            nonlocal sent_message
+            sent_message = msg
+
+        mock_smtp.send_message.side_effect = capture_message
+
+        smtp_patch = "src.web.email_service.smtplib.SMTP"
+        with patch(smtp_patch, return_value=mock_smtp):
+            from src.web.email_service import send_email_change_verification
+
+            result = send_email_change_verification(
+                "new@example.com", "my_verify_token"
+            )
+            assert result is True
+
+        # メッセージが送信された
+        assert sent_message is not None
+        assert sent_message["To"] == "new@example.com"
+        assert sent_message["Subject"] == "Confirm Your Email Address"
+
+        # 本文にトークンURLが含まれる
+        for part in sent_message.walk():
+            if part.get_content_type() in ("text/plain", "text/html"):
+                content = part.get_payload(decode=True).decode()
+                assert (
+                    "https://example.com/confirm-email?token=my_verify_token" in content
+                )

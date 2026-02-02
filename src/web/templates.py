@@ -342,11 +342,201 @@ def settings_page(
                         Update your account password
                     </p>
                 </a>
+                <a href="/settings/maintenance"
+                   class="block bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
+                    <h2 class="text-lg font-semibold mb-2">Database Maintenance</h2>
+                    <p class="text-gray-400 text-sm">
+                        View DB stats and cleanup orphaned data
+                    </p>
+                </a>
             </div>
         </div>
     </div>
     """
     return _base("Settings", content)
+
+
+def maintenance_page(
+    lobby_total: int,
+    lobby_orphaned: int,
+    bump_total: int,
+    bump_orphaned: int,
+    sticky_total: int,
+    sticky_orphaned: int,
+    panel_total: int,
+    panel_orphaned: int,
+    guild_count: int,
+    success: str | None = None,
+    csrf_token: str = "",
+) -> str:
+    """Database maintenance page template."""
+    message_html = ""
+    if success:
+        message_html = f"""
+        <div class="bg-green-500/20 border border-green-500 text-green-300 px-4 py-3 rounded mb-6">
+            {escape(success)}
+        </div>
+        """
+
+    # 孤立データの合計
+    total_orphaned = lobby_orphaned + bump_orphaned + sticky_orphaned + panel_orphaned
+
+    content = f"""
+    <div class="p-6">
+        {_nav("Database Maintenance", show_dashboard_link=True)}
+        <div class="max-w-2xl">
+            {message_html}
+            <div class="mb-6 text-gray-400 text-sm">
+                <a href="/settings" class="hover:text-white">&larr; Back to Settings</a>
+            </div>
+            <div class="bg-gray-800 p-6 rounded-lg mb-6">
+                <h2 class="text-lg font-semibold mb-4">Database Statistics</h2>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                    <div class="bg-gray-700 p-4 rounded">
+                        <p class="text-2xl font-bold">{lobby_total}</p>
+                        <p class="text-gray-400 text-sm">Lobbies</p>
+                        <p class="text-yellow-400 text-xs mt-1">
+                            Orphaned: {lobby_orphaned}
+                        </p>
+                    </div>
+                    <div class="bg-gray-700 p-4 rounded">
+                        <p class="text-2xl font-bold">{bump_total}</p>
+                        <p class="text-gray-400 text-sm">Bump Configs</p>
+                        <p class="text-yellow-400 text-xs mt-1">
+                            Orphaned: {bump_orphaned}
+                        </p>
+                    </div>
+                    <div class="bg-gray-700 p-4 rounded">
+                        <p class="text-2xl font-bold">{sticky_total}</p>
+                        <p class="text-gray-400 text-sm">Stickies</p>
+                        <p class="text-yellow-400 text-xs mt-1">
+                            Orphaned: {sticky_orphaned}
+                        </p>
+                    </div>
+                    <div class="bg-gray-700 p-4 rounded">
+                        <p class="text-2xl font-bold">{panel_total}</p>
+                        <p class="text-gray-400 text-sm">Role Panels</p>
+                        <p class="text-yellow-400 text-xs mt-1">
+                            Orphaned: {panel_orphaned}
+                        </p>
+                    </div>
+                </div>
+                <div class="mt-4 text-center">
+                    <p class="text-gray-400">Active Guilds: <span class="text-white font-semibold">{guild_count}</span></p>
+                </div>
+            </div>
+
+            <div class="bg-gray-800 p-6 rounded-lg">
+                <h2 class="text-lg font-semibold mb-4">Actions</h2>
+                <p class="text-gray-400 text-sm mb-4">
+                    <strong>Refresh:</strong> Update statistics from the database.<br>
+                    <strong>Cleanup:</strong> Remove records for guilds the bot is no longer a member of.
+                </p>
+                <div class="flex gap-4 flex-wrap">
+                    <form action="/settings/maintenance/refresh" method="POST" class="inline"
+                          onsubmit="return handleSubmit(this, 'Refreshing...')">
+                        <input type="hidden" name="csrf_token" value="{csrf_token}" />
+                        <button type="submit"
+                                class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded font-semibold
+                                       transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                            Refresh Stats
+                        </button>
+                    </form>
+                    <button type="button"
+                            onclick="showCleanupModal()"
+                            class="bg-red-600 hover:bg-red-700 px-6 py-2 rounded font-semibold
+                                   transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            {"disabled" if total_orphaned == 0 else ""}>
+                        {f"Cleanup {total_orphaned} Records" if total_orphaned > 0 else "No Orphaned Data"}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cleanup Confirmation Modal -->
+    <div id="cleanup-modal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+        <div class="bg-gray-800 rounded-lg p-6 max-w-md mx-4 shadow-xl">
+            <h3 class="text-xl font-bold mb-4 text-red-400">Confirm Cleanup</h3>
+            <p class="text-gray-300 mb-4">
+                The following orphaned data will be permanently deleted:
+            </p>
+            <div class="bg-gray-700 rounded p-4 mb-4 space-y-2 text-sm">
+                {"" if lobby_orphaned == 0 else f'<div class="flex justify-between"><span>Lobbies:</span><span class="text-yellow-400">{lobby_orphaned}</span></div>'}
+                {"" if bump_orphaned == 0 else f'<div class="flex justify-between"><span>Bump Configs:</span><span class="text-yellow-400">{bump_orphaned}</span></div>'}
+                {"" if sticky_orphaned == 0 else f'<div class="flex justify-between"><span>Stickies:</span><span class="text-yellow-400">{sticky_orphaned}</span></div>'}
+                {"" if panel_orphaned == 0 else f'<div class="flex justify-between"><span>Role Panels:</span><span class="text-yellow-400">{panel_orphaned}</span></div>'}
+                <div class="border-t border-gray-600 pt-2 mt-2 flex justify-between font-semibold">
+                    <span>Total:</span>
+                    <span class="text-red-400">{total_orphaned}</span>
+                </div>
+            </div>
+            <p class="text-gray-400 text-sm mb-4">
+                This action cannot be undone.
+            </p>
+            <div class="flex gap-4 justify-end">
+                <button type="button"
+                        onclick="hideCleanupModal()"
+                        class="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded font-semibold transition-colors">
+                    Cancel
+                </button>
+                <form action="/settings/maintenance/cleanup" method="POST" class="inline"
+                      onsubmit="return handleCleanupSubmit(this)">
+                    <input type="hidden" name="csrf_token" value="{csrf_token}" />
+                    <button type="submit"
+                            id="confirm-cleanup-btn"
+                            class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded font-semibold transition-colors">
+                        Delete {total_orphaned} Records
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    function handleSubmit(form, loadingText) {{
+        const btn = form.querySelector('button[type="submit"]');
+        if (btn.disabled) return false;
+        btn.disabled = true;
+        btn.textContent = loadingText;
+        return true;
+    }}
+
+    function showCleanupModal() {{
+        const modal = document.getElementById('cleanup-modal');
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }}
+
+    function hideCleanupModal() {{
+        const modal = document.getElementById('cleanup-modal');
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }}
+
+    function handleCleanupSubmit(form) {{
+        const btn = document.getElementById('confirm-cleanup-btn');
+        btn.disabled = true;
+        btn.textContent = 'Cleaning up...';
+        return true;
+    }}
+
+    // Close modal on backdrop click
+    document.getElementById('cleanup-modal').addEventListener('click', function(e) {{
+        if (e.target === this) {{
+            hideCleanupModal();
+        }}
+    }});
+
+    // Close modal on Escape key
+    document.addEventListener('keydown', function(e) {{
+        if (e.key === 'Escape') {{
+            hideCleanupModal();
+        }}
+    }});
+    </script>
+    """
+    return _base("Maintenance", content)
 
 
 def email_change_page(
@@ -654,16 +844,70 @@ def email_verification_pending_page(
     return _base("Verify Email", content)
 
 
-def lobbies_list_page(lobbies: list["Lobby"], csrf_token: str = "") -> str:
-    """Lobbies list page template."""
+def lobbies_list_page(
+    lobbies: list["Lobby"],
+    csrf_token: str = "",
+    guilds_map: dict[str, str] | None = None,
+    channels_map: dict[str, list[tuple[str, str]]] | None = None,
+) -> str:
+    """Lobbies list page template.
+
+    Args:
+        lobbies: ロビーのリスト
+        csrf_token: CSRF トークン
+        guilds_map: ギルドID -> ギルド名 のマッピング
+        channels_map: ギルドID -> [(チャンネルID, チャンネル名), ...] のマッピング
+    """
+    if guilds_map is None:
+        guilds_map = {}
+    if channels_map is None:
+        channels_map = {}
+
+    def get_channel_name(guild_id: str, channel_id: str) -> str | None:
+        """チャンネル名を取得する。"""
+        guild_channels = channels_map.get(guild_id, [])
+        for cid, name in guild_channels:
+            if cid == channel_id:
+                return name
+        return None
+
     rows = ""
     for lobby in lobbies:
         session_count = len(lobby.sessions) if lobby.sessions else 0
+        guild_name = guilds_map.get(lobby.guild_id)
+        channel_name = get_channel_name(lobby.guild_id, lobby.lobby_channel_id)
+
+        # サーバー名表示
+        if guild_name:
+            guild_display = (
+                f'<span class="font-medium">{escape(guild_name)}</span>'
+                f'<br><span class="font-mono text-xs text-gray-500">'
+                f"{escape(lobby.guild_id)}</span>"
+            )
+        else:
+            guild_display = (
+                f'<span class="font-mono text-yellow-400">'
+                f"{escape(lobby.guild_id)}</span>"
+            )
+
+        # チャンネル名表示
+        if channel_name:
+            channel_display = (
+                f'<span class="font-medium">#{escape(channel_name)}</span>'
+                f'<br><span class="font-mono text-xs text-gray-500">'
+                f"{escape(lobby.lobby_channel_id)}</span>"
+            )
+        else:
+            channel_display = (
+                f'<span class="font-mono text-yellow-400">'
+                f"{escape(lobby.lobby_channel_id)}</span>"
+            )
+
         rows += f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4">{lobby.id}</td>
-            <td class="py-3 px-4 font-mono text-sm">{escape(lobby.guild_id)}</td>
-            <td class="py-3 px-4 font-mono text-sm">{escape(lobby.lobby_channel_id)}</td>
+            <td class="py-3 px-4">{guild_display}</td>
+            <td class="py-3 px-4">{channel_display}</td>
             <td class="py-3 px-4">{lobby.default_user_limit or "無制限"}</td>
             <td class="py-3 px-4">{session_count}</td>
             <td class="py-3 px-4">
@@ -696,8 +940,8 @@ def lobbies_list_page(lobbies: list["Lobby"], csrf_token: str = "") -> str:
                 <thead class="bg-gray-700">
                     <tr>
                         <th class="py-3 px-4 text-left">ID</th>
-                        <th class="py-3 px-4 text-left">Guild ID</th>
-                        <th class="py-3 px-4 text-left">Channel ID</th>
+                        <th class="py-3 px-4 text-left">Server</th>
+                        <th class="py-3 px-4 text-left">Channel</th>
                         <th class="py-3 px-4 text-left">User Limit</th>
                         <th class="py-3 px-4 text-left">Active Sessions</th>
                         <th class="py-3 px-4 text-left">Actions</th>
@@ -716,8 +960,33 @@ def lobbies_list_page(lobbies: list["Lobby"], csrf_token: str = "") -> str:
     return _base("Lobbies", content)
 
 
-def sticky_list_page(stickies: list["StickyMessage"], csrf_token: str = "") -> str:
-    """Sticky messages list page template."""
+def sticky_list_page(
+    stickies: list["StickyMessage"],
+    csrf_token: str = "",
+    guilds_map: dict[str, str] | None = None,
+    channels_map: dict[str, list[tuple[str, str]]] | None = None,
+) -> str:
+    """Sticky messages list page template.
+
+    Args:
+        stickies: スティッキーメッセージのリスト
+        csrf_token: CSRF トークン
+        guilds_map: ギルドID -> ギルド名 のマッピング
+        channels_map: ギルドID -> [(チャンネルID, チャンネル名), ...] のマッピング
+    """
+    if guilds_map is None:
+        guilds_map = {}
+    if channels_map is None:
+        channels_map = {}
+
+    def get_channel_name(guild_id: str, channel_id: str) -> str | None:
+        """チャンネル名を取得する。"""
+        guild_channels = channels_map.get(guild_id, [])
+        for cid, name in guild_channels:
+            if cid == channel_id:
+                return name
+        return None
+
     rows = ""
     for sticky in stickies:
         title_display = (
@@ -732,10 +1001,40 @@ def sticky_list_page(stickies: list["StickyMessage"], csrf_token: str = "") -> s
             else sticky.description
         )
         color_display = f"#{sticky.color:06x}" if sticky.color else "-"
+
+        guild_name = guilds_map.get(sticky.guild_id)
+        channel_name = get_channel_name(sticky.guild_id, sticky.channel_id)
+
+        # サーバー名表示
+        if guild_name:
+            guild_display = (
+                f'<span class="font-medium">{escape(guild_name)}</span>'
+                f'<br><span class="font-mono text-xs text-gray-500">'
+                f"{escape(sticky.guild_id)}</span>"
+            )
+        else:
+            guild_display = (
+                f'<span class="font-mono text-yellow-400">'
+                f"{escape(sticky.guild_id)}</span>"
+            )
+
+        # チャンネル名表示
+        if channel_name:
+            channel_display = (
+                f'<span class="font-medium">#{escape(channel_name)}</span>'
+                f'<br><span class="font-mono text-xs text-gray-500">'
+                f"{escape(sticky.channel_id)}</span>"
+            )
+        else:
+            channel_display = (
+                f'<span class="font-mono text-yellow-400">'
+                f"{escape(sticky.channel_id)}</span>"
+            )
+
         rows += f"""
         <tr class="border-b border-gray-700">
-            <td class="py-3 px-4 font-mono text-sm">{escape(sticky.guild_id)}</td>
-            <td class="py-3 px-4 font-mono text-sm">{escape(sticky.channel_id)}</td>
+            <td class="py-3 px-4">{guild_display}</td>
+            <td class="py-3 px-4">{channel_display}</td>
             <td class="py-3 px-4">{title_display}</td>
             <td class="py-3 px-4 text-gray-400 text-sm">{desc_display}</td>
             <td class="py-3 px-4">{escape(sticky.message_type)}</td>
@@ -773,8 +1072,8 @@ def sticky_list_page(stickies: list["StickyMessage"], csrf_token: str = "") -> s
             <table class="w-full">
                 <thead class="bg-gray-700">
                     <tr>
-                        <th class="py-3 px-4 text-left">Guild ID</th>
-                        <th class="py-3 px-4 text-left">Channel ID</th>
+                        <th class="py-3 px-4 text-left">Server</th>
+                        <th class="py-3 px-4 text-left">Channel</th>
                         <th class="py-3 px-4 text-left">Title</th>
                         <th class="py-3 px-4 text-left">Description</th>
                         <th class="py-3 px-4 text-left">Type</th>
@@ -797,15 +1096,64 @@ def sticky_list_page(stickies: list["StickyMessage"], csrf_token: str = "") -> s
 
 
 def bump_list_page(
-    configs: list["BumpConfig"], reminders: list["BumpReminder"], csrf_token: str = ""
+    configs: list["BumpConfig"],
+    reminders: list["BumpReminder"],
+    csrf_token: str = "",
+    guilds_map: dict[str, str] | None = None,
+    channels_map: dict[str, list[tuple[str, str]]] | None = None,
 ) -> str:
-    """Bump configs and reminders list page template."""
+    """Bump configs and reminders list page template.
+
+    Args:
+        configs: Bump 設定のリスト
+        reminders: Bump リマインダーのリスト
+        csrf_token: CSRF トークン
+        guilds_map: ギルドID -> ギルド名 のマッピング
+        channels_map: ギルドID -> [(チャンネルID, チャンネル名), ...] のマッピング
+    """
+    if guilds_map is None:
+        guilds_map = {}
+    if channels_map is None:
+        channels_map = {}
+
+    def get_channel_name(guild_id: str, channel_id: str) -> str | None:
+        """チャンネル名を取得する。"""
+        guild_channels = channels_map.get(guild_id, [])
+        for cid, name in guild_channels:
+            if cid == channel_id:
+                return name
+        return None
+
+    def format_guild_display(guild_id: str) -> str:
+        """サーバー名の表示を生成する。"""
+        guild_name = guilds_map.get(guild_id)
+        if guild_name:
+            return (
+                f'<span class="font-medium">{escape(guild_name)}</span>'
+                f'<br><span class="font-mono text-xs text-gray-500">'
+                f"{escape(guild_id)}</span>"
+            )
+        return f'<span class="font-mono text-yellow-400">{escape(guild_id)}</span>'
+
+    def format_channel_display(guild_id: str, channel_id: str) -> str:
+        """チャンネル名の表示を生成する。"""
+        channel_name = get_channel_name(guild_id, channel_id)
+        if channel_name:
+            return (
+                f'<span class="font-medium">#{escape(channel_name)}</span>'
+                f'<br><span class="font-mono text-xs text-gray-500">'
+                f"{escape(channel_id)}</span>"
+            )
+        return f'<span class="font-mono text-yellow-400">{escape(channel_id)}</span>'
+
     config_rows = ""
     for config in configs:
+        guild_display = format_guild_display(config.guild_id)
+        channel_display = format_channel_display(config.guild_id, config.channel_id)
         config_rows += f"""
         <tr class="border-b border-gray-700">
-            <td class="py-3 px-4 font-mono text-sm">{escape(config.guild_id)}</td>
-            <td class="py-3 px-4 font-mono text-sm">{escape(config.channel_id)}</td>
+            <td class="py-3 px-4">{guild_display}</td>
+            <td class="py-3 px-4">{channel_display}</td>
             <td class="py-3 px-4 text-gray-400 text-sm">
                 {config.created_at.strftime("%Y-%m-%d %H:%M") if config.created_at else "-"}
             </td>
@@ -838,12 +1186,14 @@ def bump_list_page(
         remind_at = (
             reminder.remind_at.strftime("%Y-%m-%d %H:%M") if reminder.remind_at else "-"
         )
+        guild_display = format_guild_display(reminder.guild_id)
+        channel_display = format_channel_display(reminder.guild_id, reminder.channel_id)
         reminder_rows += f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4">{reminder.id}</td>
-            <td class="py-3 px-4 font-mono text-sm">{escape(reminder.guild_id)}</td>
+            <td class="py-3 px-4">{guild_display}</td>
             <td class="py-3 px-4">{escape(reminder.service_name)}</td>
-            <td class="py-3 px-4 font-mono text-sm">{escape(reminder.channel_id)}</td>
+            <td class="py-3 px-4">{channel_display}</td>
             <td class="py-3 px-4 text-gray-400 text-sm">{remind_at}</td>
             <td class="py-3 px-4">
                 <span class="{status_class}">{status}</span>
@@ -888,8 +1238,8 @@ def bump_list_page(
             <table class="w-full">
                 <thead class="bg-gray-700">
                     <tr>
-                        <th class="py-3 px-4 text-left">Guild ID</th>
-                        <th class="py-3 px-4 text-left">Channel ID</th>
+                        <th class="py-3 px-4 text-left">Server</th>
+                        <th class="py-3 px-4 text-left">Channel</th>
                         <th class="py-3 px-4 text-left">Created</th>
                         <th class="py-3 px-4 text-left">Actions</th>
                     </tr>
@@ -906,9 +1256,9 @@ def bump_list_page(
                 <thead class="bg-gray-700">
                     <tr>
                         <th class="py-3 px-4 text-left">ID</th>
-                        <th class="py-3 px-4 text-left">Guild ID</th>
+                        <th class="py-3 px-4 text-left">Server</th>
                         <th class="py-3 px-4 text-left">Service</th>
-                        <th class="py-3 px-4 text-left">Channel ID</th>
+                        <th class="py-3 px-4 text-left">Channel</th>
                         <th class="py-3 px-4 text-left">Remind At</th>
                         <th class="py-3 px-4 text-left">Status</th>
                         <th class="py-3 px-4 text-left">Actions</th>
@@ -931,8 +1281,31 @@ def role_panels_list_page(
     panels: list["RolePanel"],
     items_by_panel: dict[int, list["RolePanelItem"]],
     csrf_token: str = "",
+    guilds_map: dict[str, str] | None = None,
+    channels_map: dict[str, list[tuple[str, str]]] | None = None,
 ) -> str:
-    """Role panels list page template."""
+    """Role panels list page template.
+
+    Args:
+        panels: ロールパネルのリスト
+        items_by_panel: パネルID -> アイテムリスト のマッピング
+        csrf_token: CSRF トークン
+        guilds_map: ギルドID -> ギルド名 のマッピング
+        channels_map: ギルドID -> [(チャンネルID, チャンネル名), ...] のマッピング
+    """
+    if guilds_map is None:
+        guilds_map = {}
+    if channels_map is None:
+        channels_map = {}
+
+    def get_channel_name(guild_id: str, channel_id: str) -> str | None:
+        """チャンネル名を取得する。"""
+        guild_channels = channels_map.get(guild_id, [])
+        for cid, name in guild_channels:
+            if cid == channel_id:
+                return name
+        return None
+
     panel_rows = ""
     for panel in panels:
         panel_type_badge = (
@@ -966,6 +1339,35 @@ def role_panels_list_page(
             panel.created_at.strftime("%Y-%m-%d %H:%M") if panel.created_at else "-"
         )
 
+        guild_name = guilds_map.get(panel.guild_id)
+        channel_name = get_channel_name(panel.guild_id, panel.channel_id)
+
+        # サーバー名表示
+        if guild_name:
+            guild_display = (
+                f'<span class="font-medium">{escape(guild_name)}</span>'
+                f'<br><span class="font-mono text-xs text-gray-500">'
+                f"{escape(panel.guild_id)}</span>"
+            )
+        else:
+            guild_display = (
+                f'<span class="font-mono text-yellow-400">'
+                f"{escape(panel.guild_id)}</span>"
+            )
+
+        # チャンネル名表示
+        if channel_name:
+            channel_display = (
+                f'<span class="font-medium">#{escape(channel_name)}</span>'
+                f'<br><span class="font-mono text-xs text-gray-500">'
+                f"{escape(panel.channel_id)}</span>"
+            )
+        else:
+            channel_display = (
+                f'<span class="font-mono text-yellow-400">'
+                f"{escape(panel.channel_id)}</span>"
+            )
+
         panel_rows += f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4">
@@ -980,8 +1382,8 @@ def role_panels_list_page(
             <td class="py-3 px-4">
                 {panel_type_badge}{remove_reaction_badge}
             </td>
-            <td class="py-3 px-4 font-mono text-sm">{escape(panel.guild_id)}</td>
-            <td class="py-3 px-4 font-mono text-sm">{escape(panel.channel_id)}</td>
+            <td class="py-3 px-4">{guild_display}</td>
+            <td class="py-3 px-4">{channel_display}</td>
             <td class="py-3 px-4">
                 <div class="text-sm">{len(items)} role(s)</div>
                 {items_html}
@@ -1033,8 +1435,8 @@ def role_panels_list_page(
                     <tr>
                         <th class="py-3 px-4 text-left">Title</th>
                         <th class="py-3 px-4 text-left">Type</th>
-                        <th class="py-3 px-4 text-left">Guild ID</th>
-                        <th class="py-3 px-4 text-left">Channel ID</th>
+                        <th class="py-3 px-4 text-left">Server</th>
+                        <th class="py-3 px-4 text-left">Channel</th>
                         <th class="py-3 px-4 text-left">Roles</th>
                         <th class="py-3 px-4 text-left">Created</th>
                         <th class="py-3 px-4 text-left">Actions</th>

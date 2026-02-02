@@ -32,11 +32,14 @@ from src.services.db_service import (
     delete_lobbies_by_guild,
     delete_lobby,
     delete_role_panel,
+    delete_role_panels_by_guild,
     delete_sticky_message,
     delete_sticky_messages_by_guild,
     delete_voice_session,
     delete_voice_sessions_by_guild,
+    get_all_bump_configs,
     get_all_discord_guilds,
+    get_all_lobbies,
     get_all_role_panels,
     get_all_sticky_messages,
     get_all_voice_sessions,
@@ -2698,3 +2701,218 @@ class TestDeleteStickyMessagesByGuild:
         """存在しないギルドを指定しても 0 が返る。"""
         count = await delete_sticky_messages_by_guild(db_session, "nonexistent")
         assert count == 0
+
+
+class TestGetAllLobbies:
+    """get_all_lobbies のテスト。"""
+
+    async def test_get_all_lobbies(self, db_session: AsyncSession) -> None:
+        """全てのロビーを取得できる。"""
+        # 複数ギルドにロビーを作成
+        await create_lobby(db_session, guild_id="guild1", lobby_channel_id="ch1")
+        await create_lobby(db_session, guild_id="guild1", lobby_channel_id="ch2")
+        await create_lobby(db_session, guild_id="guild2", lobby_channel_id="ch3")
+
+        lobbies = await get_all_lobbies(db_session)
+        assert len(lobbies) == 3
+
+        channel_ids = {lobby.lobby_channel_id for lobby in lobbies}
+        assert channel_ids == {"ch1", "ch2", "ch3"}
+
+    async def test_get_all_lobbies_empty(self, db_session: AsyncSession) -> None:
+        """ロビーが存在しない場合は空リストを返す。"""
+        lobbies = await get_all_lobbies(db_session)
+        assert lobbies == []
+
+    async def test_get_all_lobbies_after_deletion(
+        self, db_session: AsyncSession
+    ) -> None:
+        """削除後にロビーが正しく取得される。"""
+        lobby1 = await create_lobby(
+            db_session, guild_id="guild1", lobby_channel_id="ch1"
+        )
+        await create_lobby(db_session, guild_id="guild1", lobby_channel_id="ch2")
+
+        # 1つ削除（IDで削除）
+        await delete_lobby(db_session, lobby1.id)
+
+        lobbies = await get_all_lobbies(db_session)
+        assert len(lobbies) == 1
+        assert lobbies[0].lobby_channel_id == "ch2"
+
+
+class TestGetAllBumpConfigs:
+    """get_all_bump_configs のテスト。"""
+
+    async def test_get_all_bump_configs(self, db_session: AsyncSession) -> None:
+        """全ての bump 設定を取得できる。"""
+        # 複数ギルドに bump 設定を作成
+        await upsert_bump_config(
+            db_session,
+            guild_id="guild1",
+            channel_id="ch1",
+        )
+        await upsert_bump_config(
+            db_session,
+            guild_id="guild2",
+            channel_id="ch2",
+        )
+        await upsert_bump_config(
+            db_session,
+            guild_id="guild3",
+            channel_id="ch3",
+        )
+
+        configs = await get_all_bump_configs(db_session)
+        assert len(configs) == 3
+
+        guild_ids = {config.guild_id for config in configs}
+        assert guild_ids == {"guild1", "guild2", "guild3"}
+
+    async def test_get_all_bump_configs_empty(self, db_session: AsyncSession) -> None:
+        """bump 設定が存在しない場合は空リストを返す。"""
+        configs = await get_all_bump_configs(db_session)
+        assert configs == []
+
+    async def test_get_all_bump_configs_after_deletion(
+        self, db_session: AsyncSession
+    ) -> None:
+        """削除後に bump 設定が正しく取得される。"""
+        await upsert_bump_config(
+            db_session,
+            guild_id="guild1",
+            channel_id="ch1",
+        )
+        await upsert_bump_config(
+            db_session,
+            guild_id="guild2",
+            channel_id="ch2",
+        )
+
+        # 1つ削除
+        await delete_bump_config(db_session, "guild1")
+
+        configs = await get_all_bump_configs(db_session)
+        assert len(configs) == 1
+        assert configs[0].guild_id == "guild2"
+
+    async def test_get_all_bump_configs_with_updated_data(
+        self, db_session: AsyncSession
+    ) -> None:
+        """更新後のデータが正しく取得される。"""
+        await upsert_bump_config(
+            db_session,
+            guild_id="guild1",
+            channel_id="ch1",
+        )
+
+        # 同じギルドの設定を更新
+        await upsert_bump_config(
+            db_session,
+            guild_id="guild1",
+            channel_id="ch1_updated",
+        )
+
+        configs = await get_all_bump_configs(db_session)
+        assert len(configs) == 1
+        assert configs[0].channel_id == "ch1_updated"
+
+
+class TestDeleteRolePanelsByGuild:
+    """delete_role_panels_by_guild のテスト。"""
+
+    async def test_delete_role_panels_by_guild(self, db_session: AsyncSession) -> None:
+        """指定ギルドの全ロールパネルを削除できる。"""
+        # 対象ギルドにロールパネルを作成
+        panel1 = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="ch1",
+            panel_type="button",
+            title="Panel 1",
+        )
+        panel2 = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="ch2",
+            panel_type="button",
+            title="Panel 2",
+        )
+        # 別ギルドにもロールパネルを作成
+        await create_role_panel(
+            db_session,
+            guild_id="999",
+            channel_id="ch3",
+            panel_type="button",
+            title="Other Panel",
+        )
+
+        # パネルにアイテムを追加
+        await add_role_panel_item(
+            db_session,
+            panel_id=panel1.id,
+            role_id="role1",
+            emoji="game",
+        )
+        await add_role_panel_item(
+            db_session,
+            panel_id=panel2.id,
+            role_id="role2",
+            emoji="music",
+        )
+
+        count = await delete_role_panels_by_guild(db_session, "123")
+        assert count == 2
+
+        # 対象ギルドのロールパネルは削除されている
+        all_panels = await get_all_role_panels(db_session)
+        target_panels = [p for p in all_panels if p.guild_id == "123"]
+        assert len(target_panels) == 0
+
+        # カスケード削除によりアイテムも削除されている
+        items1 = await get_role_panel_items(db_session, panel1.id)
+        items2 = await get_role_panel_items(db_session, panel2.id)
+        assert len(items1) == 0
+        assert len(items2) == 0
+
+        # 別ギルドのロールパネルは残っている
+        other_panels = [p for p in all_panels if p.guild_id == "999"]
+        assert len(other_panels) == 1
+
+    async def test_delete_role_panels_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないギルドを指定しても 0 が返る。"""
+        count = await delete_role_panels_by_guild(db_session, "nonexistent")
+        assert count == 0
+
+    async def test_delete_role_panels_by_guild_with_multiple_items(
+        self, db_session: AsyncSession
+    ) -> None:
+        """複数アイテムを持つパネルが正しくカスケード削除される。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="ch1",
+            panel_type="button",
+            title="Panel with many items",
+        )
+
+        # 複数アイテムを追加
+        for i in range(5):
+            await add_role_panel_item(
+                db_session,
+                panel_id=panel.id,
+                role_id=f"role{i}",
+                emoji=f"emoji{i}",
+            )
+
+        items_before = await get_role_panel_items(db_session, panel.id)
+        assert len(items_before) == 5
+
+        count = await delete_role_panels_by_guild(db_session, "123")
+        assert count == 1
+
+        # カスケード削除によりアイテムも全て削除されている
+        items_after = await get_role_panel_items(db_session, panel.id)
+        assert len(items_after) == 0

@@ -1,5 +1,6 @@
 # Production dependencies for Heroku deployment
 # Generated from pyproject.toml [project.dependencies]
+# Do not edit manually - run: python scripts/sync_requirements.py
 
 discord.py~=2.6.0
 SQLAlchemy~=2.0.0

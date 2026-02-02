@@ -27,8 +27,9 @@ src/
 ├── bot.py               # Bot クラス (on_ready, Cog ローダー)
 ├── config.py            # pydantic-settings による環境変数管理
 ├── constants.py         # アプリケーション定数
+├── utils.py             # ユーティリティ関数 (チャンネル同期等)
 ├── cogs/
-│   ├── admin.py         # 管理者用コマンド (/vc lobby)
+│   ├── admin.py         # 管理者用コマンド (/admin cleanup, /admin stats)
 │   ├── voice.py         # VC 自動作成・削除、/vc コマンドグループ
 │   ├── bump.py          # Bump リマインダー
 │   ├── sticky.py        # Sticky メッセージ
@@ -53,7 +54,9 @@ src/
 
 tests/
 ├── conftest.py          # pytest fixtures (DB セッション等)
+├── test_utils.py        # utils.py のテスト
 ├── cogs/
+│   ├── test_admin.py    # admin.py のテスト
 │   ├── test_voice.py
 │   ├── test_bump.py
 │   ├── test_sticky.py
@@ -68,7 +71,9 @@ tests/
 │   └── test_role_panel_view.py
 └── web/
     ├── test_app.py
-    └── test_email_service.py
+    ├── test_email_service.py
+    ├── test_lifespan.py # FastAPI lifespan のテスト
+    └── test_templates.py # テンプレート関数のテスト
 ```
 
 ## データベースモデル
@@ -190,6 +195,7 @@ class RolePanel(Base):
     description: Mapped[str | None]    # パネル説明文
     color: Mapped[int | None]          # Embed 色
     remove_reaction: Mapped[bool]      # リアクション自動削除
+    use_embed: Mapped[bool]            # メッセージ形式 (True: Embed, False: Text)
     created_at: Mapped[datetime]
     # relationship: items -> RolePanelItem[]
 ```
@@ -207,6 +213,49 @@ class RolePanelItem(Base):
     style: Mapped[str]                 # ボタンスタイル (primary/secondary/success/danger)
     position: Mapped[int]              # 表示順序
     # unique constraint: (panel_id, emoji)
+```
+
+### DiscordGuild
+ギルド情報のキャッシュ (Web 管理画面用)。
+
+```python
+class DiscordGuild(Base):
+    guild_id: Mapped[str]              # PK
+    guild_name: Mapped[str]            # サーバー名
+    icon_hash: Mapped[str | None]      # アイコンハッシュ
+    member_count: Mapped[int]          # メンバー数
+    updated_at: Mapped[datetime]
+```
+
+### DiscordChannel
+チャンネル情報のキャッシュ (Web 管理画面用)。
+
+```python
+class DiscordChannel(Base):
+    id: Mapped[int]                    # PK
+    guild_id: Mapped[str]              # Discord サーバー ID
+    channel_id: Mapped[str]            # チャンネル ID
+    channel_name: Mapped[str]          # チャンネル名
+    channel_type: Mapped[int]          # チャンネルタイプ
+    position: Mapped[int]              # 表示順序
+    category_id: Mapped[str | None]    # 親カテゴリ ID
+    updated_at: Mapped[datetime]
+    # unique constraint: (guild_id, channel_id)
+```
+
+### DiscordRole
+ロール情報のキャッシュ (Web 管理画面用)。
+
+```python
+class DiscordRole(Base):
+    id: Mapped[int]                    # PK
+    guild_id: Mapped[str]              # Discord サーバー ID
+    role_id: Mapped[str]               # ロール ID
+    role_name: Mapped[str]             # ロール名
+    color: Mapped[int]                 # ロール色
+    position: Mapped[int]              # 表示順序
+    updated_at: Mapped[datetime]
+    # unique constraint: (guild_id, role_id)
 ```
 
 ## 主要機能の設計
@@ -338,7 +387,33 @@ async def cog_load(self):
         self.bot.add_view(view)
 ```
 
-### 5. Web 管理画面 (`web/app.py`)
+### 5. 管理者コマンド (`admin.py`)
+
+Bot オーナー/管理者用のメンテナンスコマンド。
+
+#### /admin cleanup
+ボットが退出したサーバー (orphaned) のデータをクリーンアップ。
+
+```
+1. 全 Lobby, BumpConfig, StickyMessage, RolePanel を取得
+2. 現在参加しているギルド ID のセットを作成
+3. 参加していないギルドのデータを削除
+   - Bump の場合、チャンネルが削除されている場合も削除
+4. 削除結果を Embed で報告
+```
+
+#### /admin stats
+データベース統計情報を表示。
+
+```
+- ロビー数 (総数/孤立数)
+- Bump 設定数 (総数/孤立数)
+- Sticky メッセージ数 (総数/孤立数)
+- ロールパネル数 (総数/孤立数)
+- 参加ギルド数
+```
+
+### 6. Web 管理画面 (`web/app.py`)
 
 #### 認証フロー
 1. 初回起動時: 環境変数の `ADMIN_EMAIL` / `ADMIN_PASSWORD` で管理者作成
@@ -358,16 +433,30 @@ async def cog_load(self):
 | `/` | ダッシュボード (ログイン必須) |
 | `/login` | ログイン画面 |
 | `/logout` | ログアウト |
-| `/lobbies` | ロビー一覧 |
-| `/bump` | Bump 設定一覧 |
-| `/sticky` | Sticky メッセージ一覧 |
-| `/rolepanels` | ロールパネル一覧 |
+| `/lobbies` | ロビー一覧 (サーバー名/チャンネル名表示) |
+| `/bump` | Bump 設定一覧 (サーバー名/チャンネル名表示) |
+| `/sticky` | Sticky メッセージ一覧 (サーバー名/チャンネル名表示) |
+| `/rolepanels` | ロールパネル一覧 (サーバー名/チャンネル名表示) |
 | `/rolepanels/new` | ロールパネル作成 |
+| `/rolepanels/{id}` | ロールパネル詳細・編集 |
 | `/rolepanels/{id}/delete` | ロールパネル削除 |
 | `/settings` | 設定画面 (パスワード変更等) |
+| `/settings/maintenance` | メンテナンス画面 (統計/クリーンアップ) |
 | `/forgot-password` | パスワードリセット |
 
-### 6. Graceful シャットダウン (`main.py`)
+#### サーバー名/チャンネル名表示機能
+一覧ページでは、DiscordGuild/DiscordChannel キャッシュを使用して:
+- キャッシュがある場合: サーバー名/チャンネル名を表示 (ID は小さくグレー)
+- キャッシュがない場合: ID を黄色で表示 (孤立データの可能性)
+
+#### メンテナンス画面
+- **統計表示**: 各機能のレコード数と孤立数
+- **リフレッシュ**: 統計を再計算
+- **クリーンアップ**: 確認モーダル付きで孤立データを削除
+  - 削除対象の内訳を表示
+  - 合計件数を確認後に実行
+
+### 7. Graceful シャットダウン (`main.py`)
 
 #### SIGTERM ハンドラ
 ```python
@@ -383,7 +472,28 @@ async def _shutdown_bot() -> None:
         await _bot.close()
 ```
 
-### 7. データベース接続設定 (`database/engine.py`)
+### 9. Discord データ同期 (`utils.py`)
+
+Bot が参加しているギルド/チャンネル/ロール情報を DB にキャッシュする。
+
+```python
+async def sync_discord_data(bot: commands.Bot, session: AsyncSession) -> None:
+    """Bot 参加中の全ギルド情報を同期"""
+    for guild in bot.guilds:
+        # ギルド情報を upsert
+        await upsert_discord_guild(session, guild)
+        # チャンネル情報を同期 (テキスト系のみ)
+        await sync_guild_channels(session, guild)
+        # ロール情報を同期
+        await sync_guild_roles(session, guild)
+```
+
+#### 同期タイミング
+- Bot 起動時 (`on_ready`)
+- ギルド参加/退出時
+- チャンネル/ロール変更時 (イベント)
+
+### 10. データベース接続設定 (`database/engine.py`)
 
 #### SSL 接続 (Heroku 対応)
 ```python

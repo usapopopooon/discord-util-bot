@@ -3107,3 +3107,106 @@ class TestVcCreateLockCooldownIntegration:
         assert execution_order[0].startswith("start_")
         assert execution_order[1].startswith("end_")
         assert execution_order[0][6:] == execution_order[1][4:]
+
+
+# =============================================================================
+# on_guild_remove リスナーのテスト
+# =============================================================================
+
+
+class TestOnGuildRemove:
+    """on_guild_remove リスナーのテスト。"""
+
+    @patch("src.cogs.voice.async_session")
+    @patch("src.cogs.voice.delete_voice_sessions_by_guild")
+    @patch("src.cogs.voice.delete_lobbies_by_guild")
+    async def test_deletes_all_voice_data(
+        self,
+        mock_delete_lobbies: AsyncMock,
+        mock_delete_sessions: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """ギルド削除時に全ての VC データを削除する。"""
+        cog = _make_cog()
+
+        mock_delete_sessions.return_value = 5
+        mock_delete_lobbies.return_value = 2
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+
+        await cog.on_guild_remove(guild)
+
+        mock_delete_sessions.assert_called_once()
+        mock_delete_lobbies.assert_called_once()
+
+    @patch("src.cogs.voice.async_session")
+    @patch("src.cogs.voice.delete_voice_sessions_by_guild")
+    @patch("src.cogs.voice.delete_lobbies_by_guild")
+    async def test_handles_no_data(
+        self,
+        mock_delete_lobbies: AsyncMock,
+        mock_delete_sessions: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """データがない場合も正常に動作する。"""
+        cog = _make_cog()
+
+        mock_delete_sessions.return_value = 0
+        mock_delete_lobbies.return_value = 0
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+
+        await cog.on_guild_remove(guild)
+
+        mock_delete_sessions.assert_called_once()
+        mock_delete_lobbies.assert_called_once()
+
+    @patch("src.cogs.voice.async_session")
+    @patch("src.cogs.voice.delete_voice_sessions_by_guild")
+    @patch("src.cogs.voice.delete_lobbies_by_guild")
+    async def test_deletes_sessions_before_lobbies(
+        self,
+        mock_delete_lobbies: AsyncMock,
+        mock_delete_sessions: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """外部キー制約のため、セッションがロビーより先に削除される。"""
+        cog = _make_cog()
+
+        call_order: list[str] = []
+
+        async def track_sessions(*_args: object) -> int:
+            call_order.append("sessions")
+            return 1
+
+        async def track_lobbies(*_args: object) -> int:
+            call_order.append("lobbies")
+            return 1
+
+        mock_delete_sessions.side_effect = track_sessions
+        mock_delete_lobbies.side_effect = track_lobbies
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+
+        await cog.on_guild_remove(guild)
+
+        # セッションが先に削除される
+        assert call_order == ["sessions", "lobbies"]

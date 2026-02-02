@@ -18,6 +18,8 @@ from src.cogs.bump import (
     TARGET_ROLE_NAME,
     BumpCog,
     BumpNotificationView,
+    _bump_notification_cooldown_cache,
+    _cleanup_bump_notification_cooldown_cache,
     clear_bump_notification_cooldown_cache,
     is_bump_notification_on_cooldown,
 )
@@ -3036,3 +3038,242 @@ class TestBumpNotificationLockCooldownIntegration:
         lock1 = get_resource_lock(expected_key)
         lock2 = get_resource_lock(expected_key)
         assert lock1 is lock2
+
+
+# =============================================================================
+# クリーンアップリスナーのテスト
+# =============================================================================
+
+
+class TestOnGuildChannelDelete:
+    """on_guild_channel_delete リスナーのテスト。"""
+
+    @patch("src.cogs.bump.async_session")
+    @patch("src.cogs.bump.get_bump_config")
+    @patch("src.cogs.bump.delete_bump_config")
+    @patch("src.cogs.bump.delete_bump_reminders_by_guild")
+    async def test_deletes_config_when_channel_matches(
+        self,
+        mock_delete_reminders: AsyncMock,
+        mock_delete_config: AsyncMock,
+        mock_get_config: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """監視チャンネルが削除された場合、設定を削除する。"""
+        cog = _make_cog()
+
+        # モックセットアップ
+        mock_config = MagicMock()
+        mock_config.channel_id = "456"
+        mock_get_config.return_value = mock_config
+        mock_delete_reminders.return_value = 2
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        # チャンネル削除イベント
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.id = 456
+        channel.guild = MagicMock()
+        channel.guild.id = 789
+
+        await cog.on_guild_channel_delete(channel)
+
+        mock_get_config.assert_called_once()
+        mock_delete_config.assert_called_once()
+        mock_delete_reminders.assert_called_once()
+
+    @patch("src.cogs.bump.async_session")
+    @patch("src.cogs.bump.get_bump_config")
+    @patch("src.cogs.bump.delete_bump_config")
+    async def test_does_not_delete_when_channel_does_not_match(
+        self,
+        mock_delete_config: AsyncMock,
+        mock_get_config: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """監視チャンネル以外が削除された場合、設定を削除しない。"""
+        cog = _make_cog()
+
+        # モックセットアップ - 異なるチャンネル ID
+        mock_config = MagicMock()
+        mock_config.channel_id = "999"  # 削除されたチャンネルとは異なる
+        mock_get_config.return_value = mock_config
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.id = 456
+        channel.guild = MagicMock()
+        channel.guild.id = 789
+
+        await cog.on_guild_channel_delete(channel)
+
+        mock_get_config.assert_called_once()
+        mock_delete_config.assert_not_called()
+
+    @patch("src.cogs.bump.async_session")
+    @patch("src.cogs.bump.get_bump_config")
+    @patch("src.cogs.bump.delete_bump_config")
+    async def test_does_not_delete_when_no_config(
+        self,
+        mock_delete_config: AsyncMock,
+        mock_get_config: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """設定が存在しない場合、何もしない。"""
+        cog = _make_cog()
+
+        mock_get_config.return_value = None
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.id = 456
+        channel.guild = MagicMock()
+        channel.guild.id = 789
+
+        await cog.on_guild_channel_delete(channel)
+
+        mock_get_config.assert_called_once()
+        mock_delete_config.assert_not_called()
+
+
+class TestOnGuildRemove:
+    """on_guild_remove リスナーのテスト。"""
+
+    @patch("src.cogs.bump.async_session")
+    @patch("src.cogs.bump.delete_bump_config")
+    @patch("src.cogs.bump.delete_bump_reminders_by_guild")
+    async def test_deletes_all_bump_data(
+        self,
+        mock_delete_reminders: AsyncMock,
+        mock_delete_config: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """ギルド削除時に全ての bump データを削除する。"""
+        cog = _make_cog()
+
+        mock_delete_reminders.return_value = 3
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+
+        await cog.on_guild_remove(guild)
+
+        mock_delete_config.assert_called_once()
+        mock_delete_reminders.assert_called_once()
+
+    @patch("src.cogs.bump.async_session")
+    @patch("src.cogs.bump.delete_bump_config")
+    @patch("src.cogs.bump.delete_bump_reminders_by_guild")
+    async def test_handles_no_reminders(
+        self,
+        mock_delete_reminders: AsyncMock,
+        mock_delete_config: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """リマインダーがない場合も正常に動作する。"""
+        cog = _make_cog()
+
+        mock_delete_reminders.return_value = 0
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+
+        await cog.on_guild_remove(guild)
+
+        mock_delete_config.assert_called_once()
+        mock_delete_reminders.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# クールダウンキャッシュの自動クリーンアップテスト
+# ---------------------------------------------------------------------------
+
+
+class TestBumpNotificationCooldownAutoCleanup:
+    """Bump 通知クールダウンキャッシュの自動クリーンアップテスト."""
+
+    def test_cleanup_removes_old_entries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """古いエントリがクリーンアップされる."""
+        import time
+
+        import src.cogs.bump as bump_module
+
+        # 古いエントリを追加
+        old_time = time.monotonic() - 400  # 5分以上前
+        _bump_notification_cooldown_cache[(12345, "67890", "DISBOARD")] = old_time
+
+        # 最終クリーンアップ時刻を古くする (クリーンアップ間隔より前に設定)
+        monkeypatch.setattr(
+            bump_module, "_bump_last_cleanup_time", time.monotonic() - 700
+        )
+
+        # クリーンアップをトリガー (新しいクールダウンチェック)
+        is_bump_notification_on_cooldown(99999, "11111", "DISBOARD")
+
+        # 古いエントリは削除される
+        assert (12345, "67890", "DISBOARD") not in _bump_notification_cooldown_cache
+
+    def test_cleanup_preserves_recent_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """最近のエントリはクリーンアップされない."""
+        import time
+
+        import src.cogs.bump as bump_module
+
+        # 最近のエントリを追加
+        recent_time = time.monotonic() - 10  # 10秒前
+        _bump_notification_cooldown_cache[(12345, "67890", "DISBOARD")] = recent_time
+
+        # 最終クリーンアップ時刻を古くする (クリーンアップ間隔より前に設定)
+        monkeypatch.setattr(
+            bump_module, "_bump_last_cleanup_time", time.monotonic() - 700
+        )
+
+        # クリーンアップをトリガー
+        _cleanup_bump_notification_cooldown_cache()
+
+        # 最近のエントリは残る
+        assert (12345, "67890", "DISBOARD") in _bump_notification_cooldown_cache
+
+    def test_cleanup_interval_respected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """クリーンアップ間隔が尊重される."""
+        import time
+
+        import src.cogs.bump as bump_module
+
+        # 古いエントリを追加
+        old_time = time.monotonic() - 400
+        _bump_notification_cooldown_cache[(12345, "67890", "DISBOARD")] = old_time
+
+        # 最終クリーンアップ時刻を最近に設定 (間隔未経過)
+        monkeypatch.setattr(
+            bump_module, "_bump_last_cleanup_time", time.monotonic() - 1
+        )
+
+        # クリーンアップは実行されない
+        _cleanup_bump_notification_cooldown_cache()
+
+        # エントリはまだ残っている
+        assert (12345, "67890", "DISBOARD") in _bump_notification_cooldown_cache

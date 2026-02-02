@@ -1,4 +1,4 @@
-.PHONY: setup install dev test test-db test-db-start test-db-stop lint typecheck spellcheck jsoncheck ci run clean
+.PHONY: setup install dev test test-db test-db-start test-db-stop lint typecheck spellcheck jsoncheck ci run clean sync-requirements
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -58,8 +58,14 @@ test-db-start:
 test-db-stop:
 	docker compose -f docker-compose.test.yml down
 
+# requirements.txt を pyproject.toml から生成
+sync-requirements:
+	$(PYTHON) scripts/sync_requirements.py
+
 # CI チェック (GitHub Actions と同じ)
 ci: setup
+	@echo "=== Requirements Sync Check ==="
+	$(PYTHON) scripts/sync_requirements.py --check
 	@echo "=== Spell Check ==="
 	npm run lint:spell
 	@echo "=== JSON Lint ==="

@@ -2193,3 +2193,149 @@ class TestSetupWithStickies:
 
         bot.add_cog.assert_called_once()
         mock_get_all.assert_called_once()
+
+
+# =============================================================================
+# クリーンアップリスナーのテスト
+# =============================================================================
+
+
+class TestOnGuildChannelDelete:
+    """on_guild_channel_delete リスナーのテスト。"""
+
+    @patch("src.cogs.sticky.async_session")
+    @patch("src.cogs.sticky.delete_sticky_message")
+    async def test_deletes_sticky_and_cancels_task(
+        self,
+        mock_delete: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """チャンネル削除時に sticky を削除し、保留タスクをキャンセルする。"""
+        cog = _make_cog()
+
+        # 保留タスクを作成
+        mock_task = MagicMock()
+        mock_task.cancel = MagicMock()
+        cog._pending_tasks["456"] = mock_task
+
+        mock_delete.return_value = True
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.id = 456
+        channel.guild = MagicMock()
+        channel.guild.id = 789
+
+        await cog.on_guild_channel_delete(channel)
+
+        mock_task.cancel.assert_called_once()
+        assert "456" not in cog._pending_tasks
+        mock_delete.assert_called_once()
+
+    @patch("src.cogs.sticky.async_session")
+    @patch("src.cogs.sticky.delete_sticky_message")
+    async def test_handles_no_pending_task(
+        self,
+        mock_delete: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """保留タスクがない場合も正常に動作する。"""
+        cog = _make_cog()
+
+        mock_delete.return_value = True
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.id = 456
+        channel.guild = MagicMock()
+        channel.guild.id = 789
+
+        await cog.on_guild_channel_delete(channel)
+
+        mock_delete.assert_called_once()
+
+    @patch("src.cogs.sticky.async_session")
+    @patch("src.cogs.sticky.delete_sticky_message")
+    async def test_handles_no_sticky(
+        self,
+        mock_delete: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """sticky が存在しない場合も正常に動作する。"""
+        cog = _make_cog()
+
+        mock_delete.return_value = False
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.id = 456
+        channel.guild = MagicMock()
+        channel.guild.id = 789
+
+        await cog.on_guild_channel_delete(channel)
+
+        mock_delete.assert_called_once()
+
+
+class TestOnGuildRemove:
+    """on_guild_remove リスナーのテスト。"""
+
+    @patch("src.cogs.sticky.async_session")
+    @patch("src.cogs.sticky.delete_sticky_messages_by_guild")
+    async def test_deletes_all_stickies(
+        self,
+        mock_delete_by_guild: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """ギルド削除時に全ての sticky を削除する。"""
+        cog = _make_cog()
+
+        mock_delete_by_guild.return_value = 3
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+
+        await cog.on_guild_remove(guild)
+
+        mock_delete_by_guild.assert_called_once()
+
+    @patch("src.cogs.sticky.async_session")
+    @patch("src.cogs.sticky.delete_sticky_messages_by_guild")
+    async def test_handles_no_stickies(
+        self,
+        mock_delete_by_guild: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """sticky がない場合も正常に動作する。"""
+        cog = _make_cog()
+
+        mock_delete_by_guild.return_value = 0
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+
+        await cog.on_guild_remove(guild)
+
+        mock_delete_by_guild.assert_called_once()

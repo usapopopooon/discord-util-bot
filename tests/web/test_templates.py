@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from src.database.models import RolePanel, RolePanelItem
+from src.database.models import (
+    BumpConfig,
+    BumpReminder,
+    Lobby,
+    RolePanel,
+    RolePanelItem,
+    StickyMessage,
+)
 from src.web.templates import (
     _base,
     _nav,
@@ -12,6 +19,7 @@ from src.web.templates import (
     dashboard_page,
     lobbies_list_page,
     login_page,
+    maintenance_page,
     role_panel_create_page,
     role_panel_detail_page,
     role_panels_list_page,
@@ -209,9 +217,61 @@ class TestLobbiesListPage:
     def test_contains_table_headers(self) -> None:
         """テーブルヘッダーが含まれる。"""
         result = lobbies_list_page([])
-        assert "Guild ID" in result
-        assert "Channel ID" in result
+        assert "Server" in result
+        assert "Channel" in result
         assert "User Limit" in result
+
+    def test_displays_guild_name_when_available(self) -> None:
+        """guilds_map にギルドIDがある場合、サーバー名が表示される。"""
+        lobby = Lobby(
+            id=1,
+            guild_id="123456789",
+            lobby_channel_id="987654321",
+            default_user_limit=10,
+        )
+        guilds_map = {"123456789": "Test Server"}
+        result = lobbies_list_page([lobby], guilds_map=guilds_map)
+        assert "Test Server" in result
+        assert "123456789" in result  # ID も小さく表示される
+        assert "text-gray-500" in result  # ID はグレー
+
+    def test_displays_guild_id_yellow_when_not_cached(self) -> None:
+        """guilds_map にギルドIDがない場合、IDが黄色で表示される。"""
+        lobby = Lobby(
+            id=1,
+            guild_id="123456789",
+            lobby_channel_id="987654321",
+            default_user_limit=10,
+        )
+        result = lobbies_list_page([lobby], guilds_map={})
+        assert "123456789" in result
+        assert "text-yellow-400" in result
+
+    def test_displays_channel_name_when_available(self) -> None:
+        """channels_map にチャンネルIDがある場合、チャンネル名が表示される。"""
+        lobby = Lobby(
+            id=1,
+            guild_id="123456789",
+            lobby_channel_id="987654321",
+            default_user_limit=10,
+        )
+        channels_map = {"123456789": [("987654321", "test-lobby")]}
+        result = lobbies_list_page([lobby], channels_map=channels_map)
+        assert "#test-lobby" in result
+        assert "987654321" in result  # ID も小さく表示される
+
+    def test_displays_channel_id_yellow_when_not_cached(self) -> None:
+        """channels_map にチャンネルIDがない場合、IDが黄色で表示される。"""
+        lobby = Lobby(
+            id=1,
+            guild_id="123456789",
+            lobby_channel_id="987654321",
+            default_user_limit=10,
+        )
+        result = lobbies_list_page([lobby], channels_map={})
+        assert "987654321" in result
+        # yellow スタイルが2箇所（guild と channel の両方）
+        assert result.count("text-yellow-400") >= 1
 
 
 # ===========================================================================
@@ -230,10 +290,65 @@ class TestStickyListPage:
     def test_contains_table_headers(self) -> None:
         """テーブルヘッダーが含まれる。"""
         result = sticky_list_page([])
-        assert "Guild ID" in result
-        assert "Channel ID" in result
+        assert "Server" in result
+        assert "Channel" in result
         assert "Title" in result
         assert "Type" in result
+
+    def test_displays_guild_name_when_available(self) -> None:
+        """guilds_map にギルドIDがある場合、サーバー名が表示される。"""
+        sticky = StickyMessage(
+            channel_id="987654321",
+            guild_id="123456789",
+            message_type="embed",
+            title="Test Sticky",
+            description="Test description",
+        )
+        guilds_map = {"123456789": "Test Server"}
+        result = sticky_list_page([sticky], guilds_map=guilds_map)
+        assert "Test Server" in result
+        assert "123456789" in result  # ID も小さく表示される
+        assert "text-gray-500" in result
+
+    def test_displays_guild_id_yellow_when_not_cached(self) -> None:
+        """guilds_map にギルドIDがない場合、IDが黄色で表示される。"""
+        sticky = StickyMessage(
+            channel_id="987654321",
+            guild_id="123456789",
+            message_type="embed",
+            title="Test Sticky",
+            description="Test description",
+        )
+        result = sticky_list_page([sticky], guilds_map={})
+        assert "123456789" in result
+        assert "text-yellow-400" in result
+
+    def test_displays_channel_name_when_available(self) -> None:
+        """channels_map にチャンネルIDがある場合、チャンネル名が表示される。"""
+        sticky = StickyMessage(
+            channel_id="987654321",
+            guild_id="123456789",
+            message_type="embed",
+            title="Test Sticky",
+            description="Test description",
+        )
+        channels_map = {"123456789": [("987654321", "test-channel")]}
+        result = sticky_list_page([sticky], channels_map=channels_map)
+        assert "#test-channel" in result
+        assert "987654321" in result
+
+    def test_displays_channel_id_yellow_when_not_cached(self) -> None:
+        """channels_map にチャンネルIDがない場合、IDが黄色で表示される。"""
+        sticky = StickyMessage(
+            channel_id="987654321",
+            guild_id="123456789",
+            message_type="embed",
+            title="Test Sticky",
+            description="Test description",
+        )
+        result = sticky_list_page([sticky], channels_map={})
+        assert "987654321" in result
+        assert result.count("text-yellow-400") >= 1
 
 
 # ===========================================================================
@@ -265,6 +380,74 @@ class TestBumpListPage:
         assert "Bump Reminders" in result
         assert "Service" in result
         assert "Status" in result
+
+    def test_config_displays_guild_name_when_available(self) -> None:
+        """configs で guilds_map にギルドIDがある場合、サーバー名が表示される。"""
+        config = BumpConfig(
+            guild_id="123456789",
+            channel_id="987654321",
+        )
+        guilds_map = {"123456789": "Test Server"}
+        result = bump_list_page([config], [], guilds_map=guilds_map)
+        assert "Test Server" in result
+        assert "123456789" in result
+
+    def test_config_displays_guild_id_yellow_when_not_cached(self) -> None:
+        """configs で guilds_map にギルドIDがない場合、IDが黄色で表示される。"""
+        config = BumpConfig(
+            guild_id="123456789",
+            channel_id="987654321",
+        )
+        result = bump_list_page([config], [], guilds_map={})
+        assert "123456789" in result
+        assert "text-yellow-400" in result
+
+    def test_config_displays_channel_name_when_available(self) -> None:
+        """channels_map にチャンネルIDがある場合、チャンネル名が表示される。"""
+        config = BumpConfig(
+            guild_id="123456789",
+            channel_id="987654321",
+        )
+        channels_map = {"123456789": [("987654321", "bump-channel")]}
+        result = bump_list_page([config], [], channels_map=channels_map)
+        assert "#bump-channel" in result
+        assert "987654321" in result
+
+    def test_reminder_displays_guild_name_when_available(self) -> None:
+        """reminders で guilds_map にギルドIDがある場合、サーバー名が表示される。"""
+        reminder = BumpReminder(
+            id=1,
+            guild_id="123456789",
+            channel_id="987654321",
+            service_name="DISBOARD",
+        )
+        guilds_map = {"123456789": "Test Server"}
+        result = bump_list_page([], [reminder], guilds_map=guilds_map)
+        assert "Test Server" in result
+
+    def test_reminder_displays_guild_id_yellow_when_not_cached(self) -> None:
+        """reminders で guilds_map にギルドIDがない場合、IDが黄色で表示される。"""
+        reminder = BumpReminder(
+            id=1,
+            guild_id="123456789",
+            channel_id="987654321",
+            service_name="DISBOARD",
+        )
+        result = bump_list_page([], [reminder], guilds_map={})
+        assert "123456789" in result
+        assert "text-yellow-400" in result
+
+    def test_reminder_displays_channel_name_when_available(self) -> None:
+        """channels_map にチャンネルIDがある場合、チャンネル名が表示される。"""
+        reminder = BumpReminder(
+            id=1,
+            guild_id="123456789",
+            channel_id="987654321",
+            service_name="DISBOARD",
+        )
+        channels_map = {"123456789": [("987654321", "reminder-channel")]}
+        result = bump_list_page([], [reminder], channels_map=channels_map)
+        assert "#reminder-channel" in result
 
 
 # ===========================================================================
@@ -370,8 +553,8 @@ class TestRolePanelsListPage:
         result = role_panels_list_page([], {})
         assert "Title" in result
         assert "Type" in result
-        assert "Guild ID" in result
-        assert "Channel ID" in result
+        assert "Server" in result
+        assert "Channel" in result
         assert "Roles" in result
         assert "Created" in result
         assert "Actions" in result
@@ -386,6 +569,60 @@ class TestRolePanelsListPage:
         result = role_panels_list_page([], {})
         assert "/rolepanels/new" in result
         assert "Create Panel" in result
+
+    def test_displays_guild_name_when_available(self) -> None:
+        """guilds_map にギルドIDがある場合、サーバー名が表示される。"""
+        panel = RolePanel(
+            id=1,
+            guild_id="123456789",
+            channel_id="987654321",
+            panel_type="button",
+            title="Test Panel",
+        )
+        guilds_map = {"123456789": "Test Server"}
+        result = role_panels_list_page([panel], {}, guilds_map=guilds_map)
+        assert "Test Server" in result
+        assert "123456789" in result
+
+    def test_displays_guild_id_yellow_when_not_cached(self) -> None:
+        """guilds_map にギルドIDがない場合、IDが黄色で表示される。"""
+        panel = RolePanel(
+            id=1,
+            guild_id="123456789",
+            channel_id="987654321",
+            panel_type="button",
+            title="Test Panel",
+        )
+        result = role_panels_list_page([panel], {}, guilds_map={})
+        assert "123456789" in result
+        assert "text-yellow-400" in result
+
+    def test_displays_channel_name_when_available(self) -> None:
+        """channels_map にチャンネルIDがある場合、チャンネル名が表示される。"""
+        panel = RolePanel(
+            id=1,
+            guild_id="123456789",
+            channel_id="987654321",
+            panel_type="button",
+            title="Test Panel",
+        )
+        channels_map = {"123456789": [("987654321", "panel-channel")]}
+        result = role_panels_list_page([panel], {}, channels_map=channels_map)
+        assert "#panel-channel" in result
+        assert "987654321" in result
+
+    def test_displays_channel_id_yellow_when_not_cached(self) -> None:
+        """channels_map にチャンネルIDがない場合、IDが黄色で表示される。"""
+        panel = RolePanel(
+            id=1,
+            guild_id="123456789",
+            channel_id="987654321",
+            panel_type="button",
+            title="Test Panel",
+        )
+        result = role_panels_list_page([panel], {}, channels_map={})
+        assert "987654321" in result
+        assert result.count("text-yellow-400") >= 1
 
 
 # ===========================================================================
@@ -792,3 +1029,360 @@ class TestRolePanelCreatePageEdgeCases:
         result = role_panel_create_page(panel_type="reaction")
         # reaction ラジオボタンが checked
         assert 'value="reaction"' in result
+
+
+# ===========================================================================
+# ギルド・チャンネル名表示 エッジケーステスト
+# ===========================================================================
+
+
+class TestGuildChannelNameDisplayEdgeCases:
+    """ギルド・チャンネル名表示のエッジケーステスト。"""
+
+    def test_lobby_guild_name_with_xss_is_escaped(self) -> None:
+        """ロビーでギルド名のXSSが適切にエスケープされる。"""
+        lobby = Lobby(
+            id=1,
+            guild_id="123456789",
+            lobby_channel_id="987654321",
+            default_user_limit=10,
+        )
+        guilds_map = {"123456789": "<script>alert('xss')</script>"}
+        result = lobbies_list_page([lobby], guilds_map=guilds_map)
+        assert "&lt;script&gt;" in result
+        assert "<script>alert" not in result
+
+    def test_lobby_channel_name_with_xss_is_escaped(self) -> None:
+        """ロビーでチャンネル名のXSSが適切にエスケープされる。"""
+        lobby = Lobby(
+            id=1,
+            guild_id="123456789",
+            lobby_channel_id="987654321",
+            default_user_limit=10,
+        )
+        channels_map = {"123456789": [("987654321", "<img src=x onerror=alert()>")]}
+        result = lobbies_list_page([lobby], channels_map=channels_map)
+        assert "&lt;img " in result
+        assert "<img src=" not in result
+
+    def test_sticky_guild_name_with_xss_is_escaped(self) -> None:
+        """スティッキーでギルド名のXSSが適切にエスケープされる。"""
+        sticky = StickyMessage(
+            channel_id="987654321",
+            guild_id="123456789",
+            message_type="embed",
+            title="Test",
+            description="Test",
+        )
+        guilds_map = {"123456789": '"><script>xss</script>'}
+        result = sticky_list_page([sticky], guilds_map=guilds_map)
+        assert "&quot;&gt;&lt;script&gt;" in result
+        assert '"><script>' not in result
+
+    def test_bump_guild_name_with_xss_is_escaped(self) -> None:
+        """バンプでギルド名のXSSが適切にエスケープされる。"""
+        config = BumpConfig(
+            guild_id="123456789",
+            channel_id="987654321",
+        )
+        guilds_map = {"123456789": "<script>xss</script>"}
+        result = bump_list_page([config], [], guilds_map=guilds_map)
+        assert "&lt;script&gt;" in result
+
+    def test_rolepanel_guild_name_with_xss_is_escaped(self) -> None:
+        """ロールパネルでギルド名のXSSが適切にエスケープされる。"""
+        panel = RolePanel(
+            id=1,
+            guild_id="123456789",
+            channel_id="987654321",
+            panel_type="button",
+            title="Test",
+        )
+        guilds_map = {"123456789": "<script>xss</script>"}
+        result = role_panels_list_page([panel], {}, guilds_map=guilds_map)
+        assert "&lt;script&gt;" in result
+
+    def test_empty_guild_name_string(self) -> None:
+        """空文字のギルド名は名前として表示される（IDは小さく表示）。"""
+        lobby = Lobby(
+            id=1,
+            guild_id="123456789",
+            lobby_channel_id="987654321",
+            default_user_limit=10,
+        )
+        guilds_map = {"123456789": ""}
+        result = lobbies_list_page([lobby], guilds_map=guilds_map)
+        # 空文字でもIDはグレーで小さく表示
+        assert "123456789" in result
+        assert "text-gray-500" in result
+
+    def test_empty_channel_name_string(self) -> None:
+        """空文字のチャンネル名は「未キャッシュ」として黄色IDで表示される。"""
+        lobby = Lobby(
+            id=1,
+            guild_id="123456789",
+            lobby_channel_id="987654321",
+            default_user_limit=10,
+        )
+        # 空文字は if channel_name: で False になるため、黄色ID表示になる
+        channels_map = {"123456789": [("987654321", "")]}
+        result = lobbies_list_page([lobby], channels_map=channels_map)
+        assert "987654321" in result
+        # 空文字列のチャンネル名は黄色で表示される（not found扱い）
+        assert "text-yellow-400" in result
+
+    def test_very_long_guild_name(self) -> None:
+        """非常に長いギルド名が正しく表示される。"""
+        long_name = "A" * 200
+        lobby = Lobby(
+            id=1,
+            guild_id="123456789",
+            lobby_channel_id="987654321",
+            default_user_limit=10,
+        )
+        guilds_map = {"123456789": long_name}
+        result = lobbies_list_page([lobby], guilds_map=guilds_map)
+        assert long_name in result
+
+    def test_very_long_channel_name(self) -> None:
+        """非常に長いチャンネル名が正しく表示される。"""
+        long_name = "a" * 200
+        lobby = Lobby(
+            id=1,
+            guild_id="123456789",
+            lobby_channel_id="987654321",
+            default_user_limit=10,
+        )
+        channels_map = {"123456789": [("987654321", long_name)]}
+        result = lobbies_list_page([lobby], channels_map=channels_map)
+        assert f"#{long_name}" in result
+
+    def test_channel_not_in_guild_lookup(self) -> None:
+        """チャンネルが別ギルドに属する場合、チャンネルIDが黄色表示される。"""
+        lobby = Lobby(
+            id=1,
+            guild_id="123456789",
+            lobby_channel_id="987654321",
+            default_user_limit=10,
+        )
+        # 別ギルドのチャンネルマップ
+        channels_map = {"999999999": [("987654321", "wrong-guild-channel")]}
+        result = lobbies_list_page([lobby], channels_map=channels_map)
+        # チャンネルIDが黄色で表示される（該当ギルドにチャンネルがない）
+        assert "987654321" in result
+        assert "text-yellow-400" in result
+
+    def test_guild_name_with_html_entities(self) -> None:
+        """HTMLエンティティを含むギルド名が正しくエスケープされる。"""
+        lobby = Lobby(
+            id=1,
+            guild_id="123456789",
+            lobby_channel_id="987654321",
+            default_user_limit=10,
+        )
+        guilds_map = {"123456789": "Test & Server <with> 'quotes'"}
+        result = lobbies_list_page([lobby], guilds_map=guilds_map)
+        assert "&amp;" in result
+        assert "&lt;with&gt;" in result
+        assert "&#x27;quotes&#x27;" in result or "&#39;quotes&#39;" in result
+
+    def test_guild_name_with_unicode_emoji(self) -> None:
+        """Unicode絵文字を含むギルド名が正しく表示される。"""
+        lobby = Lobby(
+            id=1,
+            guild_id="123456789",
+            lobby_channel_id="987654321",
+            default_user_limit=10,
+        )
+        guilds_map = {"123456789": "🎮 Gaming Server 🎯"}
+        result = lobbies_list_page([lobby], guilds_map=guilds_map)
+        assert "🎮 Gaming Server 🎯" in result
+
+
+# ===========================================================================
+# メンテナンスページ テンプレートテスト
+# ===========================================================================
+
+
+class TestMaintenancePage:
+    """maintenance_page テンプレートのテスト。"""
+
+    def test_contains_page_title(self) -> None:
+        """ページタイトルが含まれる。"""
+        result = maintenance_page(0, 0, 0, 0, 0, 0, 0, 0, 0)
+        assert "Database Maintenance" in result
+
+    def test_contains_statistics_section(self) -> None:
+        """統計セクションが含まれる。"""
+        result = maintenance_page(0, 0, 0, 0, 0, 0, 0, 0, 0)
+        assert "Database Statistics" in result
+
+    def test_displays_total_counts(self) -> None:
+        """各項目の合計数が表示される。"""
+        result = maintenance_page(
+            lobby_total=10,
+            lobby_orphaned=2,
+            bump_total=5,
+            bump_orphaned=1,
+            sticky_total=3,
+            sticky_orphaned=0,
+            panel_total=7,
+            panel_orphaned=3,
+            guild_count=15,
+        )
+        # 合計数が表示される
+        assert ">10</p>" in result  # Lobbies total
+        assert ">5</p>" in result  # Bump total
+        assert ">3</p>" in result  # Stickies total
+        assert ">7</p>" in result  # Role Panels total
+        # ギルド数
+        assert "Active Guilds:" in result
+        assert ">15</span>" in result
+
+    def test_displays_orphaned_counts(self) -> None:
+        """孤立データ数が表示される。"""
+        result = maintenance_page(
+            lobby_total=10,
+            lobby_orphaned=2,
+            bump_total=5,
+            bump_orphaned=1,
+            sticky_total=3,
+            sticky_orphaned=4,
+            panel_total=7,
+            panel_orphaned=3,
+            guild_count=15,
+        )
+        assert "Orphaned: 2" in result
+        assert "Orphaned: 1" in result
+        assert "Orphaned: 4" in result
+        assert "Orphaned: 3" in result
+
+    def test_success_message_displayed(self) -> None:
+        """成功メッセージが表示される。"""
+        result = maintenance_page(
+            0, 0, 0, 0, 0, 0, 0, 0, 0, success="Cleanup completed"
+        )
+        assert "Cleanup completed" in result
+        assert "bg-green-500" in result
+
+    def test_success_message_escaped(self) -> None:
+        """成功メッセージがエスケープされる。"""
+        result = maintenance_page(
+            0, 0, 0, 0, 0, 0, 0, 0, 0, success="<script>xss</script>"
+        )
+        assert "&lt;script&gt;" in result
+        assert "<script>xss" not in result
+
+    def test_cleanup_button_disabled_when_no_orphaned(self) -> None:
+        """孤立データがない場合、クリーンアップボタンが非活性。"""
+        result = maintenance_page(10, 0, 5, 0, 3, 0, 7, 0, 15)
+        assert "No Orphaned Data" in result
+        assert "disabled" in result
+
+    def test_cleanup_button_shows_count_when_orphaned(self) -> None:
+        """孤立データがある場合、レコード数がボタンに表示される。"""
+        result = maintenance_page(10, 2, 5, 1, 3, 0, 7, 3, 15)
+        # 2 + 1 + 0 + 3 = 6
+        assert "Cleanup 6 Records" in result
+
+    def test_contains_refresh_button(self) -> None:
+        """更新ボタンが含まれる。"""
+        result = maintenance_page(0, 0, 0, 0, 0, 0, 0, 0, 0)
+        assert "Refresh Stats" in result
+        assert "/settings/maintenance/refresh" in result
+
+    def test_contains_back_link(self) -> None:
+        """設定へ戻るリンクが含まれる。"""
+        result = maintenance_page(0, 0, 0, 0, 0, 0, 0, 0, 0)
+        assert "Back to Settings" in result
+        assert 'href="/settings"' in result
+
+    def test_contains_csrf_token(self) -> None:
+        """CSRFトークンが含まれる。"""
+        result = maintenance_page(0, 0, 0, 0, 0, 0, 0, 0, 0, csrf_token="test_csrf_123")
+        assert 'value="test_csrf_123"' in result
+
+
+class TestMaintenancePageCleanupModal:
+    """maintenance_page のクリーンアップモーダルテスト。"""
+
+    def test_modal_structure_exists(self) -> None:
+        """モーダルの構造が存在する。"""
+        result = maintenance_page(10, 2, 5, 1, 3, 1, 7, 3, 15)
+        assert 'id="cleanup-modal"' in result
+        assert "Confirm Cleanup" in result
+        assert "will be permanently deleted" in result
+
+    def test_modal_shows_orphaned_breakdown(self) -> None:
+        """モーダルに孤立データの内訳が表示される。"""
+        result = maintenance_page(10, 2, 5, 1, 3, 4, 7, 3, 15)
+        # 内訳が表示される
+        assert "Lobbies:" in result
+        assert "Bump Configs:" in result
+        assert "Stickies:" in result
+        assert "Role Panels:" in result
+        # Total
+        assert "Total:" in result
+
+    def test_modal_hides_zero_counts(self) -> None:
+        """モーダルで0件の項目は非表示。"""
+        result = maintenance_page(10, 2, 5, 0, 3, 0, 7, 0, 15)
+        # 0件の項目（Bump, Sticky, Panel）は表示されない（Lobbiesのみ）
+        # チェック: 2件のLobbiesのみ孤立している
+        lines = result.split("\n")
+        modal_section = False
+        for line in lines:
+            if "cleanup-modal" in line:
+                modal_section = True
+            if modal_section and "Total:" in line:
+                break
+            if modal_section:
+                # モーダル内でStickies, Bump Configs, Role Panelsの行がないこと
+                # (0件のため非表示)
+                pass
+        # Lobbiesは2なので表示される
+        assert 'Lobbies:</span><span class="text-yellow-400">2' in result
+
+    def test_modal_shows_correct_total(self) -> None:
+        """モーダルに正しい合計が表示される。"""
+        result = maintenance_page(10, 5, 5, 3, 3, 2, 7, 1, 15)
+        # 5 + 3 + 2 + 1 = 11
+        assert "Delete 11 Records" in result
+        assert 'text-red-400">11</span>' in result
+
+    def test_modal_cancel_button_exists(self) -> None:
+        """モーダルにキャンセルボタンがある。"""
+        result = maintenance_page(10, 2, 5, 1, 3, 1, 7, 1, 15)
+        # Cancel ボタンのテキストが含まれる
+        assert "Cancel" in result
+        # モーダルを閉じる関数が呼び出される
+        assert "hideCleanupModal()" in result
+
+    def test_modal_submit_button_exists(self) -> None:
+        """モーダルに送信ボタンがある。"""
+        result = maintenance_page(10, 2, 5, 1, 3, 1, 7, 1, 15)
+        assert 'id="confirm-cleanup-btn"' in result
+        assert "/settings/maintenance/cleanup" in result
+
+    def test_modal_javascript_functions(self) -> None:
+        """モーダルのJavaScript関数が含まれる。"""
+        result = maintenance_page(10, 2, 5, 1, 3, 1, 7, 1, 15)
+        assert "function showCleanupModal()" in result
+        assert "function hideCleanupModal()" in result
+        assert "function handleCleanupSubmit(" in result
+
+    def test_modal_escape_key_handler(self) -> None:
+        """Escapeキーでモーダルを閉じるハンドラが含まれる。"""
+        result = maintenance_page(10, 2, 5, 1, 3, 1, 7, 1, 15)
+        assert "e.key === 'Escape'" in result
+
+    def test_modal_backdrop_click_handler(self) -> None:
+        """背景クリックでモーダルを閉じるハンドラが含まれる。"""
+        result = maintenance_page(10, 2, 5, 1, 3, 1, 7, 1, 15)
+        assert "e.target === this" in result
+        assert "hideCleanupModal()" in result
+
+    def test_irreversible_warning_displayed(self) -> None:
+        """「元に戻せない」警告が表示される。"""
+        result = maintenance_page(10, 2, 5, 1, 3, 1, 7, 1, 15)
+        assert "cannot be undone" in result

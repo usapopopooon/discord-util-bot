@@ -61,6 +61,7 @@ from src.web.templates import (
     initial_setup_page,
     lobbies_list_page,
     login_page,
+    maintenance_page,
     password_change_page,
     reset_password_page,
     role_panel_create_page,
@@ -1268,6 +1269,215 @@ async def settings_password_post(
 
 
 # =============================================================================
+# メンテナンスルート
+# =============================================================================
+
+
+@app.get("/settings/maintenance", response_model=None)
+async def settings_maintenance(
+    request: Request,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Database maintenance page."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # メールアドレス未認証の場合は認証ページにリダイレクト
+    result = await db.execute(select(AdminUser).where(AdminUser.email == user["email"]))
+    admin = result.scalar_one_or_none()
+    if admin and not admin.email_verified:
+        return RedirectResponse(url="/verify-email", status_code=302)
+
+    # Get success message from query params
+    success = request.query_params.get("success")
+
+    # Get active guild IDs from the DiscordGuild cache table
+    guild_result = await db.execute(select(DiscordGuild.guild_id))
+    active_guild_ids = {row[0] for row in guild_result.fetchall()}
+
+    # Get all lobbies and count orphaned
+    lobby_result = await db.execute(select(Lobby))
+    lobbies = list(lobby_result.scalars().all())
+    lobby_orphaned = sum(
+        1 for lobby in lobbies if lobby.guild_id not in active_guild_ids
+    )
+
+    # Get all bump configs and count orphaned
+    bump_result = await db.execute(select(BumpConfig))
+    bump_configs = list(bump_result.scalars().all())
+    bump_orphaned = sum(1 for c in bump_configs if c.guild_id not in active_guild_ids)
+
+    # Get all stickies and count orphaned
+    sticky_result = await db.execute(select(StickyMessage))
+    stickies = list(sticky_result.scalars().all())
+    sticky_orphaned = sum(1 for s in stickies if s.guild_id not in active_guild_ids)
+
+    # Get all role panels and count orphaned
+    panel_result = await db.execute(select(RolePanel))
+    panels = list(panel_result.scalars().all())
+    panel_orphaned = sum(1 for p in panels if p.guild_id not in active_guild_ids)
+
+    return HTMLResponse(
+        content=maintenance_page(
+            lobby_total=len(lobbies),
+            lobby_orphaned=lobby_orphaned,
+            bump_total=len(bump_configs),
+            bump_orphaned=bump_orphaned,
+            sticky_total=len(stickies),
+            sticky_orphaned=sticky_orphaned,
+            panel_total=len(panels),
+            panel_orphaned=panel_orphaned,
+            guild_count=len(active_guild_ids),
+            success=success,
+            csrf_token=generate_csrf_token(),
+        )
+    )
+
+
+@app.post("/settings/maintenance/refresh", response_model=None)
+async def settings_maintenance_refresh(
+    request: Request,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+) -> Response:
+    """Refresh maintenance page statistics."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # CSRF token validation
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/settings/maintenance", status_code=302)
+
+    # Rate limit check
+    path = str(request.url.path)
+    user_email = user.get("email", "")
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(
+            url="/settings/maintenance?success=Please+wait+before+refreshing",
+            status_code=302,
+        )
+
+    # Record form submit for rate limiting
+    record_form_submit(user_email, path)
+
+    return RedirectResponse(
+        url="/settings/maintenance?success=Stats+refreshed",
+        status_code=302,
+    )
+
+
+@app.post("/settings/maintenance/cleanup", response_model=None)
+async def settings_maintenance_cleanup(
+    request: Request,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Cleanup orphaned database records."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # CSRF token validation
+    if not validate_csrf_token(csrf_token):
+        return HTMLResponse(
+            content=maintenance_page(
+                lobby_total=0,
+                lobby_orphaned=0,
+                bump_total=0,
+                bump_orphaned=0,
+                sticky_total=0,
+                sticky_orphaned=0,
+                panel_total=0,
+                panel_orphaned=0,
+                guild_count=0,
+                csrf_token=generate_csrf_token(),
+            ),
+            status_code=400,
+        )
+
+    # Rate limit check
+    path = str(request.url.path)
+    user_email = user.get("email", "")
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(
+            url="/settings/maintenance?success=Please+wait+before+trying+again",
+            status_code=302,
+        )
+
+    # Get active guild IDs from the DiscordGuild cache table
+    guild_result = await db.execute(select(DiscordGuild.guild_id))
+    active_guild_ids = {row[0] for row in guild_result.fetchall()}
+
+    deleted_counts: list[str] = []
+
+    # Delete orphaned lobbies
+    lobby_result = await db.execute(select(Lobby))
+    lobbies = list(lobby_result.scalars().all())
+    lobby_deleted = 0
+    for lobby in lobbies:
+        if lobby.guild_id not in active_guild_ids:
+            await db.delete(lobby)
+            lobby_deleted += 1
+    if lobby_deleted > 0:
+        deleted_counts.append(f"{lobby_deleted} lobbies")
+
+    # Delete orphaned bump configs and their reminders
+    bump_result = await db.execute(select(BumpConfig))
+    bump_configs = list(bump_result.scalars().all())
+    bump_deleted = 0
+    for config in bump_configs:
+        if config.guild_id not in active_guild_ids:
+            # Also delete associated reminders
+            reminder_result = await db.execute(
+                select(BumpReminder).where(BumpReminder.guild_id == config.guild_id)
+            )
+            for reminder in reminder_result.scalars().all():
+                await db.delete(reminder)
+            await db.delete(config)
+            bump_deleted += 1
+    if bump_deleted > 0:
+        deleted_counts.append(f"{bump_deleted} bump configs")
+
+    # Delete orphaned stickies
+    sticky_result = await db.execute(select(StickyMessage))
+    stickies = list(sticky_result.scalars().all())
+    sticky_deleted = 0
+    for sticky in stickies:
+        if sticky.guild_id not in active_guild_ids:
+            await db.delete(sticky)
+            sticky_deleted += 1
+    if sticky_deleted > 0:
+        deleted_counts.append(f"{sticky_deleted} stickies")
+
+    # Delete orphaned role panels
+    panel_result = await db.execute(select(RolePanel))
+    panels = list(panel_result.scalars().all())
+    panel_deleted = 0
+    for panel in panels:
+        if panel.guild_id not in active_guild_ids:
+            await db.delete(panel)
+            panel_deleted += 1
+    if panel_deleted > 0:
+        deleted_counts.append(f"{panel_deleted} role panels")
+
+    await db.commit()
+
+    # Record form submit for rate limiting
+    record_form_submit(user_email, path)
+
+    if deleted_counts:
+        success_msg = "Cleaned up: " + ", ".join(deleted_counts)
+    else:
+        success_msg = "No orphaned data found"
+
+    return RedirectResponse(
+        url=f"/settings/maintenance?success={success_msg.replace(' ', '+')}",
+        status_code=302,
+    )
+
+
+# =============================================================================
 # メールアドレス変更確認ルート
 # =============================================================================
 
@@ -1331,8 +1541,17 @@ async def lobbies_list(
         select(Lobby).options(selectinload(Lobby.sessions)).order_by(Lobby.id)
     )
     lobbies = list(result.scalars().all())
+
+    # ギルド・チャンネル名のルックアップを取得
+    guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
+
     return HTMLResponse(
-        content=lobbies_list_page(lobbies, csrf_token=generate_csrf_token())
+        content=lobbies_list_page(
+            lobbies,
+            csrf_token=generate_csrf_token(),
+            guilds_map=guilds_map,
+            channels_map=channels_map,
+        )
     )
 
 
@@ -1389,8 +1608,17 @@ async def sticky_list(
 
     result = await db.execute(select(StickyMessage).order_by(StickyMessage.created_at))
     stickies = list(result.scalars().all())
+
+    # ギルド・チャンネル名のルックアップを取得
+    guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
+
     return HTMLResponse(
-        content=sticky_list_page(stickies, csrf_token=generate_csrf_token())
+        content=sticky_list_page(
+            stickies,
+            csrf_token=generate_csrf_token(),
+            guilds_map=guilds_map,
+            channels_map=channels_map,
+        )
     )
 
 
@@ -1455,8 +1683,17 @@ async def bump_list(
     )
     reminders = list(reminders_result.scalars().all())
 
+    # ギルド・チャンネル名のルックアップを取得
+    guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
+
     return HTMLResponse(
-        content=bump_list_page(configs, reminders, csrf_token=generate_csrf_token())
+        content=bump_list_page(
+            configs,
+            reminders,
+            csrf_token=generate_csrf_token(),
+            guilds_map=guilds_map,
+            channels_map=channels_map,
+        )
     )
 
 
@@ -1604,9 +1841,16 @@ async def rolepanels_list(
     for panel in panels:
         items_by_panel[panel.id] = sorted(panel.items, key=lambda x: x.position)
 
+    # ギルド・チャンネル名のルックアップを取得
+    guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
+
     return HTMLResponse(
         content=role_panels_list_page(
-            panels, items_by_panel, csrf_token=generate_csrf_token()
+            panels,
+            items_by_panel,
+            csrf_token=generate_csrf_token(),
+            guilds_map=guilds_map,
+            channels_map=channels_map,
         )
     )
 
