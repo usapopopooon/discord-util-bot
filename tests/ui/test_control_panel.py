@@ -844,10 +844,23 @@ class TestNsfwButton:
         view = ControlPanelView(session_id=1)
         interaction = _make_interaction(user_id=1)
         interaction.channel.nsfw = False
+        interaction.edit_original_response = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1")
+        owner = MagicMock(spec=discord.Member)
+        interaction.guild.get_member = MagicMock(return_value=owner)
 
-        with patch(
-            "src.ui.control_panel.refresh_panel_embed",
-            new_callable=AsyncMock,
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.create_control_panel_embed",
+                return_value=MagicMock(spec=discord.Embed),
+            ),
         ):
             await view.nsfw_button.callback(interaction)
 
@@ -858,16 +871,31 @@ class TestNsfwButton:
         msg = interaction.channel.send.call_args[0][0]
         assert "年齢制限を設定" in msg
         assert view.nsfw_button.label == "制限解除"
+        # defer() を完了させる
+        interaction.edit_original_response.assert_awaited_once()
 
     async def test_disable_nsfw(self) -> None:
         """NSFW を無効化する。"""
         view = ControlPanelView(session_id=1, is_nsfw=True)
         interaction = _make_interaction(user_id=1)
         interaction.channel.nsfw = True
+        interaction.edit_original_response = AsyncMock()
+        voice_session = _make_voice_session(owner_id="1")
+        owner = MagicMock(spec=discord.Member)
+        interaction.guild.get_member = MagicMock(return_value=owner)
 
-        with patch(
-            "src.ui.control_panel.refresh_panel_embed",
-            new_callable=AsyncMock,
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.create_control_panel_embed",
+                return_value=MagicMock(spec=discord.Embed),
+            ),
         ):
             await view.nsfw_button.callback(interaction)
 
@@ -876,11 +904,23 @@ class TestNsfwButton:
         msg = interaction.channel.send.call_args[0][0]
         assert "年齢制限を解除" in msg
         assert view.nsfw_button.label == "年齢制限"
+        # defer() を完了させる
+        interaction.edit_original_response.assert_awaited_once()
 
     async def test_nsfw_non_voice_channel_skipped(self) -> None:
         """VoiceChannel でない場合は何もしない。"""
         view = ControlPanelView(session_id=1)
         interaction = _make_interaction(user_id=1, is_voice=False)
+
+        await view.nsfw_button.callback(interaction)
+
+        interaction.response.defer.assert_not_awaited()
+
+    async def test_nsfw_no_guild_skipped(self) -> None:
+        """ギルドがない場合は何もしない。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.guild = None
 
         await view.nsfw_button.callback(interaction)
 
@@ -2245,7 +2285,14 @@ class TestLockButtonOwnerPermissions:
         """ロック時にオーナーにフル権限が付与される。"""
         view = ControlPanelView(session_id=1)
         interaction = _make_interaction(user_id=1)
+        interaction.edit_original_response = AsyncMock()
+        # チャンネルにロール権限がない場合
+        interaction.channel.overwrites = {}
         voice_session = _make_voice_session(owner_id="1", is_locked=False)
+        # guild.get_member() がオーナーを返すよう設定
+        owner = MagicMock(spec=discord.Member)
+        owner.id = 1
+        interaction.guild.get_member = MagicMock(return_value=owner)
 
         mock_factory, _ = _mock_async_session()
         with (
@@ -2259,12 +2306,16 @@ class TestLockButtonOwnerPermissions:
                 "src.ui.control_panel.update_voice_session",
                 new_callable=AsyncMock,
             ),
+            patch(
+                "src.ui.control_panel.create_control_panel_embed",
+                return_value=MagicMock(spec=discord.Embed),
+            ),
         ):
             await view.lock_button.callback(interaction)
 
-        # オーナーにフル権限が付与される
+        # オーナーにフル権限が付与される (guild.get_member で取得したオーナー)
         interaction.channel.set_permissions.assert_any_await(
-            interaction.user,
+            owner,
             connect=True,
             speak=True,
             stream=True,
@@ -2273,14 +2324,15 @@ class TestLockButtonOwnerPermissions:
             deafen_members=True,
         )
 
-    async def test_lock_skips_owner_permissions_when_not_member(self) -> None:
-        """interaction.user が Member でない場合、オーナー権限付与をスキップ。"""
+    async def test_lock_skips_owner_permissions_when_not_found(self) -> None:
+        """guild.get_member が None を返す場合、オーナー権限付与をスキップ。"""
         view = ControlPanelView(session_id=1)
         interaction = _make_interaction(user_id=1)
-        # interaction.user を discord.User として設定 (Member ではない)
-        interaction.user = MagicMock(spec=discord.User)
-        interaction.user.id = 1
-        interaction.user.mention = "<@1>"
+        interaction.edit_original_response = AsyncMock()
+        # チャンネルにロール権限がない場合
+        interaction.channel.overwrites = {}
+        # guild.get_member() が None を返す (オーナーがサーバーにいない)
+        interaction.guild.get_member = MagicMock(return_value=None)
 
         voice_session = _make_voice_session(owner_id="1", is_locked=False)
 
@@ -2295,6 +2347,10 @@ class TestLockButtonOwnerPermissions:
             patch(
                 "src.ui.control_panel.update_voice_session",
                 new_callable=AsyncMock,
+            ),
+            patch(
+                "src.ui.control_panel.create_control_panel_embed",
+                return_value=MagicMock(spec=discord.Embed),
             ),
         ):
             await view.lock_button.callback(interaction)
@@ -2304,6 +2360,41 @@ class TestLockButtonOwnerPermissions:
         interaction.channel.set_permissions.assert_awaited_once_with(
             interaction.guild.default_role, connect=False
         )
+
+    async def test_lock_also_denies_role_permissions(self) -> None:
+        """ロック時にチャンネルに設定されたロールの connect も拒否される。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.edit_original_response = AsyncMock()
+        # チャンネルにロール権限がある場合
+        role = MagicMock(spec=discord.Role)
+        role_overwrite = MagicMock()
+        interaction.channel.overwrites = {role: role_overwrite}
+        voice_session = _make_voice_session(owner_id="1", is_locked=False)
+        owner = MagicMock(spec=discord.Member)
+        interaction.guild.get_member = MagicMock(return_value=owner)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.ui.control_panel.create_control_panel_embed",
+                return_value=MagicMock(spec=discord.Embed),
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        # ロールの connect も拒否される
+        interaction.channel.set_permissions.assert_any_await(role, connect=False)
 
 
 # ===========================================================================

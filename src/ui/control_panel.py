@@ -1009,8 +1009,8 @@ class ControlPanelView(discord.ui.View):
     ) -> None:
         """ロック/解除トグルボタン。
 
-        ロック時: @everyone の connect を拒否、オーナーにフル権限を付与
-        解除時: @everyone の権限上書きを削除 (デフォルトに戻す)
+        ロック時: @everyone と全ロールの connect を拒否、オーナーにフル権限を付与
+        解除時: ロック時に追加した権限上書きを削除
         """
         channel = interaction.channel
         if not isinstance(channel, discord.VoiceChannel) or not interaction.guild:
@@ -1032,16 +1032,24 @@ class ControlPanelView(discord.ui.View):
                 # リソースロックにより、並行リクエストによる lost update を防止
                 new_locked_state = not voice_session.is_locked
                 name_edit_failed = False
+                owner_id = int(voice_session.owner_id)
 
                 if new_locked_state:
                     # ロック: @everyone の接続を拒否
                     await channel.set_permissions(
                         interaction.guild.default_role, connect=False
                     )
+                    # チャンネルに設定されている全ロールの connect も拒否
+                    # ロールに connect=True があると @everyone の拒否が上書きされる
+                    default_role = interaction.guild.default_role
+                    for target in channel.overwrites:
+                        if isinstance(target, discord.Role) and target != default_role:
+                            await channel.set_permissions(target, connect=False)
                     # オーナーにフル権限を付与
-                    if isinstance(interaction.user, discord.Member):
+                    owner = interaction.guild.get_member(owner_id)
+                    if owner:
                         await channel.set_permissions(
-                            interaction.user,
+                            owner,
                             connect=True,
                             speak=True,
                             stream=True,
@@ -1064,11 +1072,25 @@ class ControlPanelView(discord.ui.View):
                     button.label = "解除"
                     button.emoji = "🔓"
                 else:
-                    # 解除: @everyone の権限上書きを削除
-                    # overwrite=None で上書きごと削除 (デフォルトに戻す)
+                    # 解除: ロールの connect 拒否を削除
+                    default_role = interaction.guild.default_role
+                    for target, overwrite in list(channel.overwrites.items()):
+                        if not isinstance(target, discord.Role):
+                            continue
+                        if target == default_role:
+                            continue
+                        if overwrite.connect is False:
+                            # connect の上書きだけ削除 (他の権限は維持)
+                            await channel.set_permissions(target, connect=None)
+                    # @everyone の権限上書きを削除 (デフォルトに戻す)
+                    # overwrite=None で上書きごと削除
                     await channel.set_permissions(
                         interaction.guild.default_role, overwrite=None
                     )
+                    # オーナーの特別権限も削除 (通常ユーザーに戻す)
+                    owner = interaction.guild.get_member(owner_id)
+                    if owner:
+                        await channel.set_permissions(owner, overwrite=None)
                     # チャンネル名の先頭から🔒を削除 (ある場合のみ)
                     if channel.name.startswith("🔒"):
                         try:
@@ -1088,6 +1110,13 @@ class ControlPanelView(discord.ui.View):
                     db_session, voice_session, is_locked=new_locked_state
                 )
 
+                # Embed を更新
+                owner = interaction.guild.get_member(owner_id)
+                if owner:
+                    embed = create_control_panel_embed(voice_session, owner)
+                else:
+                    embed = None
+
             status = "ロック" if new_locked_state else "ロック解除"
             emoji = "🔒" if new_locked_state else "🔓"
             # チャンネルに変更通知を送信
@@ -1103,7 +1132,11 @@ class ControlPanelView(discord.ui.View):
                 )
             else:
                 await channel.send(f"{emoji} チャンネルが **{status}** されました。")
-            await refresh_panel_embed(channel)
+            # defer() を完了させるために edit_original_response を呼ぶ
+            if embed:
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.edit_original_response(view=self)
 
     @discord.ui.button(
         label="非表示",
@@ -1162,11 +1195,22 @@ class ControlPanelView(discord.ui.View):
                     db_session, voice_session, is_hidden=new_hidden_state
                 )
 
+                # Embed を更新
+                owner = interaction.guild.get_member(int(voice_session.owner_id))
+                if owner:
+                    embed = create_control_panel_embed(voice_session, owner)
+                else:
+                    embed = None
+
             status = "非表示" if new_hidden_state else "表示"
             emoji = "🙈" if new_hidden_state else "👁️"
             # チャンネルに変更通知を送信
             await channel.send(f"{emoji} チャンネルが **{status}** になりました。")
-            await refresh_panel_embed(channel)
+            # defer() を完了させるために edit_original_response を呼ぶ
+            if embed:
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.edit_original_response(view=self)
 
     @discord.ui.button(
         label="年齢制限",
@@ -1184,7 +1228,7 @@ class ControlPanelView(discord.ui.View):
         NSFW チャンネルでは年齢確認が必要になる。
         """
         channel = interaction.channel
-        if not isinstance(channel, discord.VoiceChannel):
+        if not isinstance(channel, discord.VoiceChannel) or not interaction.guild:
             return
 
         # レート制限による待機でタイムアウトしないよう、最初に応答
@@ -1201,10 +1245,28 @@ class ControlPanelView(discord.ui.View):
         else:
             button.label = "年齢制限"
 
+        # Embed を更新するために DB からセッション情報を取得
+        async with async_session() as db_session:
+            voice_session = await get_voice_session(
+                db_session, str(interaction.channel_id)
+            )
+            if voice_session:
+                owner = interaction.guild.get_member(int(voice_session.owner_id))
+                if owner:
+                    embed = create_control_panel_embed(voice_session, owner)
+                else:
+                    embed = None
+            else:
+                embed = None
+
         status = "年齢制限を設定" if new_nsfw else "年齢制限を解除"
         # チャンネルに変更通知を送信
         await channel.send(f"🔞 チャンネルの **{status}** されました。")
-        await refresh_panel_embed(channel)
+        # defer() を完了させるために edit_original_response を呼ぶ
+        if embed:
+            await interaction.edit_original_response(embed=embed, view=self)
+        else:
+            await interaction.edit_original_response(view=self)
 
     # =========================================================================
     # Row 3: メンバー管理 (譲渡・キック)
