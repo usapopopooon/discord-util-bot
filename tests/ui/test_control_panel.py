@@ -14,10 +14,8 @@ from src.ui.control_panel import (
     BitrateSelectMenu,
     BitrateSelectView,
     BlockSelectView,
-    CameraAllowSelectMenu,
-    CameraAllowSelectView,
-    CameraBanSelectMenu,
-    CameraBanSelectView,
+    CameraToggleSelectMenu,
+    CameraToggleSelectView,
     ControlPanelView,
     KickSelectMenu,
     KickSelectView,
@@ -2332,11 +2330,11 @@ class TestHideButtonNoGuild:
 # ===========================================================================
 
 
-class TestCameraBanButton:
-    """Tests for ControlPanelView.camera_ban_button."""
+class TestCameraButton:
+    """Tests for ControlPanelView.camera_button."""
 
-    async def test_sends_camera_ban_select(self) -> None:
-        """カメラ禁止ボタンはユーザーセレクトを送信する。"""
+    async def test_sends_camera_toggle_select(self) -> None:
+        """カメラボタンはユーザーセレクトを送信する。"""
         view = ControlPanelView(session_id=1)
         interaction = _make_interaction(user_id=1)
 
@@ -2347,20 +2345,25 @@ class TestCameraBanButton:
         member.display_name = "User2"
         interaction.channel.members = [member]
 
-        await view.camera_ban_button.callback(interaction)
+        # overwrites_for のモック
+        overwrites = MagicMock()
+        overwrites.stream = None  # デフォルト状態
+        interaction.channel.overwrites_for = MagicMock(return_value=overwrites)
+
+        await view.camera_button.callback(interaction)
 
         interaction.response.send_message.assert_awaited_once()
         kwargs = interaction.response.send_message.call_args[1]
-        assert isinstance(kwargs["view"], CameraBanSelectView)
+        assert isinstance(kwargs["view"], CameraToggleSelectView)
         assert kwargs["ephemeral"] is True
 
-    async def test_no_members_to_ban(self) -> None:
-        """カメラ禁止できるメンバーがいない場合のメッセージ。"""
+    async def test_no_members(self) -> None:
+        """他のメンバーがいない場合のメッセージ。"""
         view = ControlPanelView(session_id=1)
         interaction = _make_interaction(user_id=1)
         interaction.channel.members = []
 
-        await view.camera_ban_button.callback(interaction)
+        await view.camera_button.callback(interaction)
 
         interaction.response.send_message.assert_awaited_once()
         msg = interaction.response.send_message.call_args[0][0]
@@ -2368,236 +2371,83 @@ class TestCameraBanButton:
 
 
 # ===========================================================================
-# カメラ許可ボタンテスト
+# CameraToggleSelectView テスト
 # ===========================================================================
 
 
-class TestCameraAllowButton:
-    """Tests for ControlPanelView.camera_allow_button."""
+class TestCameraToggleSelectCallback:
+    """Tests for CameraToggleSelectMenu callback."""
 
-    async def test_sends_camera_allow_select(self) -> None:
-        """カメラ許可ボタンはユーザーセレクトを送信する。"""
-        view = ControlPanelView(session_id=1)
-        interaction = _make_interaction(user_id=1)
-
-        # VC にメンバーを追加
-        member = MagicMock(spec=discord.Member)
-        member.id = 2
-        member.bot = False
-        member.display_name = "User2"
-        interaction.channel.members = [member]
-
-        await view.camera_allow_button.callback(interaction)
-
-        interaction.response.send_message.assert_awaited_once()
-        kwargs = interaction.response.send_message.call_args[1]
-        assert isinstance(kwargs["view"], CameraAllowSelectView)
-        assert kwargs["ephemeral"] is True
-
-    async def test_no_members_to_allow(self) -> None:
-        """カメラ許可できるメンバーがいない場合のメッセージ。"""
-        view = ControlPanelView(session_id=1)
-        interaction = _make_interaction(user_id=1)
-        interaction.channel.members = []
-
-        await view.camera_allow_button.callback(interaction)
-
-        interaction.response.send_message.assert_awaited_once()
-        msg = interaction.response.send_message.call_args[0][0]
-        assert "メンバーがいません" in msg
-
-
-# ===========================================================================
-# CameraBanSelectView テスト
-# ===========================================================================
-
-
-class TestCameraBanSelectCallback:
-    """Tests for CameraBanSelectMenu callback."""
-
-    async def test_camera_ban_success(self) -> None:
-        """メンバーのカメラ配信を禁止する。"""
-        user_to_ban = MagicMock(spec=discord.Member)
-        user_to_ban.id = 2
-        user_to_ban.bot = False
-        user_to_ban.display_name = "User2"
-        user_to_ban.mention = "<@2>"
+    async def test_camera_ban_from_allowed(self) -> None:
+        """許可状態からカメラ禁止に切り替える。"""
+        user = MagicMock(spec=discord.Member)
+        user.id = 2
+        user.bot = False
+        user.display_name = "User2"
+        user.mention = "<@2>"
 
         channel = MagicMock(spec=discord.VoiceChannel)
-        channel.members = [user_to_ban]
+        channel.members = [user]
 
-        view = CameraBanSelectView(channel, owner_id=1)
+        # 現在は許可状態 (stream=None)
+        overwrites = MagicMock()
+        overwrites.stream = None
+        channel.overwrites_for = MagicMock(return_value=overwrites)
+
+        view = CameraToggleSelectView(channel, owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1)
-        interaction.guild.get_member = MagicMock(return_value=user_to_ban)
+        interaction.guild.get_member = MagicMock(return_value=user)
+        interaction.channel.overwrites_for = MagicMock(return_value=overwrites)
 
         select._values = ["2"]
 
         await select.callback(interaction)
 
-        interaction.channel.set_permissions.assert_awaited_once_with(
-            user_to_ban, stream=False
-        )
-        # セレクトメニューを非表示にする
+        # 許可 → 禁止
+        interaction.channel.set_permissions.assert_awaited_once_with(user, stream=False)
         interaction.response.edit_message.assert_awaited_once()
         assert interaction.response.edit_message.call_args[1]["content"] == "\u200b"
-        # チャンネルに通知メッセージが送信される
         interaction.channel.send.assert_awaited_once()
         msg = interaction.channel.send.call_args[0][0]
         assert "カメラ配信が禁止" in msg
 
-    async def test_camera_ban_member_not_found(self) -> None:
-        """メンバーが見つからない場合はエラーメッセージを表示。"""
-        member = MagicMock(spec=discord.Member)
-        member.id = 2
-        member.bot = False
-        member.display_name = "User2"
+    async def test_camera_allow_from_banned(self) -> None:
+        """禁止状態からカメラ許可に切り替える。"""
+        user = MagicMock(spec=discord.Member)
+        user.id = 2
+        user.bot = False
+        user.display_name = "User2"
+        user.mention = "<@2>"
 
         channel = MagicMock(spec=discord.VoiceChannel)
-        channel.members = [member]
+        channel.members = [user]
 
-        view = CameraBanSelectView(channel, owner_id=1)
+        # 現在は禁止状態 (stream=False)
+        overwrites = MagicMock()
+        overwrites.stream = False
+        channel.overwrites_for = MagicMock(return_value=overwrites)
+
+        view = CameraToggleSelectView(channel, owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1)
-        interaction.guild.get_member = MagicMock(return_value=None)
+        interaction.guild.get_member = MagicMock(return_value=user)
+        interaction.channel.overwrites_for = MagicMock(return_value=overwrites)
 
         select._values = ["2"]
 
         await select.callback(interaction)
 
+        # 禁止 → 許可 (None に戻す)
+        interaction.channel.set_permissions.assert_awaited_once_with(user, stream=None)
         interaction.response.edit_message.assert_awaited_once()
-        msg = interaction.response.edit_message.call_args[1]["content"]
-        assert "見つかりません" in msg
-
-    async def test_camera_ban_non_voice_channel(self) -> None:
-        """VoiceChannel でない場合は何もしない。"""
-        member = MagicMock(spec=discord.Member)
-        member.id = 2
-        member.bot = False
-        member.display_name = "User2"
-
-        channel = MagicMock(spec=discord.VoiceChannel)
-        channel.members = [member]
-
-        view = CameraBanSelectView(channel, owner_id=1)
-        select = view.children[0]
-
-        interaction = _make_interaction(user_id=1, is_voice=False)
-
-        select._values = ["2"]
-
-        await select.callback(interaction)
-
-        interaction.response.edit_message.assert_not_awaited()
-
-
-class TestCameraBanSelectView:
-    """Tests for CameraBanSelectView member filtering."""
-
-    async def test_excludes_bot_members(self) -> None:
-        """Bot ユーザーが候補から除外される。"""
-        human = MagicMock(spec=discord.Member)
-        human.id = 2
-        human.bot = False
-        human.display_name = "Human"
-
-        bot_member = MagicMock(spec=discord.Member)
-        bot_member.id = 99
-        bot_member.bot = True
-        bot_member.display_name = "Bot"
-
-        channel = MagicMock(spec=discord.VoiceChannel)
-        channel.members = [human, bot_member]
-
-        view = CameraBanSelectView(channel, owner_id=1)
-        assert len(view.children) == 1
-        select_menu = view.children[0]
-        assert isinstance(select_menu, CameraBanSelectMenu)
-        # Bot は選択肢に含まれない
-        assert len(select_menu.options) == 1
-        assert select_menu.options[0].value == "2"
-
-    async def test_excludes_owner(self) -> None:
-        """オーナー自身が候補から除外される。"""
-        owner = MagicMock(spec=discord.Member)
-        owner.id = 1
-        owner.bot = False
-        owner.display_name = "Owner"
-
-        other = MagicMock(spec=discord.Member)
-        other.id = 2
-        other.bot = False
-        other.display_name = "Other"
-
-        channel = MagicMock(spec=discord.VoiceChannel)
-        channel.members = [owner, other]
-
-        view = CameraBanSelectView(channel, owner_id=1)
-        assert len(view.children) == 1
-        select_menu = view.children[0]
-        assert len(select_menu.options) == 1
-        assert select_menu.options[0].value == "2"
-
-    async def test_empty_when_only_bots_and_owner(self) -> None:
-        """オーナーと Bot しかいない場合、セレクトメニューは追加されない。"""
-        owner = MagicMock(spec=discord.Member)
-        owner.id = 1
-        owner.bot = False
-
-        bot_member = MagicMock(spec=discord.Member)
-        bot_member.id = 99
-        bot_member.bot = True
-
-        channel = MagicMock(spec=discord.VoiceChannel)
-        channel.members = [owner, bot_member]
-
-        view = CameraBanSelectView(channel, owner_id=1)
-        assert len(view.children) == 0
-
-
-# ===========================================================================
-# CameraAllowSelectView テスト
-# ===========================================================================
-
-
-class TestCameraAllowSelectCallback:
-    """Tests for CameraAllowSelectMenu callback."""
-
-    async def test_camera_allow_success(self) -> None:
-        """メンバーのカメラ配信を許可する。"""
-        user_to_allow = MagicMock(spec=discord.Member)
-        user_to_allow.id = 2
-        user_to_allow.bot = False
-        user_to_allow.display_name = "User2"
-        user_to_allow.mention = "<@2>"
-
-        channel = MagicMock(spec=discord.VoiceChannel)
-        channel.members = [user_to_allow]
-
-        view = CameraAllowSelectView(channel, owner_id=1)
-        select = view.children[0]
-
-        interaction = _make_interaction(user_id=1)
-        interaction.guild.get_member = MagicMock(return_value=user_to_allow)
-
-        select._values = ["2"]
-
-        await select.callback(interaction)
-
-        interaction.channel.set_permissions.assert_awaited_once_with(
-            user_to_allow, stream=None
-        )
-        # セレクトメニューを非表示にする
-        interaction.response.edit_message.assert_awaited_once()
-        assert interaction.response.edit_message.call_args[1]["content"] == "\u200b"
-        # チャンネルに通知メッセージが送信される
         interaction.channel.send.assert_awaited_once()
         msg = interaction.channel.send.call_args[0][0]
         assert "カメラ配信が許可" in msg
 
-    async def test_camera_allow_member_not_found(self) -> None:
+    async def test_camera_toggle_member_not_found(self) -> None:
         """メンバーが見つからない場合はエラーメッセージを表示。"""
         member = MagicMock(spec=discord.Member)
         member.id = 2
@@ -2607,7 +2457,11 @@ class TestCameraAllowSelectCallback:
         channel = MagicMock(spec=discord.VoiceChannel)
         channel.members = [member]
 
-        view = CameraAllowSelectView(channel, owner_id=1)
+        overwrites = MagicMock()
+        overwrites.stream = None
+        channel.overwrites_for = MagicMock(return_value=overwrites)
+
+        view = CameraToggleSelectView(channel, owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1)
@@ -2621,7 +2475,7 @@ class TestCameraAllowSelectCallback:
         msg = interaction.response.edit_message.call_args[1]["content"]
         assert "見つかりません" in msg
 
-    async def test_camera_allow_non_voice_channel(self) -> None:
+    async def test_camera_toggle_non_voice_channel(self) -> None:
         """VoiceChannel でない場合は何もしない。"""
         member = MagicMock(spec=discord.Member)
         member.id = 2
@@ -2631,7 +2485,11 @@ class TestCameraAllowSelectCallback:
         channel = MagicMock(spec=discord.VoiceChannel)
         channel.members = [member]
 
-        view = CameraAllowSelectView(channel, owner_id=1)
+        overwrites = MagicMock()
+        overwrites.stream = None
+        channel.overwrites_for = MagicMock(return_value=overwrites)
+
+        view = CameraToggleSelectView(channel, owner_id=1)
         select = view.children[0]
 
         interaction = _make_interaction(user_id=1, is_voice=False)
@@ -2643,8 +2501,8 @@ class TestCameraAllowSelectCallback:
         interaction.response.edit_message.assert_not_awaited()
 
 
-class TestCameraAllowSelectView:
-    """Tests for CameraAllowSelectView member filtering."""
+class TestCameraToggleSelectView:
+    """Tests for CameraToggleSelectView member filtering."""
 
     async def test_excludes_bot_members(self) -> None:
         """Bot ユーザーが候補から除外される。"""
@@ -2661,10 +2519,14 @@ class TestCameraAllowSelectView:
         channel = MagicMock(spec=discord.VoiceChannel)
         channel.members = [human, bot_member]
 
-        view = CameraAllowSelectView(channel, owner_id=1)
+        overwrites = MagicMock()
+        overwrites.stream = None
+        channel.overwrites_for = MagicMock(return_value=overwrites)
+
+        view = CameraToggleSelectView(channel, owner_id=1)
         assert len(view.children) == 1
         select_menu = view.children[0]
-        assert isinstance(select_menu, CameraAllowSelectMenu)
+        assert isinstance(select_menu, CameraToggleSelectMenu)
         # Bot は選択肢に含まれない
         assert len(select_menu.options) == 1
         assert select_menu.options[0].value == "2"
@@ -2684,7 +2546,11 @@ class TestCameraAllowSelectView:
         channel = MagicMock(spec=discord.VoiceChannel)
         channel.members = [owner, other]
 
-        view = CameraAllowSelectView(channel, owner_id=1)
+        overwrites = MagicMock()
+        overwrites.stream = None
+        channel.overwrites_for = MagicMock(return_value=overwrites)
+
+        view = CameraToggleSelectView(channel, owner_id=1)
         assert len(view.children) == 1
         select_menu = view.children[0]
         assert len(select_menu.options) == 1
@@ -2703,8 +2569,46 @@ class TestCameraAllowSelectView:
         channel = MagicMock(spec=discord.VoiceChannel)
         channel.members = [owner, bot_member]
 
-        view = CameraAllowSelectView(channel, owner_id=1)
+        view = CameraToggleSelectView(channel, owner_id=1)
         assert len(view.children) == 0
+
+    async def test_shows_banned_status_in_label(self) -> None:
+        """禁止中のユーザーはラベルに (禁止中) が表示される。"""
+        banned_user = MagicMock(spec=discord.Member)
+        banned_user.id = 2
+        banned_user.bot = False
+        banned_user.display_name = "BannedUser"
+
+        allowed_user = MagicMock(spec=discord.Member)
+        allowed_user.id = 3
+        allowed_user.bot = False
+        allowed_user.display_name = "AllowedUser"
+
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.members = [banned_user, allowed_user]
+
+        def mock_overwrites_for(member: discord.Member) -> MagicMock:
+            overwrites = MagicMock()
+            if member.id == 2:
+                overwrites.stream = False  # 禁止中
+            else:
+                overwrites.stream = None  # 許可
+            return overwrites
+
+        channel.overwrites_for = mock_overwrites_for
+
+        view = CameraToggleSelectView(channel, owner_id=1)
+        select_menu = view.children[0]
+
+        # 禁止中のユーザーのラベルを確認
+        banned_option = next(o for o in select_menu.options if o.value == "2")
+        assert "禁止中" in banned_option.label
+        assert "📵" in banned_option.label
+
+        # 許可中のユーザーのラベルを確認
+        allowed_option = next(o for o in select_menu.options if o.value == "3")
+        assert "禁止中" not in allowed_option.label
+        assert "📹" in allowed_option.label
 
 
 # ===========================================================================
@@ -3281,7 +3185,7 @@ class TestLockButtonChannelRenameEdgeCases:
         interaction.channel.edit.assert_not_awaited()
 
     async def test_lock_channel_edit_error_handled(self) -> None:
-        """channel.edit がエラーでも処理は継続する。"""
+        """channel.edit がエラーでも処理は継続し、警告メッセージが表示される。"""
         view = ControlPanelView(session_id=1)
         interaction = _make_interaction(user_id=1)
         interaction.channel.name = "テストチャンネル"
@@ -3308,6 +3212,47 @@ class TestLockButtonChannelRenameEdgeCases:
 
         # DB更新は行われる（エラーはチャンネル名変更だけ）
         mock_update.assert_awaited_once()
+        # チャンネルに警告付きメッセージが送信される
+        interaction.channel.send.assert_awaited_once()
+        msg = interaction.channel.send.call_args[0][0]
+        assert "ロック" in msg
+        assert "チャンネル名の変更が制限されています" in msg
+        assert "🔒マークは手動で追加してください" in msg
+
+    async def test_unlock_channel_edit_error_handled(self) -> None:
+        """アンロック時 channel.edit がエラーでも処理継続。警告メッセージ表示。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        interaction.channel.name = "🔒テストチャンネル"
+        interaction.channel.edit = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "rate limited")
+        )
+        voice_session = _make_voice_session(owner_id="1", is_locked=True)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ) as mock_update,
+        ):
+            # エラーが発生しても例外は投げられない
+            await view.lock_button.callback(interaction)
+
+        # DB更新は行われる（エラーはチャンネル名変更だけ）
+        mock_update.assert_awaited_once()
+        # チャンネルに警告付きメッセージが送信される
+        interaction.channel.send.assert_awaited_once()
+        msg = interaction.channel.send.call_args[0][0]
+        assert "ロック解除" in msg
+        assert "チャンネル名の変更が制限されています" in msg
+        assert "🔒マークは手動で削除してください" in msg
 
     async def test_lock_with_spaces_only_name(self) -> None:
         """スペースのみのチャンネル名でもロックできる。"""

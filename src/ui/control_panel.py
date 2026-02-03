@@ -17,7 +17,6 @@ discord.py の UI コンポーネント:
   - ephemeral=True: 操作者にだけ見えるメッセージ
 """
 
-import contextlib
 import logging
 import time
 from typing import Any
@@ -649,34 +648,46 @@ class AllowSelectView(discord.ui.View):
         await channel.send(f"✅ {user_to_allow.mention} が許可されました。")
 
 
-class CameraBanSelectView(discord.ui.View):
-    """カメラ禁止対象を選択するセレクトメニュー。
+class CameraToggleSelectView(discord.ui.View):
+    """カメラ権限をトグルするセレクトメニュー。
 
     チャンネル内のメンバー一覧をドロップダウンで表示する。
     オーナー自身と Bot は選択肢から除外される。
+    選択したユーザーのカメラ/配信権限をトグルする。
     """
 
     def __init__(self, channel: discord.VoiceChannel, owner_id: int) -> None:
         super().__init__(timeout=60)
+        self.channel = channel
         # オーナー自身と Bot を除外した候補リストを作成
         members = [m for m in channel.members if m.id != owner_id and not m.bot]
         if not members:
             return  # 誰もいなければセレクトメニューを追加しない
-        options = [
-            discord.SelectOption(label=m.display_name, value=str(m.id))
-            for m in members[:25]
-        ]
-        self.add_item(CameraBanSelectMenu(options))
+
+        # 各メンバーの現在のカメラ権限状態を表示
+        options = []
+        for m in members[:25]:
+            overwrites = channel.overwrites_for(m)
+            if overwrites.stream is False:
+                # 禁止中
+                label = f"📵 {m.display_name} (禁止中)"
+            else:
+                # 許可 (デフォルトまたは明示的許可)
+                label = f"📹 {m.display_name}"
+            options.append(discord.SelectOption(label=label, value=str(m.id)))
+        self.add_item(CameraToggleSelectMenu(options))
 
 
-class CameraBanSelectMenu(discord.ui.Select[Any]):
-    """カメラ禁止のセレクトメニュー本体。"""
+class CameraToggleSelectMenu(discord.ui.Select[Any]):
+    """カメラ権限トグルのセレクトメニュー本体。"""
 
     def __init__(self, options: list[discord.SelectOption]) -> None:
-        super().__init__(placeholder="カメラ禁止対象を選択...", options=options)
+        super().__init__(
+            placeholder="カメラ権限を切り替えるユーザーを選択...", options=options
+        )
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        """ユーザー選択時の処理。配信権限を拒否する。"""
+        """ユーザー選択時の処理。配信権限をトグルする。"""
         channel = interaction.channel
         if not isinstance(channel, discord.VoiceChannel):
             return
@@ -685,71 +696,26 @@ class CameraBanSelectMenu(discord.ui.Select[Any]):
         if not guild:
             return
 
-        user_to_ban = guild.get_member(int(self.values[0]))
-        if not user_to_ban:
+        user = guild.get_member(int(self.values[0]))
+        if not user:
             await interaction.response.edit_message(
                 content="メンバーが見つかりません。",
                 view=None,
             )
             return
 
-        # stream=False で配信 (カメラ/画面共有) を禁止
-        await channel.set_permissions(user_to_ban, stream=False)
-        # ephemeral のセレクトメニューを削除し、チャンネルに通知
-        await interaction.response.edit_message(content="\u200b", view=None)
-        await channel.send(f"📵 {user_to_ban.mention} のカメラ配信が禁止されました。")
-
-
-class CameraAllowSelectView(discord.ui.View):
-    """カメラ許可対象を選択するセレクトメニュー。
-
-    チャンネル内のメンバー一覧をドロップダウンで表示する。
-    オーナー自身と Bot は選択肢から除外される。
-    カメラ許可 = stream=None で配信権限の上書きを削除する。
-    """
-
-    def __init__(self, channel: discord.VoiceChannel, owner_id: int) -> None:
-        super().__init__(timeout=60)
-        # オーナー自身と Bot を除外した候補リストを作成
-        members = [m for m in channel.members if m.id != owner_id and not m.bot]
-        if not members:
-            return  # 誰もいなければセレクトメニューを追加しない
-        options = [
-            discord.SelectOption(label=m.display_name, value=str(m.id))
-            for m in members[:25]
-        ]
-        self.add_item(CameraAllowSelectMenu(options))
-
-
-class CameraAllowSelectMenu(discord.ui.Select[Any]):
-    """カメラ許可のセレクトメニュー本体。"""
-
-    def __init__(self, options: list[discord.SelectOption]) -> None:
-        super().__init__(placeholder="カメラ許可対象を選択...", options=options)
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        """ユーザー選択時の処理。配信権限の上書きを削除する。"""
-        channel = interaction.channel
-        if not isinstance(channel, discord.VoiceChannel):
-            return
-
-        guild = interaction.guild
-        if not guild:
-            return
-
-        user_to_allow = guild.get_member(int(self.values[0]))
-        if not user_to_allow:
-            await interaction.response.edit_message(
-                content="メンバーが見つかりません。",
-                view=None,
-            )
-            return
-
-        # stream=None で配信権限の上書きを削除 (デフォルトに戻す)
-        await channel.set_permissions(user_to_allow, stream=None)
-        # ephemeral のセレクトメニューを削除し、チャンネルに通知
-        await interaction.response.edit_message(content="\u200b", view=None)
-        await channel.send(f"📹 {user_to_allow.mention} のカメラ配信が許可されました。")
+        # 現在の権限を取得してトグル
+        overwrites = channel.overwrites_for(user)
+        if overwrites.stream is False:
+            # 禁止中 → 許可 (上書きを削除してデフォルトに戻す)
+            await channel.set_permissions(user, stream=None)
+            await interaction.response.edit_message(content="\u200b", view=None)
+            await channel.send(f"📹 {user.mention} のカメラ配信が許可されました。")
+        else:
+            # 許可 → 禁止
+            await channel.set_permissions(user, stream=False)
+            await interaction.response.edit_message(content="\u200b", view=None)
+            await channel.send(f"📵 {user.mention} のカメラ配信が禁止されました。")
 
 
 class BitrateSelectView(discord.ui.View):
@@ -1065,6 +1031,7 @@ class ControlPanelView(discord.ui.View):
                 # トグル: 現在の状態を反転
                 # リソースロックにより、並行リクエストによる lost update を防止
                 new_locked_state = not voice_session.is_locked
+                name_edit_failed = False
 
                 if new_locked_state:
                     # ロック: @everyone の接続を拒否
@@ -1084,8 +1051,15 @@ class ControlPanelView(discord.ui.View):
                         )
                     # チャンネル名の先頭に🔒を追加 (まだない場合のみ)
                     if not channel.name.startswith("🔒"):
-                        with contextlib.suppress(discord.HTTPException):
+                        try:
                             await channel.edit(name=f"🔒{channel.name}")
+                        except discord.HTTPException as e:
+                            logger.warning(
+                                "Failed to add lock emoji to channel %s: %s",
+                                channel.id,
+                                e,
+                            )
+                            name_edit_failed = True
                     # ボタンの表示を「解除」に変更
                     button.label = "解除"
                     button.emoji = "🔓"
@@ -1097,8 +1071,15 @@ class ControlPanelView(discord.ui.View):
                     )
                     # チャンネル名の先頭から🔒を削除 (ある場合のみ)
                     if channel.name.startswith("🔒"):
-                        with contextlib.suppress(discord.HTTPException):
+                        try:
                             await channel.edit(name=channel.name[1:])
+                        except discord.HTTPException as e:
+                            logger.warning(
+                                "Failed to remove lock emoji from channel %s: %s",
+                                channel.id,
+                                e,
+                            )
+                            name_edit_failed = True
                     button.label = "ロック"
                     button.emoji = "🔒"
 
@@ -1110,7 +1091,18 @@ class ControlPanelView(discord.ui.View):
             status = "ロック" if new_locked_state else "ロック解除"
             emoji = "🔒" if new_locked_state else "🔓"
             # チャンネルに変更通知を送信
-            await channel.send(f"{emoji} チャンネルが **{status}** されました。")
+            if name_edit_failed:
+                # 名前変更が失敗した場合は通知
+                if new_locked_state:
+                    hint = "🔒マークは手動で追加してください。"
+                else:
+                    hint = "🔒マークは手動で削除してください。"
+                await channel.send(
+                    f"{emoji} チャンネルが **{status}** されました。\n"
+                    f"⚠️ チャンネル名の変更が制限されています。{hint}"
+                )
+            else:
+                await channel.send(f"{emoji} チャンネルが **{status}** されました。")
             await refresh_panel_embed(channel)
 
     @discord.ui.button(
@@ -1313,59 +1305,30 @@ class ControlPanelView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="カメラ禁止",
-        emoji="📵",
-        style=discord.ButtonStyle.secondary,
-        custom_id="camera_ban_button",
-        row=4,
-    )
-    async def camera_ban_button(
-        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
-    ) -> None:
-        """カメラ禁止ボタン。ユーザー選択セレクトを表示する。"""
-        channel = interaction.channel
-        if not isinstance(channel, discord.VoiceChannel):
-            return
-
-        view = CameraBanSelectView(channel, interaction.user.id)
-        if not view.children:
-            await interaction.response.send_message(
-                "カメラ禁止できるメンバーがいません。",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.response.send_message(
-            "カメラを禁止するユーザーを選択:",
-            view=view,
-            ephemeral=True,
-        )
-
-    @discord.ui.button(
-        label="カメラ許可",
+        label="カメラ",
         emoji="📹",
         style=discord.ButtonStyle.secondary,
-        custom_id="camera_allow_button",
+        custom_id="camera_button",
         row=4,
     )
-    async def camera_allow_button(
+    async def camera_button(
         self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
     ) -> None:
-        """カメラ許可ボタン。ユーザー選択セレクトを表示する。"""
+        """カメラ権限トグルボタン。ユーザー選択セレクトを表示する。"""
         channel = interaction.channel
         if not isinstance(channel, discord.VoiceChannel):
             return
 
-        view = CameraAllowSelectView(channel, interaction.user.id)
+        view = CameraToggleSelectView(channel, interaction.user.id)
         if not view.children:
             await interaction.response.send_message(
-                "カメラ許可できるメンバーがいません。",
+                "他にメンバーがいません。",
                 ephemeral=True,
             )
             return
 
         await interaction.response.send_message(
-            "カメラを許可するユーザーを選択:",
+            "カメラ権限を切り替えるユーザーを選択:",
             view=view,
             ephemeral=True,
         )
