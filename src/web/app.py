@@ -2401,13 +2401,7 @@ async def rolepanel_post_to_discord(
     if not panel:
         return RedirectResponse(url="/rolepanels", status_code=302)
 
-    # 既に投稿済みの場合はエラー
-    if panel.message_id:
-        return RedirectResponse(
-            url=f"/rolepanels/{panel_id}?success=Panel+is+already+posted",
-            status_code=302,
-        )
-
+    # 再投稿を許可 (新しいメッセージが作成され、message_id が更新される)
     items = sorted(panel.items, key=lambda x: x.position)
 
     # Discord に投稿

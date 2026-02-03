@@ -187,7 +187,7 @@ async def post_role_panel_to_discord(
     }
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=False) as client:
             response = await client.post(url, json=payload, headers=headers, timeout=30)
 
             if response.status_code == 200:
@@ -257,7 +257,7 @@ async def add_reactions_to_message(
     }
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=False) as client:
             for item in items:
                 # 絵文字をエンコード
                 if item.emoji.startswith("<"):

@@ -2396,6 +2396,42 @@ class TestLockButtonOwnerPermissions:
         # ロールの connect も拒否される
         interaction.channel.set_permissions.assert_any_await(role, connect=False)
 
+    async def test_unlock_restores_role_permissions(self) -> None:
+        """アンロック時にロールの connect 拒否が解除される。"""
+        view = ControlPanelView(session_id=1, is_locked=True)
+        interaction = _make_interaction(user_id=1)
+        interaction.edit_original_response = AsyncMock()
+        # チャンネルにロール権限がある (connect=False 状態)
+        role = MagicMock(spec=discord.Role)
+        role_overwrite = MagicMock()
+        role_overwrite.connect = False  # ロック時に拒否された状態
+        interaction.channel.overwrites = {role: role_overwrite}
+        voice_session = _make_voice_session(owner_id="1", is_locked=True)
+        owner = MagicMock(spec=discord.Member)
+        interaction.guild.get_member = MagicMock(return_value=owner)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.ui.control_panel.create_control_panel_embed",
+                return_value=MagicMock(spec=discord.Embed),
+            ),
+        ):
+            await view.lock_button.callback(interaction)
+
+        # ロールの connect 拒否が解除される (connect=None)
+        interaction.channel.set_permissions.assert_any_await(role, connect=None)
+
 
 # ===========================================================================
 # Hide ボタン — no-guild テスト

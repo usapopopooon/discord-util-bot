@@ -7311,12 +7311,24 @@ class TestRolePanelPostToDiscord:
         assert response.status_code == 302
         assert response.headers["location"] == "/rolepanels"
 
-    async def test_post_already_posted_panel(
+    async def test_repost_already_posted_panel(
         self,
         authenticated_client: AsyncClient,
         db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """既に投稿済みのパネルは再投稿できない。"""
+        """既に投稿済みのパネルも再投稿できる。"""
+        from unittest.mock import AsyncMock
+
+        import src.web.app as app_module
+
+        # Discord API をモック
+        monkeypatch.setattr(
+            app_module,
+            "post_role_panel_to_discord",
+            AsyncMock(return_value=(True, "333333333333333333", None)),
+        )
+
         panel = RolePanel(
             guild_id="123456789012345678",
             channel_id="987654321098765432",
@@ -7333,7 +7345,12 @@ class TestRolePanelPostToDiscord:
             follow_redirects=False,
         )
         assert response.status_code == 302
-        assert "already+posted" in response.headers["location"].lower()
+        # 再投稿成功
+        assert "posted+to+discord" in response.headers["location"].lower()
+
+        # message_id が新しい値に更新される
+        await db_session.refresh(panel)
+        assert panel.message_id == "333333333333333333"
 
     async def test_post_success(
         self,

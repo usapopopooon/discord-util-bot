@@ -2255,26 +2255,33 @@ def role_panel_detail_page(
             </div>
             <div class="mt-6 pt-4 border-t border-gray-700">
                 {
-        f'''<form method="POST" action="/rolepanels/{panel.id}/post"
-                      onsubmit="return confirm('Post this panel to Discord?');">
-                    {_csrf_field(csrf_token)}
-                    <button type="submit"
-                            class="bg-green-600 hover:bg-green-700 px-6 py-2 rounded font-semibold
-                                   transition-colors">
-                        Post to Discord
-                    </button>
-                    <span class="ml-4 text-gray-400 text-sm">
-                        The panel will be posted to the channel above.
-                    </span>
-                </form>'''
-        if not panel.message_id
-        else f'''<div class="flex items-center">
+        f'''<div class="flex items-center mb-4">
                     <span class="text-green-400 font-medium">✓ Posted to Discord</span>
                     <span class="ml-4 text-gray-400 text-sm font-mono">
                         Message ID: {escape(panel.message_id)}
                     </span>
                 </div>'''
+        if panel.message_id
+        else ""
     }
+                <form method="POST" action="/rolepanels/{panel.id}/post"
+                      onsubmit="return confirm('Post this panel to Discord?');">
+                    {_csrf_field(csrf_token)}
+                    <button type="submit"
+                            class="bg-green-600 hover:bg-green-700 px-6 py-2 rounded font-semibold
+                                   transition-colors">
+                        {
+        "Re-post to Discord" if panel.message_id else "Post to Discord"
+    }
+                    </button>
+                    <span class="ml-4 text-gray-400 text-sm">
+                        {
+        "A new message will be created."
+        if panel.message_id
+        else "The panel will be posted to the channel above."
+    }
+                    </span>
+                </form>
             </div>
         </div>
 
