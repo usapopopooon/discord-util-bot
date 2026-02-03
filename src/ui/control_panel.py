@@ -1050,6 +1050,9 @@ class ControlPanelView(discord.ui.View):
         if not isinstance(channel, discord.VoiceChannel) or not interaction.guild:
             return
 
+        # レート制限による待機でタイムアウトしないよう、最初に応答
+        await interaction.response.defer()
+
         # チャンネルごとのロックで並行リクエストをシリアライズ
         async with get_resource_lock(f"control_panel:{channel.id}"):
             async with async_session() as db_session:
@@ -1107,7 +1110,6 @@ class ControlPanelView(discord.ui.View):
             status = "ロック" if new_locked_state else "ロック解除"
             emoji = "🔒" if new_locked_state else "🔓"
             # チャンネルに変更通知を送信
-            await interaction.response.defer()
             await channel.send(f"{emoji} チャンネルが **{status}** されました。")
             await refresh_panel_embed(channel)
 
@@ -1129,6 +1131,9 @@ class ControlPanelView(discord.ui.View):
         channel = interaction.channel
         if not isinstance(channel, discord.VoiceChannel) or not interaction.guild:
             return
+
+        # レート制限による待機でタイムアウトしないよう、最初に応答
+        await interaction.response.defer()
 
         # チャンネルごとのロックで並行リクエストをシリアライズ
         async with get_resource_lock(f"control_panel:{channel.id}"):
@@ -1168,7 +1173,6 @@ class ControlPanelView(discord.ui.View):
             status = "非表示" if new_hidden_state else "表示"
             emoji = "🙈" if new_hidden_state else "👁️"
             # チャンネルに変更通知を送信
-            await interaction.response.defer()
             await channel.send(f"{emoji} チャンネルが **{status}** になりました。")
             await refresh_panel_embed(channel)
 
@@ -1191,6 +1195,9 @@ class ControlPanelView(discord.ui.View):
         if not isinstance(channel, discord.VoiceChannel):
             return
 
+        # レート制限による待機でタイムアウトしないよう、最初に応答
+        await interaction.response.defer()
+
         # 現在の NSFW 状態を反転
         new_nsfw = not channel.nsfw
 
@@ -1204,7 +1211,6 @@ class ControlPanelView(discord.ui.View):
 
         status = "年齢制限を設定" if new_nsfw else "年齢制限を解除"
         # チャンネルに変更通知を送信
-        await interaction.response.defer()
         await channel.send(f"🔞 チャンネルの **{status}** されました。")
         await refresh_panel_embed(channel)
 
