@@ -190,7 +190,7 @@ async def post_role_panel_to_discord(
         async with httpx.AsyncClient(verify=False) as client:
             response = await client.post(url, json=payload, headers=headers, timeout=30)
 
-            if response.status_code == 200:
+            if response.status_code in (200, 201):
                 data = response.json()
                 message_id = data.get("id")
                 logger.info(

@@ -2495,7 +2495,7 @@ async def rolepanel_post_to_discord(
         )
 
     # 新規投稿の場合はメッセージ ID を保存
-    if message_id and not panel.message_id:
+    if message_id and message_id != panel.message_id:
         panel.message_id = message_id
         await db.commit()
 

@@ -3130,13 +3130,21 @@ class TestRolePanelsRoutes:
         )
         db_session.add(panel)
         await db_session.commit()
+        panel_id = panel.id
 
         response = await authenticated_client.post(
-            f"/rolepanels/{panel.id}/delete",
+            f"/rolepanels/{panel_id}/delete",
             follow_redirects=False,
         )
         assert response.status_code == 302
         assert response.headers["location"] == "/rolepanels"
+
+        # パネルがデータベースから削除されていることを確認
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.id == panel_id)
+        )
+        deleted_panel = result.scalar_one_or_none()
+        assert deleted_panel is None
 
     async def test_delete_nonexistent_rolepanel(
         self, authenticated_client: AsyncClient
@@ -7527,6 +7535,63 @@ class TestRolePanelPostToDiscord:
         )
         assert response.status_code == 302
         assert "reactions+failed" in response.headers["location"].lower()
+
+    async def test_edit_reaction_panel_clears_existing_reactions(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """既存のリアクションパネルを編集すると clear_existing=True で呼ばれる。"""
+        from unittest.mock import AsyncMock
+
+        import src.web.app as app_module
+
+        # Discord API をモック (edit)
+        monkeypatch.setattr(
+            app_module,
+            "edit_role_panel_in_discord",
+            AsyncMock(return_value=(True, None)),
+        )
+        mock_add_reactions = AsyncMock(return_value=(True, None))
+        monkeypatch.setattr(
+            app_module,
+            "add_reactions_to_message",
+            mock_add_reactions,
+        )
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",  # リアクション式
+            title="Existing Reaction Panel",
+            message_id="111111111111111111",  # 投稿済み
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        # アイテムを追加
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="444444444444444444",
+            emoji="⭐",
+            position=0,
+        )
+        db_session.add(item)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/post",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "updated" in response.headers["location"].lower()
+
+        # add_reactions_to_message が clear_existing=True で呼ばれたことを確認
+        mock_add_reactions.assert_called_once()
+        call_kwargs = mock_add_reactions.call_args.kwargs
+        assert call_kwargs.get("clear_existing") is True
 
     async def test_post_cooldown_active(
         self,

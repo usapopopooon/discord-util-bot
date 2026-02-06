@@ -404,6 +404,34 @@ class TestPostRolePanelToDiscord:
         assert message_id == "999888777"
         assert error is None
 
+    async def test_successful_post_with_201(
+        self,
+        panel: RolePanel,
+        items: list[RolePanelItem],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """投稿成功時 (201 Created) もメッセージ ID を返す。"""
+        from unittest.mock import MagicMock
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {"id": "888777666"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+                return_value=mock_response
+            )
+
+            success, message_id, error = await post_role_panel_to_discord(panel, items)
+
+        assert success is True
+        assert message_id == "888777666"
+        assert error is None
+
     async def test_forbidden_error(
         self,
         panel: RolePanel,
