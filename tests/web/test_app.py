@@ -7558,6 +7558,180 @@ class TestRolePanelPostToDiscord:
 
 
 # ===========================================================================
+# Role Panel Edit テスト
+# ===========================================================================
+
+
+class TestRolePanelEdit:
+    """ロールパネルの編集機能のテスト。"""
+
+    async def test_edit_requires_auth(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """未認証時はログインページにリダイレクト。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await client.post(
+            f"/rolepanels/{panel.id}/edit",
+            data={"title": "New Title"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/login" in response.headers["location"]
+
+    async def test_edit_nonexistent_panel(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """存在しないパネルの編集は一覧にリダイレクト。"""
+        response = await authenticated_client.post(
+            "/rolepanels/99999/edit",
+            data={"title": "New Title"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/rolepanels" in response.headers["location"]
+
+    async def test_edit_success(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """正常系: タイトルと説明を更新。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Old Title",
+            description="Old Description",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/edit",
+            data={"title": "New Title", "description": "New Description"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "updated" in response.headers["location"].lower()
+
+        await db_session.refresh(panel)
+        assert panel.title == "New Title"
+        assert panel.description == "New Description"
+
+    async def test_edit_clears_description(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """空の説明を送信すると説明がクリアされる。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Test Panel",
+            description="Old Description",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/edit",
+            data={"title": "Test Panel", "description": ""},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(panel)
+        assert panel.description is None
+
+    async def test_edit_empty_title_rejected(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """空のタイトルはエラー。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/edit",
+            data={"title": "", "description": "Test"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "required" in response.headers["location"].lower()
+
+    async def test_edit_title_too_long(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """タイトルが長すぎるとエラー。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/edit",
+            data={"title": "x" * 101, "description": ""},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "100" in response.headers["location"]
+
+    async def test_edit_description_too_long(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """説明が長すぎるとエラー。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/edit",
+            data={"title": "Test", "description": "x" * 2001},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "2000" in response.headers["location"]
+
+
+# ===========================================================================
 # Role Panel Item CSRF / Cooldown テスト
 # ===========================================================================
 

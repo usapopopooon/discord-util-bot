@@ -2363,6 +2363,75 @@ async def rolepanel_detail(
     )
 
 
+@app.post("/rolepanels/{panel_id}/edit", response_model=None)
+async def rolepanel_edit(
+    request: Request,
+    panel_id: int,
+    title: Annotated[str, Form()] = "",
+    description: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Edit role panel title and description."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(
+            url=f"/rolepanels/{panel_id}?success=Invalid+security+token",
+            status_code=302,
+        )
+
+    # クールタイムチェック
+    user_email = user.get("email", "")
+    path = str(request.url.path)
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(
+            url=f"/rolepanels/{panel_id}?success=Please+wait+before+editing+again",
+            status_code=302,
+        )
+
+    # バリデーション
+    title = title.strip()
+    if not title:
+        return RedirectResponse(
+            url=f"/rolepanels/{panel_id}?success=Title+is+required",
+            status_code=302,
+        )
+    if len(title) > 100:
+        return RedirectResponse(
+            url=f"/rolepanels/{panel_id}?success=Title+must+be+100+characters+or+less",
+            status_code=302,
+        )
+
+    description = description.strip()
+    if len(description) > 2000:
+        return RedirectResponse(
+            url=f"/rolepanels/{panel_id}?success=Description+must+be+2000+characters+or+less",
+            status_code=302,
+        )
+
+    # パネルを取得して更新
+    result = await db.execute(select(RolePanel).where(RolePanel.id == panel_id))
+    panel = result.scalar_one_or_none()
+    if not panel:
+        return RedirectResponse(url="/rolepanels", status_code=302)
+
+    panel.title = title
+    panel.description = description if description else None
+    await db.commit()
+
+    # クールタイム記録
+    record_form_submit(user_email, path)
+
+    return RedirectResponse(
+        url=f"/rolepanels/{panel_id}?success=Panel+updated",
+        status_code=302,
+    )
+
+
 @app.post("/rolepanels/{panel_id}/post", response_model=None)
 async def rolepanel_post_to_discord(
     request: Request,

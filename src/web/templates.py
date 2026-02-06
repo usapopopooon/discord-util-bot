@@ -2249,10 +2249,43 @@ def role_panel_detail_page(
         else ""
     }
             </div>
-            <div class="mt-4">
-                <span class="text-gray-400">Description:</span>
-                <p class="mt-1">{escape(panel.description or "(no description)")}</p>
-            </div>
+
+            <!-- Edit Title & Description Form -->
+            <form method="POST" action="/rolepanels/{
+        panel.id
+    }/edit" class="mt-6 pt-4 border-t border-gray-700">
+                {_csrf_field(csrf_token)}
+                <div class="grid grid-cols-1 gap-4">
+                    <div>
+                        <label for="title" class="block text-sm text-gray-400 mb-1">Title</label>
+                        <input type="text" id="title" name="title"
+                               value="{escape(panel.title)}"
+                               maxlength="100"
+                               required
+                               class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2
+                                      focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label for="description" class="block text-sm text-gray-400 mb-1">Description</label>
+                        <textarea id="description" name="description"
+                                  rows="3"
+                                  maxlength="2000"
+                                  class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2
+                                         focus:outline-none focus:border-blue-500"
+                                  placeholder="Optional description...">{
+        escape(panel.description or "")
+    }</textarea>
+                    </div>
+                    <div>
+                        <button type="submit"
+                                class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded font-medium
+                                       transition-colors">
+                            Save Changes
+                        </button>
+                    </div>
+                </div>
+            </form>
+
             <div class="mt-6 pt-4 border-t border-gray-700">
                 {
         f'''<div class="flex items-center mb-4">

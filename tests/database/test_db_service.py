@@ -880,6 +880,46 @@ class TestRolePanelWithFaker:
         updated = await update_role_panel(db_session, panel)
         assert updated.title == original_title
 
+    async def test_update_panel_description_none_preserves(
+        self, db_session: AsyncSession
+    ) -> None:
+        """description=None は変更なしを意味する。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Test",
+            description="Original description",
+        )
+        assert panel.description == "Original description"
+
+        # None は「変更なし」なので元の値が保持される
+        updated = await update_role_panel(db_session, panel, description=None)
+        assert updated.description == "Original description"
+
+    async def test_update_panel_title_and_description(
+        self, db_session: AsyncSession
+    ) -> None:
+        """タイトルと説明を同時に更新できる。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Original Title",
+            description="Original Description",
+        )
+
+        updated = await update_role_panel(
+            db_session,
+            panel,
+            title="New Title",
+            description="New Description",
+        )
+        assert updated.title == "New Title"
+        assert updated.description == "New Description"
+
     async def test_delete_panel(self, db_session: AsyncSession) -> None:
         """パネルを削除できる。"""
         panel = await create_role_panel(
