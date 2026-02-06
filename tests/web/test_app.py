@@ -8259,3 +8259,1295 @@ class TestGetKnownRolesByGuild:
 
         result = await _get_known_roles_by_guild(db_session)
         assert result == {}
+
+
+# ===========================================================================
+# Role Panel Copy (Duplicate) テスト
+# ===========================================================================
+
+
+class TestRolePanelCopy:
+    """ロールパネルのコピー機能のテスト。"""
+
+    async def test_copy_requires_auth(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """未認証時はログインページにリダイレクト。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await client.post(
+            f"/rolepanels/{panel.id}/copy",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/login" in response.headers["location"]
+
+    async def test_copy_nonexistent_panel(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """存在しないパネルのコピーは一覧にリダイレクト。"""
+        response = await authenticated_client.post(
+            "/rolepanels/99999/copy",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/rolepanels" in response.headers["location"]
+
+    async def test_copy_success(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """パネルが正常にコピーされる。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Original Panel",
+            description="Original Desc",
+            color=0x3498DB,
+            use_embed=True,
+            message_id="111111111111111111",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="111222333444555666",
+            emoji="🎮",
+            label="Gamer",
+            style="primary",
+            position=0,
+        )
+        db_session.add(item)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/copy",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "duplicated" in response.headers["location"].lower()
+
+        # コピーされたパネルを確認
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Original Panel (Copy)")
+        )
+        copied = result.scalar_one_or_none()
+        assert copied is not None
+        assert copied.guild_id == "123456789012345678"
+        assert copied.description == "Original Desc"
+        assert copied.color == 0x3498DB
+        assert copied.message_id is None  # 未投稿
+        assert copied.id != panel.id
+
+        # アイテムもコピーされていることを確認
+        items_result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == copied.id)
+        )
+        copied_items = list(items_result.scalars().all())
+        assert len(copied_items) == 1
+        assert copied_items[0].emoji == "🎮"
+        assert copied_items[0].role_id == "111222333444555666"
+        assert copied_items[0].label == "Gamer"
+        assert copied_items[0].style == "primary"
+
+    async def test_copy_preserves_panel_type(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """コピーがパネルタイプ (reaction) を保持する。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Reaction Panel",
+            remove_reaction=True,
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/copy",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Reaction Panel (Copy)")
+        )
+        copied = result.scalar_one_or_none()
+        assert copied is not None
+        assert copied.panel_type == "reaction"
+        assert copied.remove_reaction is True
+
+
+# ===========================================================================
+# Role Panel Save Draft テスト
+# ===========================================================================
+
+
+class TestRolePanelSaveDraft:
+    """パネル途中保存のテスト。"""
+
+    async def test_save_draft_without_items(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """アイテムなしでも途中保存できる。"""
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "button",
+            "title": "Draft Panel",
+            "description": "Draft Desc",
+            "action": "save_draft",
+        }
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data=form_data,
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/rolepanels/" in response.headers["location"]
+
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Draft Panel")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is not None
+        assert panel.description == "Draft Desc"
+
+    async def test_save_draft_with_items(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """アイテム付きで途中保存できる。"""
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "button",
+            "title": "Draft With Items",
+            "action": "save_draft",
+            "item_emoji[]": "🎮",
+            "item_role_id[]": "111222333444555666",
+            "item_label[]": "Gamer",
+            "item_position[]": "0",
+        }
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data=form_data,
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Draft With Items")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is not None
+
+        items_result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == panel.id)
+        )
+        items = list(items_result.scalars().all())
+        assert len(items) == 1
+
+    async def test_create_action_requires_items(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """action=create ではアイテムが必須。"""
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "button",
+            "title": "Test Panel",
+            "action": "create",
+        }
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data=form_data,
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+        assert "At least one role item is required" in response.text
+
+    async def test_save_draft_still_validates_title(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """途中保存でもタイトルは必須。"""
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "button",
+            "title": "",
+            "action": "save_draft",
+        }
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data=form_data,
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+        assert "Title is required" in response.text
+
+
+# ===========================================================================
+# Role Panel Reorder テスト
+# ===========================================================================
+
+
+class TestRolePanelReorder:
+    """ロールパネルアイテムの並べ替えテスト。"""
+
+    async def test_reorder_requires_auth(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """未認証時は 401 を返す。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await client.post(
+            f"/rolepanels/{panel.id}/items/reorder",
+            json={"item_ids": [], "csrf_token": ""},
+        )
+        assert response.status_code == 401
+
+    async def test_reorder_nonexistent_panel(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """存在しないパネルは 404 を返す。"""
+        response = await authenticated_client.post(
+            "/rolepanels/99999/items/reorder",
+            json={"item_ids": [], "csrf_token": "test"},
+        )
+        assert response.status_code == 404
+
+    async def test_reorder_success(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """アイテムの順番が正しく更新される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        item1 = RolePanelItem(
+            panel_id=panel.id,
+            role_id="111",
+            emoji="🎮",
+            position=0,
+        )
+        item2 = RolePanelItem(
+            panel_id=panel.id,
+            role_id="222",
+            emoji="🎯",
+            position=1,
+        )
+        item3 = RolePanelItem(
+            panel_id=panel.id,
+            role_id="333",
+            emoji="🎲",
+            position=2,
+        )
+        db_session.add_all([item1, item2, item3])
+        await db_session.commit()
+        await db_session.refresh(item1)
+        await db_session.refresh(item2)
+        await db_session.refresh(item3)
+
+        # 逆順に並べ替え: item3, item1, item2
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/reorder",
+            json={
+                "item_ids": [item3.id, item1.id, item2.id],
+                "csrf_token": "test",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+
+        # DB で position が更新されていることを確認
+        await db_session.refresh(item1)
+        await db_session.refresh(item2)
+        await db_session.refresh(item3)
+        assert item3.position == 0
+        assert item1.position == 1
+        assert item2.position == 2
+
+
+# ===========================================================================
+# Role Panel Edit Color テスト
+# ===========================================================================
+
+
+class TestRolePanelEditColor:
+    """パネル編集時のカラー更新テスト。"""
+
+    async def test_edit_updates_color(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """Embed パネルの色が更新される。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+            use_embed=True,
+            color=0x3498DB,
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/edit",
+            data={
+                "title": "Test Panel",
+                "description": "",
+                "color": "#FF0000",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(panel)
+        assert panel.color == 0xFF0000
+
+    async def test_edit_color_ignored_for_text_panel(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """テキストパネルではカラーが更新されない。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+            use_embed=False,
+            color=None,
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/edit",
+            data={
+                "title": "Test Panel",
+                "description": "",
+                "color": "#FF0000",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(panel)
+        assert panel.color is None
+
+
+# ===========================================================================
+# Role Panel Add Item Position Auto-Calc テスト
+# ===========================================================================
+
+
+class TestRolePanelAddItemAutoPosition:
+    """アイテム追加時の position 自動算出テスト。"""
+
+    async def test_auto_position_first_item(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """最初のアイテムは position=0 になる。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={
+                "emoji": "🎮",
+                "role_id": "111222333444555666",
+                "label": "Gamer",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        items_result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.panel_id == panel.id)
+        )
+        items = list(items_result.scalars().all())
+        assert len(items) == 1
+        assert items[0].position == 0
+
+    async def test_auto_position_increments(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """既存アイテムの max(position) + 1 になる。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id="111",
+            emoji="🎮",
+            position=5,
+        )
+        db_session.add(item)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/add",
+            data={
+                "emoji": "🎯",
+                "role_id": "222333444555666777",
+                "label": "Target",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        items_result = await db_session.execute(
+            select(RolePanelItem)
+            .where(RolePanelItem.panel_id == panel.id)
+            .order_by(RolePanelItem.position)
+        )
+        items = list(items_result.scalars().all())
+        assert len(items) == 2
+        assert items[1].position == 6
+
+
+# ===========================================================================
+# CSRF 検証失敗テスト (各エンドポイント)
+# ===========================================================================
+
+
+class TestCsrfValidationFailures:
+    """CSRF トークン検証失敗時のテスト。"""
+
+    async def _login_client(
+        self, client: AsyncClient, admin_user: AdminUser
+    ) -> AsyncClient:
+        """ログイン済みクライアントを返す (CSRF モックなし)。"""
+        from src.web.app import generate_csrf_token
+
+        csrf_token = generate_csrf_token()
+        resp = await client.post(
+            "/login",
+            data={
+                "email": TEST_ADMIN_EMAIL,
+                "password": TEST_ADMIN_PASSWORD,
+                "csrf_token": csrf_token,
+            },
+            follow_redirects=False,
+        )
+        client.cookies.set("session", resp.cookies.get("session") or "")
+        return client
+
+    async def test_sticky_delete_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+        db_session: AsyncSession,
+    ) -> None:
+        """sticky_delete の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        await self._login_client(client, admin_user)
+
+        sticky = StickyMessage(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            title="Test",
+            description="Test desc",
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                f"/sticky/{sticky.channel_id}/delete",
+                data={"csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "/sticky" in response.headers["location"]
+
+    async def test_bump_config_delete_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+        db_session: AsyncSession,
+    ) -> None:
+        """bump_config_delete の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        await self._login_client(client, admin_user)
+
+        bump = BumpConfig(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+        )
+        db_session.add(bump)
+        await db_session.commit()
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                f"/bump/config/{bump.guild_id}/delete",
+                data={"csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "/bump" in response.headers["location"]
+
+    async def test_bump_reminder_delete_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+        db_session: AsyncSession,
+    ) -> None:
+        """bump_reminder_delete の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        await self._login_client(client, admin_user)
+
+        reminder = BumpReminder(
+            guild_id="123456789012345678",
+            channel_id="111111111111111111",
+            service_name="DISBOARD",
+        )
+        db_session.add(reminder)
+        await db_session.commit()
+        await db_session.refresh(reminder)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                f"/bump/reminder/{reminder.id}/delete",
+                data={"csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "/bump" in response.headers["location"]
+
+    async def test_bump_reminder_toggle_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+        db_session: AsyncSession,
+    ) -> None:
+        """bump_reminder_toggle の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        await self._login_client(client, admin_user)
+
+        reminder = BumpReminder(
+            guild_id="123456789012345678",
+            channel_id="111111111111111111",
+            service_name="DISBOARD",
+        )
+        db_session.add(reminder)
+        await db_session.commit()
+        await db_session.refresh(reminder)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                f"/bump/reminder/{reminder.id}/toggle",
+                data={"csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "/bump" in response.headers["location"]
+
+    async def test_rolepanel_create_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+    ) -> None:
+        """rolepanel_create_post の CSRF 失敗は 403。"""
+        from unittest.mock import patch
+
+        await self._login_client(client, admin_user)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                "/rolepanels/new",
+                data={
+                    "guild_id": "123456789012345678",
+                    "channel_id": "987654321098765432",
+                    "panel_type": "button",
+                    "title": "Test",
+                    "csrf_token": "bad",
+                },
+                follow_redirects=False,
+            )
+        assert response.status_code == 403
+        assert "Invalid security token" in response.text
+
+    async def test_rolepanel_copy_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+        db_session: AsyncSession,
+    ) -> None:
+        """rolepanel_copy の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        await self._login_client(client, admin_user)
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                f"/rolepanels/{panel.id}/copy",
+                data={"csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert f"/rolepanels/{panel.id}" in response.headers["location"]
+
+    async def test_rolepanel_toggle_remove_reaction_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+        db_session: AsyncSession,
+    ) -> None:
+        """rolepanel_toggle_remove_reaction の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        await self._login_client(client, admin_user)
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                f"/rolepanels/{panel.id}/toggle-remove-reaction",
+                data={"csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert f"/rolepanels/{panel.id}" in response.headers["location"]
+
+    async def test_rolepanel_post_to_discord_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+        db_session: AsyncSession,
+    ) -> None:
+        """rolepanel_post_to_discord の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        await self._login_client(client, admin_user)
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                f"/rolepanels/{panel.id}/post",
+                data={"csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+
+    async def test_reorder_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+        db_session: AsyncSession,
+    ) -> None:
+        """rolepanel_reorder_items の CSRF 失敗は 403。"""
+        from unittest.mock import patch
+
+        await self._login_client(client, admin_user)
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                f"/rolepanels/{panel.id}/items/reorder",
+                json={"item_ids": [], "csrf_token": "bad"},
+            )
+        assert response.status_code == 403
+
+
+# ===========================================================================
+# クールダウンテスト (各エンドポイント)
+# ===========================================================================
+
+
+class TestCooldownEnforcement:
+    """各エンドポイントのクールダウンテスト。"""
+
+    async def test_sticky_delete_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """sticky_delete のクールダウン。"""
+        from src.web.app import record_form_submit
+
+        sticky = StickyMessage(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            title="Test",
+            description="Test desc",
+        )
+        db_session.add(sticky)
+        await db_session.commit()
+
+        record_form_submit("test@example.com", f"/sticky/{sticky.channel_id}/delete")
+        response = await authenticated_client.post(
+            f"/sticky/{sticky.channel_id}/delete",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/sticky" in response.headers["location"]
+
+    async def test_bump_config_delete_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """bump_config_delete のクールダウン。"""
+        from src.web.app import record_form_submit
+
+        bump = BumpConfig(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+        )
+        db_session.add(bump)
+        await db_session.commit()
+
+        record_form_submit("test@example.com", f"/bump/config/{bump.guild_id}/delete")
+        response = await authenticated_client.post(
+            f"/bump/config/{bump.guild_id}/delete",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/bump" in response.headers["location"]
+
+    async def test_bump_reminder_delete_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """bump_reminder_delete のクールダウン。"""
+        from src.web.app import record_form_submit
+
+        reminder = BumpReminder(
+            guild_id="123456789012345678",
+            channel_id="111111111111111111",
+            service_name="DISBOARD",
+        )
+        db_session.add(reminder)
+        await db_session.commit()
+        await db_session.refresh(reminder)
+
+        record_form_submit("test@example.com", f"/bump/reminder/{reminder.id}/delete")
+        response = await authenticated_client.post(
+            f"/bump/reminder/{reminder.id}/delete",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/bump" in response.headers["location"]
+
+    async def test_bump_reminder_toggle_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """bump_reminder_toggle のクールダウン。"""
+        from src.web.app import record_form_submit
+
+        reminder = BumpReminder(
+            guild_id="123456789012345678",
+            channel_id="111111111111111111",
+            service_name="DISBOARD",
+        )
+        db_session.add(reminder)
+        await db_session.commit()
+        await db_session.refresh(reminder)
+
+        record_form_submit("test@example.com", f"/bump/reminder/{reminder.id}/toggle")
+        response = await authenticated_client.post(
+            f"/bump/reminder/{reminder.id}/toggle",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/bump" in response.headers["location"]
+
+    async def test_rolepanel_delete_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """rolepanel_delete のクールダウン。"""
+        from src.web.app import record_form_submit
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        record_form_submit("test@example.com", f"/rolepanels/{panel.id}/delete")
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/delete",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/rolepanels" in response.headers["location"]
+
+    async def test_rolepanel_copy_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """rolepanel_copy のクールダウン。"""
+        from src.web.app import record_form_submit
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        record_form_submit("test@example.com", f"/rolepanels/{panel.id}/copy")
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/copy",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/rolepanels" in response.headers["location"]
+
+    async def test_rolepanel_toggle_remove_reaction_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """rolepanel_toggle_remove_reaction のクールダウン。"""
+        from src.web.app import record_form_submit
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="reaction",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        record_form_submit(
+            "test@example.com",
+            f"/rolepanels/{panel.id}/toggle-remove-reaction",
+        )
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/toggle-remove-reaction",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+    async def test_rolepanel_edit_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """rolepanel_edit のクールダウン。"""
+        from src.web.app import record_form_submit
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        record_form_submit("test@example.com", f"/rolepanels/{panel.id}/edit")
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/edit",
+            data={"title": "New Title"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "wait" in response.headers["location"].lower()
+
+    async def test_rolepanel_create_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """rolepanel_create_post のクールダウン。"""
+        from src.web.app import record_form_submit
+
+        record_form_submit("test@example.com", "/rolepanels/new")
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "Test",
+                "item_emoji[]": "🎮",
+                "item_role_id[]": "111",
+                "item_label[]": "",
+                "item_position[]": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 429
+        assert "Please wait" in response.text
+
+
+# ===========================================================================
+# Create ページ アイテムバリデーション エッジケーステスト
+# ===========================================================================
+
+
+class TestRolePanelCreateItemValidation:
+    """パネル作成時のアイテムバリデーションのエッジケース。"""
+
+    async def test_item_empty_emoji(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """空の絵文字はエラー。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "Test",
+                "item_emoji[]": "",
+                "item_role_id[]": "111",
+                "item_label[]": "",
+                "item_position[]": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+        assert "Emoji is required" in response.text
+
+    async def test_item_emoji_too_long(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """絵文字が65文字以上はエラー。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "Test",
+                "item_emoji[]": "x" * 65,
+                "item_role_id[]": "111",
+                "item_label[]": "",
+                "item_position[]": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+        assert "64 chars or less" in response.text
+
+    async def test_item_invalid_emoji(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """不正な絵文字フォーマットはエラー。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "Test",
+                "item_emoji[]": "not_an_emoji",
+                "item_role_id[]": "111",
+                "item_label[]": "",
+                "item_position[]": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+        assert "Invalid emoji" in response.text
+
+    async def test_item_empty_role_id(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """空のロール ID はエラー。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "Test",
+                "item_emoji[]": "🎮",
+                "item_role_id[]": "",
+                "item_label[]": "",
+                "item_position[]": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+        assert "Role ID is required" in response.text
+
+    async def test_item_invalid_role_id(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """非数値のロール ID はエラー。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "Test",
+                "item_emoji[]": "🎮",
+                "item_role_id[]": "not_a_number",
+                "item_label[]": "",
+                "item_position[]": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+        assert "Role ID must be a number" in response.text
+
+    async def test_item_label_too_long(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """ラベルが81文字以上はエラー。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "Test",
+                "item_emoji[]": "🎮",
+                "item_role_id[]": "111222333444555666",
+                "item_label[]": "x" * 81,
+                "item_position[]": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+        assert "80 chars or less" in response.text
+
+    async def test_item_invalid_style_defaults(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """不正なスタイルはデフォルト (secondary) に置換される。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "button",
+                "title": "Test",
+                "item_emoji[]": "🎮",
+                "item_role_id[]": "111222333444555666",
+                "item_label[]": "Test",
+                "item_style[]": "invalid_style",
+                "item_position[]": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.emoji == "🎮")
+        )
+        item = result.scalar_one()
+        assert item.style == "secondary"
+
+
+# ===========================================================================
+# Reorder 入力検証テスト
+# ===========================================================================
+
+
+class TestRolePanelReorderValidation:
+    """reorder エンドポイントの入力検証テスト。"""
+
+    async def test_reorder_invalid_item_ids_type(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """item_ids がリストでない場合は 400。"""
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/rolepanels/{panel.id}/items/reorder",
+            json={"item_ids": "not_a_list", "csrf_token": "test"},
+        )
+        assert response.status_code == 400
+        assert "Invalid item_ids" in response.json()["error"]
+
+
+# ===========================================================================
+# IntegrityError ハンドリングテスト (create 内)
+# ===========================================================================
+
+
+class TestRolePanelCreateIntegrityError:
+    """パネル作成時の重複絵文字テスト。"""
+
+    async def test_create_duplicate_emoji_in_items(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """同じ絵文字が2つ含まれている場合はエラー。"""
+        from urllib.parse import urlencode
+
+        form_body = urlencode(
+            [
+                ("guild_id", "123456789012345678"),
+                ("channel_id", "987654321098765432"),
+                ("panel_type", "button"),
+                ("title", "Test"),
+                ("item_emoji[]", "🎮"),
+                ("item_role_id[]", "111"),
+                ("item_label[]", ""),
+                ("item_style[]", "secondary"),
+                ("item_position[]", "0"),
+                ("item_emoji[]", "🎮"),
+                ("item_role_id[]", "222"),
+                ("item_label[]", ""),
+                ("item_style[]", "secondary"),
+                ("item_position[]", "1"),
+            ]
+        )
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            content=form_body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 200
+        assert "Duplicate emoji" in response.text

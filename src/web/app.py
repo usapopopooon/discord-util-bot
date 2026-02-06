@@ -1897,6 +1897,79 @@ async def rolepanel_delete(
     return RedirectResponse(url="/rolepanels", status_code=302)
 
 
+@app.post("/rolepanels/{panel_id}/copy", response_model=None)
+async def rolepanel_copy(
+    request: Request,
+    panel_id: int,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Duplicate a role panel with all its items."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # CSRF トークン検証
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url=f"/rolepanels/{panel_id}", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    # クールタイムチェック
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/rolepanels", status_code=302)
+
+    # 元のパネルとアイテムを取得
+    result = await db.execute(
+        select(RolePanel)
+        .options(selectinload(RolePanel.items))
+        .where(RolePanel.id == panel_id)
+    )
+    panel = result.scalar_one_or_none()
+    if not panel:
+        return RedirectResponse(url="/rolepanels", status_code=302)
+
+    async with get_resource_lock(f"rolepanel:copy:{panel_id}"):
+        # 新しいパネルを作成 (message_id なし = 未投稿)
+        new_panel = RolePanel(
+            guild_id=panel.guild_id,
+            channel_id=panel.channel_id,
+            panel_type=panel.panel_type,
+            title=f"{panel.title} (Copy)",
+            description=panel.description,
+            color=panel.color,
+            use_embed=panel.use_embed,
+            remove_reaction=panel.remove_reaction,
+        )
+        db.add(new_panel)
+        await db.flush()
+
+        # アイテムをコピー
+        for item in sorted(panel.items, key=lambda x: x.position):
+            new_item = RolePanelItem(
+                panel_id=new_panel.id,
+                role_id=item.role_id,
+                emoji=item.emoji,
+                label=item.label,
+                style=item.style,
+                position=item.position,
+            )
+            db.add(new_item)
+
+        await db.commit()
+        await db.refresh(new_panel)
+
+        # クールタイム記録
+        record_form_submit(user_email, path)
+
+    # コピーしたパネルの詳細ページにリダイレクト
+    return RedirectResponse(
+        url=f"/rolepanels/{new_panel.id}?success=Panel+duplicated",
+        status_code=302,
+    )
+
+
 @app.post("/rolepanels/{panel_id}/toggle-remove-reaction", response_model=None)
 async def rolepanel_toggle_remove_reaction(
     request: Request,

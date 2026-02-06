@@ -1488,6 +1488,13 @@ def role_panels_list_page(
                        class="text-blue-400 hover:text-blue-300 text-sm">
                         Edit
                     </a>
+                    <form method="POST" action="/rolepanels/{panel.id}/copy" class="inline">
+                        {_csrf_field(csrf_token)}
+                        <button type="submit"
+                                class="text-gray-400 hover:text-gray-200 text-sm">
+                            Copy
+                        </button>
+                    </form>
                     <form method="POST" action="/rolepanels/{panel.id}/delete"
                           onsubmit="return confirm('Delete this role panel?');">
                         {_csrf_field(csrf_token)}
@@ -2619,26 +2626,38 @@ def role_panel_detail_page(
         if panel.message_id
         else ""
     }
-                <form method="POST" action="/rolepanels/{panel.id}/post"
-                      onsubmit="return confirm('{
+                <div class="flex gap-3 items-center flex-wrap">
+                    <form method="POST" action="/rolepanels/{panel.id}/post"
+                          onsubmit="return confirm('{
         "Update this panel in Discord?"
         if panel.message_id
         else "Post this panel to Discord?"
     }');">
-                    {_csrf_field(csrf_token)}
-                    <button type="submit"
-                            class="bg-green-600 hover:bg-green-700 px-6 py-2 rounded font-semibold
-                                   transition-colors">
-                        {"Update in Discord" if panel.message_id else "Post to Discord"}
-                    </button>
-                    <span class="ml-4 text-gray-400 text-sm">
+                        {_csrf_field(csrf_token)}
+                        <button type="submit"
+                                class="bg-green-600 hover:bg-green-700 px-6 py-2 rounded font-semibold
+                                       transition-colors">
+                            {
+        "Update in Discord" if panel.message_id else "Post to Discord"
+    }
+                        </button>
+                    </form>
+                    <form method="POST" action="/rolepanels/{panel.id}/copy">
+                        {_csrf_field(csrf_token)}
+                        <button type="submit"
+                                class="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded font-medium
+                                       transition-colors">
+                            Duplicate Panel
+                        </button>
+                    </form>
+                    <span class="text-gray-400 text-sm">
                         {
         "Updates the existing message and reactions."
         if panel.message_id
         else "The panel will be posted to the channel above."
     }
                     </span>
-                </form>
+                </div>
             </div>
         </div>
 

@@ -1020,6 +1020,31 @@ class TestRolePanelCreatePage:
         assert "existingItems.forEach" in result
         assert "createRoleItemRow(roleItemIndex++, item)" in result
 
+    def test_save_draft_button_exists(self) -> None:
+        """Save & Continue Editing ボタンが存在する。"""
+        result = role_panel_create_page()
+        assert 'value="save_draft"' in result
+        assert "Save &amp; Continue Editing" in result
+
+    def test_create_button_has_action_value(self) -> None:
+        """Create Panel ボタンに action=create の value がある。"""
+        result = role_panel_create_page()
+        assert 'value="create"' in result
+        assert "Create Panel" in result
+
+    def test_save_draft_button_separate_from_create(self) -> None:
+        """Save Draft と Create Panel が異なるボタンとして存在する。"""
+        result = role_panel_create_page()
+        assert 'id="saveDraftBtn"' in result
+        assert 'id="submitBtn"' in result
+
+    def test_three_card_layout(self) -> None:
+        """Create ページが3カード構成になっている。"""
+        result = role_panel_create_page()
+        assert "Panel Settings" in result
+        assert "Title &amp; Description" in result or "Title & Description" in result
+        assert "Role Items" in result
+
 
 class TestRolePanelDetailPage:
     """role_panel_detail_page テンプレートのテスト。"""
@@ -1061,6 +1086,12 @@ class TestRolePanelDetailPage:
                 position=0,
             ),
         ]
+
+    def test_success_message_displayed(self, button_panel: RolePanel) -> None:
+        """success パラメータ指定時にメッセージが表示される。"""
+        result = role_panel_detail_page(button_panel, [], success="Panel updated")
+        assert "Panel updated" in result
+        assert "bg-green-500" in result
 
     def test_contains_panel_title(self, button_panel: RolePanel) -> None:
         """パネルタイトルが含まれる。"""
@@ -1248,6 +1279,95 @@ class TestRolePanelDetailPage:
         result = role_panel_detail_page(button_panel, [])
         assert "Posted to Discord" in result
         assert "Message ID: 111111111111111111" in result
+
+    def test_no_position_column(
+        self, button_panel: RolePanel, panel_items: list[RolePanelItem]
+    ) -> None:
+        """Position 列がテーブルに存在しない。"""
+        result = role_panel_detail_page(button_panel, panel_items)
+        assert ">Position<" not in result
+
+    def test_drag_handle_column_in_header(self, button_panel: RolePanel) -> None:
+        """テーブルヘッダーにドラッグハンドル用の空カラムがある。"""
+        result = role_panel_detail_page(button_panel, [])
+        assert 'class="py-3 px-2 w-8"' in result
+
+    def test_item_rows_are_draggable(
+        self, button_panel: RolePanel, panel_items: list[RolePanelItem]
+    ) -> None:
+        """アイテム行に draggable 属性と data-item-id がある。"""
+        result = role_panel_detail_page(button_panel, panel_items)
+        assert 'draggable="true"' in result
+        assert "data-item-id=" in result
+
+    def test_drag_and_drop_javascript(
+        self, button_panel: RolePanel, panel_items: list[RolePanelItem]
+    ) -> None:
+        """ドラッグ＆ドロップ用の JavaScript が含まれる。"""
+        result = role_panel_detail_page(button_panel, panel_items)
+        assert "dragstart" in result
+        assert "items/reorder" in result
+
+    def test_embed_panel_shows_color_picker(self, button_panel: RolePanel) -> None:
+        """Embed パネルではカラーピッカーが表示される。"""
+        button_panel.use_embed = True
+        button_panel.color = 0x3498DB
+        result = role_panel_detail_page(button_panel, [])
+        assert 'id="edit_color"' in result
+        assert 'id="edit_color_text"' in result
+        assert "#3498db" in result.lower()
+
+    def test_text_panel_hides_color_picker(self, button_panel: RolePanel) -> None:
+        """テキストパネルではカラーピッカーが表示されない。"""
+        button_panel.use_embed = False
+        result = role_panel_detail_page(button_panel, [])
+        assert 'id="edit_color"' not in result
+
+    def test_color_picker_default_value(self, button_panel: RolePanel) -> None:
+        """color が None の場合、デフォルトカラーが使用される。"""
+        button_panel.use_embed = True
+        button_panel.color = None
+        result = role_panel_detail_page(button_panel, [])
+        assert "#3498DB" in result
+
+    def test_color_picker_sync_javascript(self, button_panel: RolePanel) -> None:
+        """カラーピッカーとテキスト入力の同期 JavaScript が含まれる。"""
+        button_panel.use_embed = True
+        result = role_panel_detail_page(button_panel, [])
+        assert "edit_color" in result
+        assert "edit_color_text" in result
+
+    def test_duplicate_button_exists(self, button_panel: RolePanel) -> None:
+        """Duplicate Panel ボタンが表示される。"""
+        result = role_panel_detail_page(button_panel, [])
+        assert "Duplicate Panel" in result
+        assert f"/rolepanels/{button_panel.id}/copy" in result
+
+    def test_list_page_has_copy_button(self) -> None:
+        """一覧ページに Copy ボタンがある。"""
+        panel = RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+        )
+        result = role_panels_list_page([panel], {1: []}, csrf_token="token")
+        assert "/rolepanels/1/copy" in result
+        assert "Copy" in result
+
+    def test_list_page_no_description_in_title(self) -> None:
+        """一覧ページの Title 列に description が表示されない。"""
+        panel = RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+            description="This should not appear",
+        )
+        result = role_panels_list_page([panel], {1: []}, csrf_token="token")
+        assert "This should not appear" not in result
 
 
 class TestRolePanelCreatePageEdgeCases:

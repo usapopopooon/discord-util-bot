@@ -56,6 +56,15 @@ class TestIsValidEmojiBasic:
         assert is_valid_emoji("🎮") is True
         assert is_valid_emoji("❤️") is True
 
+    def test_emoji_with_vs16_valid(self) -> None:
+        """VS16 (U+FE0F) 付きの絵文字は有効。"""
+        assert is_valid_emoji("⚓️") is True  # anchor with VS16
+        assert is_valid_emoji("⚓") is True  # anchor without VS16
+        assert is_valid_emoji("✨️") is True  # sparkles with VS16
+        assert is_valid_emoji("⚡️") is True  # lightning with VS16
+        assert is_valid_emoji("⭐️") is True  # star with VS16
+        assert is_valid_emoji("⚽️") is True  # soccer with VS16
+
     def test_zwj_emoji_valid(self) -> None:
         """ZWJ 絵文字は有効。"""
         assert is_valid_emoji("🧑‍🧑‍🧒") is True
@@ -159,10 +168,17 @@ class TestNormalizeEmoji:
         assert normalize_emoji("🧑‍🧑‍🧒") == "🧑‍🧑‍🧒"
         assert normalize_emoji("👨‍💻") == "👨‍💻"
 
-    def test_keycap_emoji_unchanged(self) -> None:
-        """Keycap 絵文字はそのまま返される。"""
-        assert normalize_emoji("1️⃣") == "1️⃣"
-        assert normalize_emoji("#️⃣") == "#️⃣"
+    def test_vs16_emoji_stripped(self) -> None:
+        """VS16 付き絵文字は VS16 が除去される。"""
+        assert normalize_emoji("⚓️") == "⚓"  # anchor
+        assert normalize_emoji("✨️") == "✨"  # sparkles
+        assert normalize_emoji("⚡️") == "⚡"  # lightning
+        assert normalize_emoji("❤️") == "❤"  # heart
+
+    def test_keycap_emoji_vs16_stripped(self) -> None:
+        """Keycap 絵文字の VS16 が除去される。"""
+        assert normalize_emoji("1️⃣") == "1⃣"
+        assert normalize_emoji("#️⃣") == "#⃣"
 
     def test_discord_custom_emoji_unchanged(self) -> None:
         """Discord カスタム絵文字はそのまま返される。"""

@@ -148,13 +148,16 @@ def is_valid_emoji(text: str | None) -> bool:
 
     # NFC 正規化して比較 (異体字セレクタ等の正規化)
     normalized = unicodedata.normalize("NFC", text)
-    if normalized != text:
-        # 正規化後と異なる場合でも、正規化後が有効な絵文字なら許可
-        # (ただし元のテキストも絵文字として認識される必要がある)
-        pass
 
     # Unicode 絵文字 (emoji ライブラリで検証)
-    return emoji.is_emoji(text)
+    if emoji.is_emoji(normalized):
+        return True
+
+    # VS16 (U+FE0F) 付きの絵文字に対応
+    # ブラウザやOSが⚓→⚓️のようにVS16を付加することがあり、
+    # emoji ライブラリが認識しないケースがあるため除去して再検証
+    stripped = normalized.replace("\ufe0f", "")
+    return bool(stripped and emoji.is_emoji(stripped))
 
 
 def normalize_emoji(text: str) -> str:
@@ -180,5 +183,10 @@ def normalize_emoji(text: str) -> str:
     if DISCORD_CUSTOM_EMOJI_PATTERN.match(text):
         return text
 
-    # NFC 正規化 (絵文字は通常影響を受けないが念のため)
-    return unicodedata.normalize("NFC", text)
+    # NFC 正規化 + VS16 除去で統一的な保存形式にする
+    normalized = unicodedata.normalize("NFC", text)
+    stripped = normalized.replace("\ufe0f", "")
+    # VS16 除去後も有効な絵文字なら除去した形で返す
+    if stripped and emoji.is_emoji(stripped):
+        return stripped
+    return normalized
