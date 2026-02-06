@@ -2049,6 +2049,7 @@ def role_panel_create_page(
             const row = createRoleItemRow(roleItemIndex++);
             roleItemsContainer.appendChild(row);
             updateSubmitButton();
+            updateLabelFieldsVisibility();
             // Focus the emoji input of the new row
             row.querySelector('input[name="item_emoji[]"]').focus();
         }});

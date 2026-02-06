@@ -754,6 +754,45 @@ class TestAddReactionsToMessage:
         assert success is False
         assert "接続" in error
 
+    async def test_multiple_reactions_added_with_delay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """複数リアクション追加時にレート制限対策のディレイが入る。"""
+        from unittest.mock import MagicMock
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        success_response = MagicMock()
+        success_response.status_code = 204
+
+        call_times: list[float] = []
+        import time
+
+        async def mock_put(*_args, **_kwargs):
+            call_times.append(time.monotonic())
+            return success_response
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.put = mock_put
+
+            # 3つのリアクションを追加
+            items = [
+                RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮", position=0),
+                RolePanelItem(id=2, panel_id=1, role_id="222", emoji="🎯", position=1),
+                RolePanelItem(id=3, panel_id=1, role_id="333", emoji="🎲", position=2),
+            ]
+            success, error = await add_reactions_to_message("123", "456", items)
+
+        assert success is True
+        assert error is None
+        # 3回呼ばれた
+        assert len(call_times) == 3
+        # ディレイが入っていることを確認 (各呼び出しの間隔が 0.2 秒以上)
+        for i in range(1, len(call_times)):
+            assert call_times[i] - call_times[i - 1] >= 0.2
+
 
 # ===========================================================================
 # メッセージ編集テスト

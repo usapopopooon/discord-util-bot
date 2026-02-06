@@ -9,6 +9,7 @@ Notes:
     - コンポーネント (ボタン) の custom_id は Bot 側で処理される
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -397,7 +398,7 @@ async def add_reactions_to_message(
 
     try:
         async with httpx.AsyncClient(verify=False) as client:
-            for item in items:
+            for i, item in enumerate(items):
                 # 絵文字をエンコード
                 if item.emoji.startswith("<"):
                     # カスタム絵文字: <:name:id> → name:id
@@ -421,10 +422,20 @@ async def add_reactions_to_message(
                         "message", f"HTTP {response.status_code}"
                     )
                     logger.warning(
-                        "Failed to add reaction %s: %s", item.emoji, error_msg
+                        "Failed to add reaction %s: %s (status=%d)",
+                        item.emoji,
+                        error_msg,
+                        response.status_code,
                     )
                     # リアクション追加の失敗は全体のエラーとしない
                     continue
+
+                logger.debug("Added reaction %s to message %s", item.emoji, message_id)
+
+                # Discord のレート制限対策: リアクション間にディレイを入れる
+                # (最後のアイテムの後は待たない)
+                if i < len(items) - 1:
+                    await asyncio.sleep(0.3)
 
         return True, None
 

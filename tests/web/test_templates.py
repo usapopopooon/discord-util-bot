@@ -880,6 +880,16 @@ class TestRolePanelCreatePage:
         # (HTMLではcheckedが後に付く可能性があるのでパターンマッチで確認)
         assert "Message Format" in result
 
+    def test_add_role_item_updates_label_visibility(self) -> None:
+        """Add Role ボタンクリック時に label フィールドの表示/非表示が更新される。"""
+        result = role_panel_create_page()
+        # addRoleItemBtn のクリックハンドラ内で updateLabelFieldsVisibility が呼ばれる
+        assert "addRoleItemBtn.addEventListener('click'" in result
+        # クリックハンドラ内で updateLabelFieldsVisibility() が呼ばれていることを確認
+        # (updateSubmitButton() の後に呼ばれる)
+        assert "updateSubmitButton();" in result
+        assert "updateLabelFieldsVisibility();" in result
+
 
 class TestRolePanelDetailPage:
     """role_panel_detail_page テンプレートのテスト。"""
