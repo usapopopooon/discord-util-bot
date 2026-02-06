@@ -40,21 +40,23 @@ def _breadcrumb(crumbs: list[tuple[str, str | None]]) -> str:
 
     Args:
         crumbs: (label, url) のリスト。最後の要素は現在のページ (url=None)。
+                最後の要素は h1 タイトルと重複するためレンダリングしない。
 
     Returns:
         パンくずリストの HTML
     """
     items = []
-    for i, (label, url) in enumerate(crumbs):
+    # 最後の要素（現在のページ）は h1 タイトルとして表示されるため除外
+    nav_crumbs = crumbs[:-1] if crumbs else []
+    for i, (label, url) in enumerate(nav_crumbs):
         if url:
             items.append(
                 f'<a href="{escape(url)}" class="text-gray-400 hover:text-white">'
                 f"{escape(label)}</a>"
             )
         else:
-            # 現在のページ (最後の要素)
             items.append(f'<span class="text-gray-300">{escape(label)}</span>')
-        if i < len(crumbs) - 1:
+        if i < len(nav_crumbs) - 1:
             items.append('<span class="text-gray-600">&gt;</span>')
     return " ".join(items)
 

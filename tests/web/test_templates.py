@@ -68,28 +68,39 @@ class TestBaseTemplate:
 
 
 class TestBreadcrumb:
-    """_breadcrumb 関数のテスト。"""
+    """_breadcrumb 関数のテスト。
+
+    Note: 最後の要素（現在のページ）は h1 タイトルとして表示されるため
+    パンくずリストにはレンダリングされない。
+    """
 
     def test_uses_greater_than_separator(self) -> None:
         """セパレーターに > を使用する。"""
-        result = _breadcrumb([("Dashboard", "/dashboard"), ("Page", None)])
+        # 3項目の場合、最後は除外されるので2項目がレンダリングされセパレータが1つ
+        result = _breadcrumb(
+            [("Dashboard", "/dashboard"), ("Settings", "/settings"), ("Page", None)]
+        )
         assert "&gt;" in result
         assert "/" not in result or "href=" in result  # URLの/は許容
 
     def test_links_for_intermediate_items(self) -> None:
         """中間の項目はリンクになる。"""
-        result = _breadcrumb([("Dashboard", "/dashboard"), ("Current", None)])
+        result = _breadcrumb(
+            [("Dashboard", "/dashboard"), ("Settings", "/settings"), ("Current", None)]
+        )
         assert 'href="/dashboard"' in result
         assert ">Dashboard</a>" in result
 
-    def test_current_page_not_linked(self) -> None:
-        """現在のページはリンクではない。"""
+    def test_last_item_excluded(self) -> None:
+        """最後の要素（現在のページ）は h1 タイトルと重複するため除外される。"""
         result = _breadcrumb([("Dashboard", "/dashboard"), ("Current", None)])
-        assert "<span" in result and "Current" in result
+        assert "Current" not in result
+        assert "Dashboard" in result
 
     def test_escapes_labels(self) -> None:
         """ラベルがエスケープされる。"""
-        result = _breadcrumb([("<script>", None)])
+        # 最後の要素は除外されるため、エスケープテストは中間要素で行う
+        result = _breadcrumb([("<script>", "/xss"), ("Page", None)])
         assert "&lt;script&gt;" in result
         assert "<script>" not in result
 
@@ -104,21 +115,26 @@ class TestBreadcrumb:
         )
         assert 'href="/dashboard"' in result
         assert 'href="/settings"' in result
-        assert "Current" in result
-        # 2つのセパレーター
-        assert result.count("&gt;") == 2
+        # 最後の要素は h1 タイトルとして表示されるため除外
+        assert "Current" not in result
+        # 1つのセパレーター（2項目間）
+        assert result.count("&gt;") == 1
 
 
 class TestListPageBreadcrumbs:
-    """リストページのパンくずリストテスト。"""
+    """リストページのパンくずリストテスト。
+
+    Note: 2階層のパンくずでは、最後の要素（現在のページ）は h1 タイトルとして
+    表示されるため、パンくずには Dashboard リンクのみが表示される。
+    """
 
     def test_role_panels_list_has_breadcrumb(self) -> None:
         """Role Panels リストページにパンくずリストがある。"""
         result = role_panels_list_page([], {})
         assert 'href="/dashboard"' in result
         assert "Dashboard" in result
+        # タイトルは h1 として表示される
         assert "Role Panels" in result
-        assert "&gt;" in result
 
     def test_lobbies_list_has_breadcrumb(self) -> None:
         """Lobbies リストページにパンくずリストがある。"""
@@ -126,7 +142,6 @@ class TestListPageBreadcrumbs:
         assert 'href="/dashboard"' in result
         assert "Dashboard" in result
         assert "Lobbies" in result
-        assert "&gt;" in result
 
     def test_sticky_list_has_breadcrumb(self) -> None:
         """Sticky Messages リストページにパンくずリストがある。"""
@@ -134,7 +149,6 @@ class TestListPageBreadcrumbs:
         assert 'href="/dashboard"' in result
         assert "Dashboard" in result
         assert "Sticky Messages" in result
-        assert "&gt;" in result
 
     def test_bump_list_has_breadcrumb(self) -> None:
         """Bump Reminders リストページにパンくずリストがある。"""
@@ -142,7 +156,6 @@ class TestListPageBreadcrumbs:
         assert 'href="/dashboard"' in result
         assert "Dashboard" in result
         assert "Bump Reminders" in result
-        assert "&gt;" in result
 
 
 # ===========================================================================

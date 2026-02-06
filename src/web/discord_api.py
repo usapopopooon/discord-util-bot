@@ -33,43 +33,30 @@ BUTTON_STYLE_MAP = {
 
 
 def _create_embed_payload(
-    panel: RolePanel, items: list[RolePanelItem]
+    panel: RolePanel, _items: list[RolePanelItem]
 ) -> dict[str, Any]:
     """ロールパネルの Embed ペイロードを作成する。
 
     Args:
         panel: RolePanel オブジェクト
-        items: パネルに設定されたロールアイテムのリスト
+        _items: パネルに設定されたロールアイテムのリスト (未使用)
 
     Returns:
         Discord API 用の Embed ペイロード
     """
-    embed: dict[str, Any] = {
+    return {
         "title": panel.title,
         "description": panel.description or "",
         "color": panel.color if panel.color else 0x3498DB,  # Blue default
     }
 
-    # リアクション式の場合はロール一覧を表示
-    if panel.panel_type == "reaction" and items:
-        role_list = "\n".join(f"{item.emoji} → <@&{item.role_id}>" for item in items)
-        embed["fields"] = [
-            {
-                "name": "ロール一覧",
-                "value": role_list,
-                "inline": False,
-            }
-        ]
 
-    return embed
-
-
-def _create_content_text(panel: RolePanel, items: list[RolePanelItem]) -> str:
+def _create_content_text(panel: RolePanel, _items: list[RolePanelItem]) -> str:
     """ロールパネルの通常テキストメッセージを作成する。
 
     Args:
         panel: RolePanel オブジェクト
-        items: パネルに設定されたロールアイテムのリスト
+        _items: パネルに設定されたロールアイテムのリスト (未使用)
 
     Returns:
         メッセージテキスト
@@ -78,13 +65,6 @@ def _create_content_text(panel: RolePanel, items: list[RolePanelItem]) -> str:
 
     if panel.description:
         lines.append(panel.description)
-
-    # リアクション式の場合はロール一覧を表示
-    if panel.panel_type == "reaction" and items:
-        lines.append("")  # 空行
-        lines.append("**ロール一覧**")
-        for item in items:
-            lines.append(f"{item.emoji} → <@&{item.role_id}>")
 
     return "\n".join(lines)
 

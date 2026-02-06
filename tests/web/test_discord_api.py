@@ -71,33 +71,13 @@ class TestCreateEmbedPayload:
 
         assert result["color"] == 0x3498DB  # Blue
 
-    def test_embed_reaction_panel_with_items(self) -> None:
-        """リアクション式パネルでアイテムがあればロール一覧フィールドを追加。"""
+    def test_embed_no_fields(self) -> None:
+        """Embed にはフィールドを追加しない (タイトルと説明のみ)。"""
         panel = RolePanel(
             id=1,
             guild_id="123",
             channel_id="456",
             panel_type="reaction",
-            title="Test Panel",
-        )
-        items = [
-            RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮"),
-            RolePanelItem(id=2, panel_id=1, role_id="222", emoji="🎵"),
-        ]
-        result = _create_embed_payload(panel, items)
-
-        assert "fields" in result
-        assert result["fields"][0]["name"] == "ロール一覧"
-        assert "🎮 → <@&111>" in result["fields"][0]["value"]
-        assert "🎵 → <@&222>" in result["fields"][0]["value"]
-
-    def test_embed_button_panel_no_fields(self) -> None:
-        """ボタン式パネルではロール一覧フィールドを追加しない。"""
-        panel = RolePanel(
-            id=1,
-            guild_id="123",
-            channel_id="456",
-            panel_type="button",
             title="Test Panel",
         )
         items = [
@@ -145,24 +125,24 @@ class TestCreateContentText:
 
         assert "**Test Panel**" in result
 
-    def test_content_reaction_panel_with_items(self) -> None:
-        """リアクション式パネルでアイテムがあればロール一覧を追加。"""
+    def test_content_no_role_list(self) -> None:
+        """テキストメッセージにロール一覧は含まれない (タイトルと説明のみ)。"""
         panel = RolePanel(
             id=1,
             guild_id="123",
             channel_id="456",
             panel_type="reaction",
             title="Test Panel",
+            description="Test description",
         )
         items = [
             RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮"),
-            RolePanelItem(id=2, panel_id=1, role_id="222", emoji="🎵"),
         ]
         result = _create_content_text(panel, items)
 
-        assert "**ロール一覧**" in result
-        assert "🎮 → <@&111>" in result
-        assert "🎵 → <@&222>" in result
+        assert "**Test Panel**" in result
+        assert "Test description" in result
+        assert "ロール一覧" not in result
 
 
 # ===========================================================================
