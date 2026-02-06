@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -14,6 +14,7 @@ from src.web.discord_api import (
     _create_embed_payload,
     add_reactions_to_message,
     clear_reactions_from_message,
+    delete_discord_message,
     edit_role_panel_in_discord,
     post_role_panel_to_discord,
 )
@@ -1191,3 +1192,162 @@ class TestAddReactionsWithClear:
         assert call_times[1][0] == "put"
         # delete と put の間にディレイがある (0.4 秒以上)
         assert call_times[1][1] - call_times[0][1] >= 0.4
+
+
+# ===========================================================================
+# Discord メッセージ削除テスト
+# ===========================================================================
+
+
+class TestDeleteDiscordMessage:
+    """delete_discord_message 関数のテスト。"""
+
+    async def test_returns_error_without_token(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """トークンがない場合はエラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "")
+
+        success, error = await delete_discord_message("456", "789")
+
+        assert success is False
+        assert error is not None
+        assert "token" in error.lower()
+
+    async def test_successful_delete(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """メッセージ削除成功 (204)。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 204
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.delete.return_value = mock_response
+            mock_client.return_value.__aenter__.return_value = mock_instance
+
+            success, error = await delete_discord_message("456", "789")
+
+        assert success is True
+        assert error is None
+        mock_instance.delete.assert_called_once()
+
+    async def test_already_deleted_returns_success(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """メッセージが既に削除済み (404) の場合は成功扱い。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 404
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.delete.return_value = mock_response
+            mock_client.return_value.__aenter__.return_value = mock_instance
+
+            success, error = await delete_discord_message("456", "789")
+
+        assert success is True
+        assert error is None
+
+    async def test_permission_denied(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """権限不足 (403) の場合はエラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.content = b'{"message": "Missing Permissions"}'
+        mock_response.json.return_value = {"message": "Missing Permissions"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.delete.return_value = mock_response
+            mock_client.return_value.__aenter__.return_value = mock_instance
+
+            success, error = await delete_discord_message("456", "789")
+
+        assert success is False
+        assert error is not None
+        assert "権限" in error
+
+    async def test_invalid_token(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """無効なトークン (401) の場合はエラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "invalid_token")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.content = b'{"message": "401: Unauthorized"}'
+        mock_response.json.return_value = {"message": "401: Unauthorized"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.delete.return_value = mock_response
+            mock_client.return_value.__aenter__.return_value = mock_instance
+
+            success, error = await delete_discord_message("456", "789")
+
+        assert success is False
+        assert error is not None
+        assert "トークン" in error
+
+    async def test_timeout_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """タイムアウトの場合はエラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.delete.side_effect = httpx.TimeoutException("timeout")
+            mock_client.return_value.__aenter__.return_value = mock_instance
+
+            success, error = await delete_discord_message("456", "789")
+
+        assert success is False
+        assert error is not None
+        assert "タイムアウト" in error
+
+    async def test_request_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """リクエストエラーの場合はエラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.delete.side_effect = httpx.RequestError("connection failed")
+            mock_client.return_value.__aenter__.return_value = mock_instance
+
+            success, error = await delete_discord_message("456", "789")
+
+        assert success is False
+        assert error is not None
+        assert "接続に失敗" in error

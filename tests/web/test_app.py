@@ -3146,6 +3146,101 @@ class TestRolePanelsRoutes:
         deleted_panel = result.scalar_one_or_none()
         assert deleted_panel is None
 
+    async def test_delete_rolepanel_with_message_deletes_discord_message(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """投稿済みパネル削除時に Discord メッセージも削除される。"""
+        from unittest.mock import patch
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Posted Panel",
+            message_id="111111111111111111",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        panel_id = panel.id
+
+        with patch(
+            "src.web.app.delete_discord_message", return_value=(True, None)
+        ) as mock_delete:
+            response = await authenticated_client.post(
+                f"/rolepanels/{panel_id}/delete",
+                follow_redirects=False,
+            )
+
+        assert response.status_code == 302
+        mock_delete.assert_called_once_with("987654321098765432", "111111111111111111")
+
+        # DB からも削除されている
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.id == panel_id)
+        )
+        assert result.scalar_one_or_none() is None
+
+    async def test_delete_rolepanel_without_message_skips_discord(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """未投稿パネル削除時は Discord API を呼ばない。"""
+        from unittest.mock import patch
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Draft Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        panel_id = panel.id
+
+        with patch(
+            "src.web.app.delete_discord_message", return_value=(True, None)
+        ) as mock_delete:
+            response = await authenticated_client.post(
+                f"/rolepanels/{panel_id}/delete",
+                follow_redirects=False,
+            )
+
+        assert response.status_code == 302
+        mock_delete.assert_not_called()
+
+    async def test_delete_rolepanel_discord_failure_still_deletes_db(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Discord メッセージ削除が失敗しても DB からは削除される。"""
+        from unittest.mock import patch
+
+        panel = RolePanel(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+            panel_type="button",
+            title="Posted Panel",
+            message_id="111111111111111111",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        panel_id = panel.id
+
+        with patch(
+            "src.web.app.delete_discord_message",
+            return_value=(False, "Missing Permissions"),
+        ):
+            response = await authenticated_client.post(
+                f"/rolepanels/{panel_id}/delete",
+                follow_redirects=False,
+            )
+
+        assert response.status_code == 302
+
+        # Discord 削除が失敗しても DB からは削除される
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.id == panel_id)
+        )
+        assert result.scalar_one_or_none() is None
+
     async def test_delete_nonexistent_rolepanel(
         self, authenticated_client: AsyncClient
     ) -> None:

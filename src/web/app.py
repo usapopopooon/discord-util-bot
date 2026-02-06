@@ -50,6 +50,7 @@ from src.database.models import (
 from src.utils import get_resource_lock, is_valid_emoji, normalize_emoji
 from src.web.discord_api import (
     add_reactions_to_message,
+    delete_discord_message,
     edit_role_panel_in_discord,
     post_role_panel_to_discord,
 )
@@ -1888,6 +1889,10 @@ async def rolepanel_delete(
         result = await db.execute(select(RolePanel).where(RolePanel.id == panel_id))
         panel = result.scalar_one_or_none()
         if panel:
+            # Discord に投稿済みの場合はメッセージも削除
+            if panel.message_id:
+                await delete_discord_message(panel.channel_id, panel.message_id)
+
             await db.delete(panel)
             await db.commit()
 

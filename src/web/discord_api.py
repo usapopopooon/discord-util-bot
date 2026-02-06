@@ -296,6 +296,72 @@ async def edit_role_panel_in_discord(
         return False, f"Discord API への接続に失敗しました: {e}"
 
 
+async def delete_discord_message(
+    channel_id: str,
+    message_id: str,
+) -> tuple[bool, str | None]:
+    """Discord のメッセージを削除する。
+
+    Args:
+        channel_id: チャンネル ID
+        message_id: メッセージ ID
+
+    Returns:
+        (success, error_message) のタプル
+    """
+    if not settings.discord_token:
+        return False, "Discord token is not configured"
+
+    url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}"
+    headers = {
+        "Authorization": f"Bot {settings.discord_token}",
+    }
+
+    try:
+        async with httpx.AsyncClient(verify=False) as client:
+            response = await client.delete(url, headers=headers, timeout=30)
+
+            if response.status_code == 204:
+                logger.info(
+                    "Deleted Discord message %s in channel %s",
+                    message_id,
+                    channel_id,
+                )
+                return True, None
+
+            if response.status_code == 404:
+                # メッセージが既に削除されている場合は成功扱い
+                logger.info(
+                    "Message %s already deleted in channel %s",
+                    message_id,
+                    channel_id,
+                )
+                return True, None
+
+            error_data = response.json() if response.content else {}
+            error_msg = error_data.get("message", f"HTTP {response.status_code}")
+
+            if response.status_code == 403:
+                error_msg = "Bot にこのメッセージの削除権限がありません"
+            elif response.status_code == 401:
+                error_msg = "Bot トークンが無効です"
+
+            logger.error(
+                "Failed to delete message %s: %s (status=%d)",
+                message_id,
+                error_msg,
+                response.status_code,
+            )
+            return False, error_msg
+
+    except httpx.TimeoutException:
+        logger.error("Timeout deleting message %s", message_id)
+        return False, "Discord API への接続がタイムアウトしました"
+    except httpx.RequestError as e:
+        logger.error("Request error deleting message %s: %s", message_id, e)
+        return False, f"Discord API への接続に失敗しました: {e}"
+
+
 async def clear_reactions_from_message(
     channel_id: str,
     message_id: str,
