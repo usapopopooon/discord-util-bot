@@ -824,7 +824,7 @@ class TestRolePanelCreatePage:
     def test_label_field_class_exists(self) -> None:
         """Label フィールドに label-field クラスが設定されている。"""
         result = role_panel_create_page()
-        assert 'class="label-field' in result
+        assert "label-field" in result
 
     def test_panel_type_change_javascript_exists(self) -> None:
         """panel_type 変更時の JavaScript が含まれる。"""
@@ -851,7 +851,6 @@ class TestRolePanelCreatePage:
     def test_contains_drag_handle_for_role_items(self) -> None:
         """Role Items にドラッグハンドルが含まれる。"""
         result = role_panel_create_page()
-        assert "drag-handle" in result
         assert "cursor-grab" in result
 
     def test_contains_hidden_position_input(self) -> None:

@@ -1488,7 +1488,8 @@ def role_panels_list_page(
                        class="text-blue-400 hover:text-blue-300 text-sm">
                         Edit
                     </a>
-                    <form method="POST" action="/rolepanels/{panel.id}/copy" class="inline">
+                    <form method="POST" action="/rolepanels/{panel.id}/copy"
+                          class="inline-flex items-center">
                         {_csrf_field(csrf_token)}
                         <button type="submit"
                                 class="text-gray-400 hover:text-gray-200 text-sm">
@@ -1496,7 +1497,8 @@ def role_panels_list_page(
                         </button>
                     </form>
                     <form method="POST" action="/rolepanels/{panel.id}/delete"
-                          onsubmit="return confirm('Delete this role panel?');">
+                          onsubmit="return confirm('Delete this role panel?');"
+                          class="inline-flex items-center">
                         {_csrf_field(csrf_token)}
                         <button type="submit"
                                 class="text-red-400 hover:text-red-300 text-sm">
@@ -1840,27 +1842,45 @@ def role_panel_create_page(
 
             <!-- Card 3: Role Items -->
             <div class="bg-gray-800 p-6 rounded-lg mb-6">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-lg font-semibold">Role Items</h2>
+                <h2 class="text-lg font-semibold mb-4">
+                    Role Items (<span id="itemCount">0</span>)
+                </h2>
+                <p id="noKnownRolesInfo" class="text-red-400 text-xs mb-4 hidden">
+                    No roles found for this guild. Please sync roles by starting the Bot first.
+                </p>
+                <div class="overflow-x-auto">
+                    <table class="w-full" id="roleItemsTable">
+                        <thead class="bg-gray-700">
+                            <tr>
+                                <th class="py-3 px-2 w-8"></th>
+                                <th class="py-3 px-4 text-left">Emoji</th>
+                                <th class="py-3 px-4 text-left">Role</th>
+                                <th class="py-3 px-4 text-left label-field">Label</th>
+                                <th class="py-3 px-4 text-left style-field">Style</th>
+                                <th class="py-3 px-4 text-left">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="roleItemsContainer">
+                        </tbody>
+                    </table>
+                </div>
+                <p id="noRolesInfo" class="py-8 text-center text-gray-500 hidden">
+                    No roles configured. Add roles below.
+                </p>
+                <p id="noRolesWarning" class="text-yellow-400 text-sm mt-2 hidden">
+                    Please add at least one role item.
+                </p>
+                <div class="mt-4">
                     <button
                         type="button"
                         id="addRoleItemBtn"
-                        class="bg-green-600 hover:bg-green-700 text-white text-sm
-                               py-1 px-3 rounded transition-colors disabled:opacity-50
+                        class="bg-green-600 hover:bg-green-700 text-white font-medium
+                               py-2 px-4 rounded transition-colors disabled:opacity-50
                                disabled:cursor-not-allowed disabled:hover:bg-green-600"
                     >
                         + Add Role
                     </button>
                 </div>
-                <p id="noKnownRolesInfo" class="text-red-400 text-xs mb-4 hidden">
-                    No roles found for this guild. Please sync roles by starting the Bot first.
-                </p>
-                <div id="roleItemsContainer" class="space-y-3">
-                    <!-- Role item rows will be added here by JavaScript -->
-                </div>
-                <p id="noRolesWarning" class="text-yellow-400 text-sm mt-2 hidden">
-                    Please add at least one role item.
-                </p>
             </div>
 
             <!-- Action Buttons -->
@@ -1972,11 +1992,14 @@ def role_panel_create_page(
         const discordRoles = {discord_roles_json};
         const existingItems = {existing_items_json};
         const roleItemsContainer = document.getElementById('roleItemsContainer');
+        const roleItemsTable = document.getElementById('roleItemsTable');
         const addRoleItemBtn = document.getElementById('addRoleItemBtn');
         const submitBtn = document.getElementById('submitBtn');
         const saveDraftBtn = document.getElementById('saveDraftBtn');
         const noRolesWarning = document.getElementById('noRolesWarning');
         const noKnownRolesInfo = document.getElementById('noKnownRolesInfo');
+        const noRolesInfo = document.getElementById('noRolesInfo');
+        const itemCountSpan = document.getElementById('itemCount');
         let roleItemIndex = 0;
 
         function updateSubmitButton() {{
@@ -1985,6 +2008,10 @@ def role_panel_create_page(
             submitBtn.disabled = itemCount === 0 || !hasGuild;
             saveDraftBtn.disabled = !hasGuild;
             noRolesWarning.classList.toggle('hidden', itemCount > 0);
+            itemCountSpan.textContent = itemCount;
+            // テーブルとプレースホルダの表示切替
+            roleItemsTable.classList.toggle('hidden', itemCount === 0);
+            noRolesInfo.classList.toggle('hidden', itemCount > 0);
         }}
 
         function updateRolesInfo() {{
@@ -2019,8 +2046,8 @@ def role_panel_create_page(
         }}
 
         function createRoleItemRow(index, prefill) {{
-            const row = document.createElement('div');
-            row.className = 'role-item-row bg-gray-700 p-4 rounded flex flex-wrap gap-3 items-end';
+            const row = document.createElement('tr');
+            row.className = 'role-item-row border-b border-gray-700';
             row.draggable = true;
 
             const availableRoles = getRolesForCurrentGuild();
@@ -2030,7 +2057,7 @@ def role_panel_create_page(
                     <div class="role-autocomplete relative">
                         <input
                             type="text"
-                            class="role-input w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded
+                            class="role-input w-full px-2 py-1 bg-gray-600 border border-gray-500 rounded
                                    focus:outline-none focus:ring-2 focus:ring-blue-500
                                    text-gray-100 text-sm"
                             placeholder="Type to search roles..."
@@ -2044,59 +2071,47 @@ def role_panel_create_page(
             }}
 
             row.innerHTML = `
-                <div class="drag-handle flex items-center justify-center w-8 h-10 mb-0 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200" title="Drag to reorder">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16" />
+                <td class="py-2 px-2 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200">
+                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm-6 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
                     </svg>
-                </div>
-                <input type="hidden" name="item_position[]" class="position-input" value="${{index}}">
-                <div class="flex-1 min-w-[80px]">
-                    <label class="block text-xs font-medium mb-1 text-gray-300">
-                        Emoji <span class="text-red-400">*</span>
-                    </label>
+                    <input type="hidden" name="item_position[]" class="position-input" value="${{index}}">
+                </td>
+                <td class="py-2 px-4">
                     <input
                         type="text"
                         name="item_emoji[]"
                         required
                         maxlength="64"
-                        class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded
+                        class="w-20 px-2 py-1 bg-gray-600 border border-gray-500 rounded
                                focus:outline-none focus:ring-2 focus:ring-blue-500
                                text-gray-100 text-sm"
                         placeholder="🎮"
                     >
-                </div>
-                <div class="flex-[2] min-w-[160px]">
-                    <label class="block text-xs font-medium mb-1 text-gray-300">
-                        Role <span class="text-red-400">*</span>
-                    </label>
+                </td>
+                <td class="py-2 px-4">
                     ${{roleSelectHtml}}
                     <input
                         type="hidden"
                         name="item_role_id[]"
                         class="role-id-input"
                     >
-                </div>
-                <div class="label-field flex-[2] min-w-[120px]">
-                    <label class="block text-xs font-medium mb-1 text-gray-300">
-                        Label
-                    </label>
+                </td>
+                <td class="py-2 px-4 label-field">
                     <input
                         type="text"
                         name="item_label[]"
                         maxlength="80"
-                        class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded
+                        class="w-full px-2 py-1 bg-gray-600 border border-gray-500 rounded
                                focus:outline-none focus:ring-2 focus:ring-blue-500
                                text-gray-100 text-sm"
                         placeholder="Gamer"
                     >
-                </div>
-                <div class="style-field flex-1 min-w-[100px]">
-                    <label class="block text-xs font-medium mb-1 text-gray-300">
-                        Style
-                    </label>
+                </td>
+                <td class="py-2 px-4 style-field">
                     <select
                         name="item_style[]"
-                        class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded
+                        class="w-full px-2 py-1 bg-gray-600 border border-gray-500 rounded
                                focus:outline-none focus:ring-2 focus:ring-blue-500
                                text-gray-100 text-sm"
                     >
@@ -2105,17 +2120,16 @@ def role_panel_create_page(
                         <option value="success">Green</option>
                         <option value="danger">Red</option>
                     </select>
-                </div>
-                <div class="flex-shrink-0">
+                </td>
+                <td class="py-2 px-4">
                     <button
                         type="button"
-                        class="remove-role-item bg-red-600 hover:bg-red-700 text-white
-                               py-2 px-3 rounded transition-colors text-sm"
+                        class="remove-role-item text-red-400 hover:text-red-300 text-sm"
                         title="Remove"
                     >
-                        &times;
+                        Delete
                     </button>
-                </div>
+                </td>
             `;
 
             // ロールオートコンプリートのイベント設定
