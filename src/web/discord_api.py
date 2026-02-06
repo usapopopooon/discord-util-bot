@@ -388,6 +388,10 @@ async def add_reactions_to_message(
         if not clear_success:
             logger.warning("Failed to clear reactions: %s", clear_error)
             # クリア失敗は継続 (403 権限不足の場合もある)
+        else:
+            # クリア成功後、リアクション追加前にディレイを入れる
+            # (Discord のレート制限対策)
+            await asyncio.sleep(0.5)
 
     if not items:
         return True, None
@@ -435,7 +439,7 @@ async def add_reactions_to_message(
                 # Discord のレート制限対策: リアクション間にディレイを入れる
                 # (最後のアイテムの後は待たない)
                 if i < len(items) - 1:
-                    await asyncio.sleep(0.3)
+                    await asyncio.sleep(0.4)
 
         return True, None
 

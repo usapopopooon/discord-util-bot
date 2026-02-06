@@ -1136,3 +1136,50 @@ class TestAddReactionsWithClear:
         assert success is True
         # delete (clear) は呼ばれない
         assert not mock_instance.delete.called
+
+    async def test_delay_after_clear_before_add(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """clear_existing=True でクリア後にディレイが入る。"""
+        import time
+        from unittest.mock import MagicMock
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_delete_response = MagicMock()
+        mock_delete_response.status_code = 204
+
+        mock_put_response = MagicMock()
+        mock_put_response.status_code = 204
+
+        call_times: list[tuple[str, float]] = []
+
+        async def mock_delete(*_args, **_kwargs):
+            call_times.append(("delete", time.monotonic()))
+            return mock_delete_response
+
+        async def mock_put(*_args, **_kwargs):
+            call_times.append(("put", time.monotonic()))
+            return mock_put_response
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = MagicMock()
+            mock_instance.delete = mock_delete
+            mock_instance.put = mock_put
+            mock_client.return_value.__aenter__.return_value = mock_instance
+
+            items = [RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮")]
+            success, error = await add_reactions_to_message(
+                "123", "456", items, clear_existing=True
+            )
+
+        assert success is True
+        assert error is None
+        # delete -> put の順序で呼ばれた
+        assert len(call_times) == 2
+        assert call_times[0][0] == "delete"
+        assert call_times[1][0] == "put"
+        # delete と put の間にディレイがある (0.4 秒以上)
+        assert call_times[1][1] - call_times[0][1] >= 0.4

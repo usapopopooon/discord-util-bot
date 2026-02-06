@@ -1491,8 +1491,8 @@ def role_panels_list_page(
                 {items_html}
             </td>
             <td class="py-3 px-4 text-gray-400 text-sm">{created_at}</td>
-            <td class="py-3 px-4">
-                <div class="flex gap-2">
+            <td class="py-3 px-4 align-middle">
+                <div class="flex gap-2 items-center">
                     <a href="/rolepanels/{panel.id}"
                        class="text-blue-400 hover:text-blue-300 text-sm">
                         Edit
