@@ -32,6 +32,8 @@ from src.services.db_service import (
     delete_lobbies_by_guild,
     delete_lobby,
     delete_role_panel,
+    delete_role_panel_by_message_id,
+    delete_role_panels_by_channel,
     delete_role_panels_by_guild,
     delete_sticky_message,
     delete_sticky_messages_by_guild,
@@ -2980,3 +2982,134 @@ class TestDeleteRolePanelsByGuild:
         # カスケード削除によりアイテムも全て削除されている
         items_after = await get_role_panel_items(db_session, panel.id)
         assert len(items_after) == 0
+
+
+class TestDeleteRolePanelsByChannel:
+    """delete_role_panels_by_channel のテスト。"""
+
+    async def test_delete_role_panels_by_channel(
+        self, db_session: AsyncSession
+    ) -> None:
+        """指定チャンネルの全ロールパネルを削除できる。"""
+        # 対象チャンネルにロールパネルを作成
+        panel1 = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="ch1",
+            panel_type="button",
+            title="Panel 1",
+        )
+        panel2 = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="ch1",
+            panel_type="reaction",
+            title="Panel 2",
+        )
+        # 別チャンネルにもロールパネルを作成
+        await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="ch2",
+            panel_type="button",
+            title="Other Panel",
+        )
+
+        # パネルにアイテムを追加
+        await add_role_panel_item(
+            db_session,
+            panel_id=panel1.id,
+            role_id="role1",
+            emoji="👍",
+        )
+        await add_role_panel_item(
+            db_session,
+            panel_id=panel2.id,
+            role_id="role2",
+            emoji="👎",
+        )
+
+        count = await delete_role_panels_by_channel(db_session, "ch1")
+        assert count == 2
+
+        # 対象チャンネルのロールパネルは削除されている
+        all_panels = await get_all_role_panels(db_session)
+        target_panels = [p for p in all_panels if p.channel_id == "ch1"]
+        assert len(target_panels) == 0
+
+        # カスケード削除によりアイテムも削除されている
+        items1 = await get_role_panel_items(db_session, panel1.id)
+        items2 = await get_role_panel_items(db_session, panel2.id)
+        assert len(items1) == 0
+        assert len(items2) == 0
+
+        # 別チャンネルのロールパネルは残っている
+        other_panels = [p for p in all_panels if p.channel_id == "ch2"]
+        assert len(other_panels) == 1
+
+    async def test_delete_role_panels_by_channel_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないチャンネルを指定しても 0 が返る。"""
+        count = await delete_role_panels_by_channel(db_session, "nonexistent")
+        assert count == 0
+
+
+class TestDeleteRolePanelByMessageId:
+    """delete_role_panel_by_message_id のテスト。"""
+
+    async def test_delete_role_panel_by_message_id(
+        self, db_session: AsyncSession
+    ) -> None:
+        """指定メッセージIDのロールパネルを削除できる。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="ch1",
+            panel_type="button",
+            title="Test Panel",
+        )
+        # message_id を設定
+        await update_role_panel(db_session, panel, message_id="msg123")
+        # パネルにアイテムを追加
+        await add_role_panel_item(
+            db_session,
+            panel_id=panel.id,
+            role_id="role1",
+            emoji="👍",
+        )
+
+        result = await delete_role_panel_by_message_id(db_session, "msg123")
+        assert result is True
+
+        # ロールパネルは削除されている
+        deleted_panel = await get_role_panel(db_session, panel.id)
+        assert deleted_panel is None
+
+        # カスケード削除によりアイテムも削除されている
+        items = await get_role_panel_items(db_session, panel.id)
+        assert len(items) == 0
+
+    async def test_delete_role_panel_by_message_id_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないメッセージIDを指定すると False が返る。"""
+        result = await delete_role_panel_by_message_id(db_session, "nonexistent")
+        assert result is False
+
+    async def test_delete_role_panel_by_message_id_none(
+        self, db_session: AsyncSession
+    ) -> None:
+        """message_id が None のパネルは削除されない。"""
+        # message_id が None のパネルを作成 (デフォルトで message_id は None)
+        await create_role_panel(
+            db_session,
+            guild_id="123",
+            channel_id="ch1",
+            panel_type="button",
+            title="Unposted Panel",
+        )
+
+        # None を指定しても False が返る（マッチしない）
+        result = await delete_role_panel_by_message_id(db_session, "")
+        assert result is False

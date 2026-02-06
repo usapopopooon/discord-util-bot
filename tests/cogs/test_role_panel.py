@@ -3700,12 +3700,45 @@ class TestGuildInfoAndChannelSyncEventListeners:
             mock_db = AsyncMock()
             mock_session.return_value.__aenter__.return_value = mock_db
 
-            with patch("src.cogs.role_panel.delete_discord_channel") as mock_delete:
+            with (
+                patch(
+                    "src.cogs.role_panel.delete_discord_channel"
+                ) as mock_delete_channel,
+                patch(
+                    "src.cogs.role_panel.delete_role_panels_by_channel",
+                    return_value=0,
+                ) as mock_delete_panels,
+            ):
                 await cog.on_guild_channel_delete(mock_text_channel)
 
-        mock_delete.assert_called_once_with(
+        mock_delete_channel.assert_called_once_with(
             mock_db, str(mock_text_channel.guild.id), str(mock_text_channel.id)
         )
+        mock_delete_panels.assert_called_once_with(mock_db, str(mock_text_channel.id))
+
+    async def test_on_guild_channel_delete_removes_role_panels(
+        self, mock_bot: MagicMock, mock_text_channel: MagicMock
+    ) -> None:
+        """on_guild_channel_delete がロールパネルも削除する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with (
+                patch("src.cogs.role_panel.delete_discord_channel"),
+                patch(
+                    "src.cogs.role_panel.delete_role_panels_by_channel",
+                    return_value=2,
+                ) as mock_delete_panels,
+            ):
+                await cog.on_guild_channel_delete(mock_text_channel)
+
+        # ロールパネル削除が呼ばれる
+        mock_delete_panels.assert_called_once_with(mock_db, str(mock_text_channel.id))
 
     async def test_on_guild_channel_delete_works_for_any_channel_type(
         self, mock_bot: MagicMock, mock_guild: MagicMock
@@ -3725,11 +3758,71 @@ class TestGuildInfoAndChannelSyncEventListeners:
             mock_db = AsyncMock()
             mock_session.return_value.__aenter__.return_value = mock_db
 
-            with patch("src.cogs.role_panel.delete_discord_channel") as mock_delete:
+            with (
+                patch(
+                    "src.cogs.role_panel.delete_discord_channel"
+                ) as mock_delete_channel,
+                patch(
+                    "src.cogs.role_panel.delete_role_panels_by_channel",
+                    return_value=0,
+                ),
+            ):
                 await cog.on_guild_channel_delete(voice_channel)
 
         # on_guild_channel_delete は常に削除を試みる
-        mock_delete.assert_called_once()
+        mock_delete_channel.assert_called_once()
+
+    # -------------------------------------------------------------------------
+    # on_raw_message_delete テスト
+    # -------------------------------------------------------------------------
+
+    async def test_on_raw_message_delete_removes_role_panel(
+        self, mock_bot: MagicMock
+    ) -> None:
+        """on_raw_message_delete がロールパネルを削除する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+
+        payload = MagicMock(spec=discord.RawMessageDeleteEvent)
+        payload.message_id = 12345
+        payload.channel_id = 67890
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch(
+                "src.cogs.role_panel.delete_role_panel_by_message_id",
+                return_value=True,
+            ) as mock_delete:
+                await cog.on_raw_message_delete(payload)
+
+        mock_delete.assert_called_once_with(mock_db, "12345")
+
+    async def test_on_raw_message_delete_no_panel_found(
+        self, mock_bot: MagicMock
+    ) -> None:
+        """on_raw_message_delete でパネルが見つからない場合も正常終了。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+
+        payload = MagicMock(spec=discord.RawMessageDeleteEvent)
+        payload.message_id = 99999
+        payload.channel_id = 67890
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch(
+                "src.cogs.role_panel.delete_role_panel_by_message_id",
+                return_value=False,
+            ) as mock_delete:
+                await cog.on_raw_message_delete(payload)
+
+        mock_delete.assert_called_once_with(mock_db, "99999")
 
 
 # =============================================================================

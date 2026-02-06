@@ -13,6 +13,8 @@ from src.web.discord_api import (
     _create_content_text,
     _create_embed_payload,
     add_reactions_to_message,
+    clear_reactions_from_message,
+    edit_role_panel_in_discord,
     post_role_panel_to_discord,
 )
 
@@ -723,3 +725,347 @@ class TestAddReactionsToMessage:
 
         assert success is False
         assert "接続" in error
+
+
+# ===========================================================================
+# メッセージ編集テスト
+# ===========================================================================
+
+
+class TestEditRolePanelInDiscord:
+    """edit_role_panel_in_discord 関数のテスト。"""
+
+    @pytest.fixture
+    def panel(self) -> RolePanel:
+        """テスト用パネル (message_id 付き)。"""
+        return RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            message_id="789",
+            panel_type="button",
+            title="Test Panel",
+            description="Test",
+            use_embed=True,
+        )
+
+    @pytest.fixture
+    def items(self) -> list[RolePanelItem]:
+        """テスト用アイテム。"""
+        return [
+            RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮"),
+        ]
+
+    async def test_returns_error_without_token(
+        self,
+        panel: RolePanel,
+        items: list[RolePanelItem],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """トークンがない場合はエラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "")
+
+        success, error = await edit_role_panel_in_discord(panel, items)
+
+        assert success is False
+        assert "token" in error.lower()
+
+    async def test_returns_error_without_message_id(
+        self,
+        items: list[RolePanelItem],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """message_id がない場合はエラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        panel = RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            message_id=None,  # message_id なし
+            panel_type="button",
+            title="Test Panel",
+        )
+
+        success, error = await edit_role_panel_in_discord(panel, items)
+
+        assert success is False
+        assert "message_id" in error.lower()
+
+    async def test_successful_edit(
+        self,
+        panel: RolePanel,
+        items: list[RolePanelItem],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """編集成功時は True を返す。"""
+        from unittest.mock import MagicMock
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.patch = AsyncMock(
+                return_value=mock_response
+            )
+
+            success, error = await edit_role_panel_in_discord(panel, items)
+
+        assert success is True
+        assert error is None
+
+    async def test_forbidden_error(
+        self,
+        panel: RolePanel,
+        items: list[RolePanelItem],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """403 エラー時は権限エラーメッセージを返す。"""
+        from unittest.mock import MagicMock
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.content = b'{"message": "Missing Access"}'
+        mock_response.json.return_value = {"message": "Missing Access"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.patch = AsyncMock(
+                return_value=mock_response
+            )
+
+            success, error = await edit_role_panel_in_discord(panel, items)
+
+        assert success is False
+        assert "権限" in error
+
+    async def test_not_found_error(
+        self,
+        panel: RolePanel,
+        items: list[RolePanelItem],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """404 エラー時はメッセージ見つからないエラーを返す。"""
+        from unittest.mock import MagicMock
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.content = b'{"message": "Unknown Message"}'
+        mock_response.json.return_value = {"message": "Unknown Message"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.patch = AsyncMock(
+                return_value=mock_response
+            )
+
+            success, error = await edit_role_panel_in_discord(panel, items)
+
+        assert success is False
+        assert "メッセージ" in error or "見つかり" in error
+
+    async def test_timeout_error(
+        self,
+        panel: RolePanel,
+        items: list[RolePanelItem],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """タイムアウト時はエラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.patch.side_effect = (
+                httpx.TimeoutException("timeout")
+            )
+
+            success, error = await edit_role_panel_in_discord(panel, items)
+
+        assert success is False
+        assert "タイムアウト" in error
+
+    async def test_request_error(
+        self,
+        panel: RolePanel,
+        items: list[RolePanelItem],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """RequestError 時は接続エラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.patch.side_effect = (
+                httpx.RequestError("Connection failed")
+            )
+
+            success, error = await edit_role_panel_in_discord(panel, items)
+
+        assert success is False
+        assert "接続" in error
+
+
+# ===========================================================================
+# リアクションクリアテスト
+# ===========================================================================
+
+
+class TestClearReactionsFromMessage:
+    """clear_reactions_from_message 関数のテスト。"""
+
+    async def test_returns_error_without_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """トークンがない場合はエラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "")
+
+        success, error = await clear_reactions_from_message("123", "456")
+
+        assert success is False
+        assert "token" in error.lower()
+
+    async def test_successful_clear(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """リアクションクリア成功時は成功を返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 204
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.delete.return_value = (
+                mock_response
+            )
+
+            success, error = await clear_reactions_from_message("123", "456")
+
+        assert success is True
+        assert error is None
+
+    async def test_clear_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """リアクションクリアエラー時はエラーを返す。"""
+        from unittest.mock import MagicMock
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.content = b'{"message": "Missing Permissions"}'
+        mock_response.json.return_value = {"message": "Missing Permissions"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.delete.return_value = (
+                mock_response
+            )
+
+            success, error = await clear_reactions_from_message("123", "456")
+
+        assert success is False
+        assert "Missing Permissions" in error
+
+    async def test_timeout_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """タイムアウト時はエラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.delete.side_effect = (
+                httpx.TimeoutException("timeout")
+            )
+
+            success, error = await clear_reactions_from_message("123", "456")
+
+        assert success is False
+        assert "タイムアウト" in error
+
+    async def test_request_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """RequestError 時は接続エラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.delete.side_effect = (
+                httpx.RequestError("Connection failed")
+            )
+
+            success, error = await clear_reactions_from_message("123", "456")
+
+        assert success is False
+        assert "接続" in error
+
+
+class TestAddReactionsWithClear:
+    """add_reactions_to_message の clear_existing パラメータテスト。"""
+
+    async def test_clear_existing_calls_clear(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """clear_existing=True で clear_reactions_from_message が呼ばれる。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_put_response = AsyncMock()
+        mock_put_response.status_code = 204
+
+        mock_delete_response = AsyncMock()
+        mock_delete_response.status_code = 204
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.put.return_value = mock_put_response
+            mock_instance.delete.return_value = mock_delete_response
+            mock_client.return_value.__aenter__.return_value = mock_instance
+
+            items = [RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮")]
+            success, error = await add_reactions_to_message(
+                "123", "456", items, clear_existing=True
+            )
+
+        assert success is True
+        # delete (clear) が呼ばれた
+        assert mock_instance.delete.called
+
+    async def test_no_clear_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """clear_existing=False (デフォルト) では clear は呼ばれない。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_put_response = AsyncMock()
+        mock_put_response.status_code = 204
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.put.return_value = mock_put_response
+            mock_client.return_value.__aenter__.return_value = mock_instance
+
+            items = [RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮")]
+            success, error = await add_reactions_to_message("123", "456", items)
+
+        assert success is True
+        # delete (clear) は呼ばれない
+        assert not mock_instance.delete.called

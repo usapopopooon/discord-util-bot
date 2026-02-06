@@ -31,6 +31,8 @@ from src.services.db_service import (
     delete_discord_role,
     delete_discord_roles_by_guild,
     delete_role_panel,
+    delete_role_panel_by_message_id,
+    delete_role_panels_by_channel,
     get_all_role_panels,
     get_role_panel_by_message_id,
     get_role_panel_item_by_emoji,
@@ -711,12 +713,42 @@ class RolePanelCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
-        """チャンネルが削除されたときに DB から削除する。"""
+        """チャンネルが削除されたときに DB から削除する。
+
+        - チャンネルキャッシュから削除
+        - そのチャンネルに投稿されていたロールパネルも削除
+        """
+        channel_id = str(channel.id)
         async with async_session() as db_session:
-            await delete_discord_channel(
-                db_session, str(channel.guild.id), str(channel.id)
-            )
+            await delete_discord_channel(db_session, str(channel.guild.id), channel_id)
             logger.debug("Deleted channel %s from cache", channel.name)
+
+            # ロールパネルも削除
+            panel_count = await delete_role_panels_by_channel(db_session, channel_id)
+            if panel_count > 0:
+                logger.info(
+                    "Deleted %d role panel(s) for deleted channel %s",
+                    panel_count,
+                    channel.name,
+                )
+
+    @commands.Cog.listener()
+    async def on_raw_message_delete(
+        self, payload: discord.RawMessageDeleteEvent
+    ) -> None:
+        """メッセージが削除されたときにロールパネルを DB から削除する。
+
+        パネルメッセージが手動で削除された場合、DB に孤立レコードが残るのを防ぐ。
+        """
+        message_id = str(payload.message_id)
+        async with async_session() as db_session:
+            deleted = await delete_role_panel_by_message_id(db_session, message_id)
+            if deleted:
+                logger.info(
+                    "Deleted role panel for deleted message: %s (channel=%s)",
+                    message_id,
+                    payload.channel_id,
+                )
 
 
 async def setup(bot: commands.Bot) -> None:

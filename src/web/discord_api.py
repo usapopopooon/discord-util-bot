@@ -229,10 +229,139 @@ async def post_role_panel_to_discord(
         return False, None, f"Discord API への接続に失敗しました: {e}"
 
 
+async def edit_role_panel_in_discord(
+    panel: RolePanel,
+    items: list[RolePanelItem],
+) -> tuple[bool, str | None]:
+    """Discord のロールパネルメッセージを編集する。
+
+    Args:
+        panel: 編集するロールパネル (message_id が必要)
+        items: パネルのロールアイテム
+
+    Returns:
+        (success, error_message) のタプル
+        - success: 編集成功なら True
+        - error_message: 失敗時のエラーメッセージ (成功時は None)
+    """
+    if not settings.discord_token:
+        return False, "Discord token is not configured"
+
+    if not panel.message_id:
+        return False, "Panel has no message_id"
+
+    # メッセージペイロードを構築
+    payload: dict[str, Any] = {}
+
+    if panel.use_embed:
+        payload["embeds"] = [_create_embed_payload(panel, items)]
+    else:
+        payload["content"] = _create_content_text(panel, items)
+
+    # ボタン式の場合はコンポーネントを追加
+    components = _create_components_payload(panel, items)
+    if components:
+        payload["components"] = components
+    else:
+        # ボタンがない場合は空配列でクリア
+        payload["components"] = []
+
+    # Discord API に PATCH リクエスト
+    url = f"{DISCORD_API_BASE}/channels/{panel.channel_id}/messages/{panel.message_id}"
+    headers = {
+        "Authorization": f"Bot {settings.discord_token}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(verify=False) as client:
+            response = await client.patch(
+                url, json=payload, headers=headers, timeout=30
+            )
+
+            if response.status_code == 200:
+                logger.info(
+                    "Edited role panel %d message %s",
+                    panel.id,
+                    panel.message_id,
+                )
+                return True, None
+
+            # エラーレスポンスの処理
+            error_data = response.json() if response.content else {}
+            error_msg = error_data.get("message", f"HTTP {response.status_code}")
+
+            # 一般的なエラーコードの説明
+            if response.status_code == 403:
+                error_msg = "Bot にこのメッセージの編集権限がありません"
+            elif response.status_code == 404:
+                error_msg = "メッセージが見つかりません (削除された可能性があります)"
+            elif response.status_code == 401:
+                error_msg = "Bot トークンが無効です"
+
+            logger.error(
+                "Failed to edit role panel %d: %s (status=%d)",
+                panel.id,
+                error_msg,
+                response.status_code,
+            )
+            return False, error_msg
+
+    except httpx.TimeoutException:
+        logger.error("Timeout editing role panel %d", panel.id)
+        return False, "Discord API への接続がタイムアウトしました"
+    except httpx.RequestError as e:
+        logger.error("Request error editing role panel %d: %s", panel.id, e)
+        return False, f"Discord API への接続に失敗しました: {e}"
+
+
+async def clear_reactions_from_message(
+    channel_id: str,
+    message_id: str,
+) -> tuple[bool, str | None]:
+    """メッセージの全リアクションを削除する。
+
+    Args:
+        channel_id: チャンネル ID
+        message_id: メッセージ ID
+
+    Returns:
+        (success, error_message) のタプル
+    """
+    if not settings.discord_token:
+        return False, "Discord token is not configured"
+
+    headers = {
+        "Authorization": f"Bot {settings.discord_token}",
+    }
+
+    try:
+        async with httpx.AsyncClient(verify=False) as client:
+            url = (
+                f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}"
+                "/reactions"
+            )
+            response = await client.delete(url, headers=headers, timeout=10)
+
+            if response.status_code in (200, 204):
+                return True, None
+
+            error_data = response.json() if response.content else {}
+            error_msg = error_data.get("message", f"HTTP {response.status_code}")
+            logger.warning("Failed to clear reactions: %s", error_msg)
+            return False, error_msg
+
+    except httpx.TimeoutException:
+        return False, "Discord API への接続がタイムアウトしました"
+    except httpx.RequestError as e:
+        return False, f"Discord API への接続に失敗しました: {e}"
+
+
 async def add_reactions_to_message(
     channel_id: str,
     message_id: str,
     items: list[RolePanelItem],
+    clear_existing: bool = False,
 ) -> tuple[bool, str | None]:
     """メッセージにリアクションを追加する。
 
@@ -242,12 +371,22 @@ async def add_reactions_to_message(
         channel_id: チャンネル ID
         message_id: メッセージ ID
         items: リアクションを追加するロールアイテム
+        clear_existing: 既存リアクションをクリアするか
 
     Returns:
         (success, error_message) のタプル
     """
     if not settings.discord_token:
         return False, "Discord token is not configured"
+
+    # 既存リアクションをクリア
+    if clear_existing:
+        clear_success, clear_error = await clear_reactions_from_message(
+            channel_id, message_id
+        )
+        if not clear_success:
+            logger.warning("Failed to clear reactions: %s", clear_error)
+            # クリア失敗は継続 (403 権限不足の場合もある)
 
     if not items:
         return True, None

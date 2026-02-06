@@ -80,7 +80,8 @@
     "Keycap",
     "surrogateescape",
     "poolclass",
-    "isready"
+    "isready",
+    "Unposted"
   ],
   "ignorePaths": [
     ".venv",

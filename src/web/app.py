@@ -48,7 +48,11 @@ from src.database.models import (
     StickyMessage,
 )
 from src.utils import get_resource_lock, is_valid_emoji, normalize_emoji
-from src.web.discord_api import add_reactions_to_message, post_role_panel_to_discord
+from src.web.discord_api import (
+    add_reactions_to_message,
+    edit_role_panel_in_discord,
+    post_role_panel_to_discord,
+)
 from src.web.email_service import (
     send_email_change_verification,  # noqa: F401  # SMTP 設定時に使用
     # send_password_reset_email,  # SMTP 未設定のため未使用
@@ -2470,11 +2474,18 @@ async def rolepanel_post_to_discord(
     if not panel:
         return RedirectResponse(url="/rolepanels", status_code=302)
 
-    # 再投稿を許可 (新しいメッセージが作成され、message_id が更新される)
     items = sorted(panel.items, key=lambda x: x.position)
 
-    # Discord に投稿
-    success, message_id, error_msg = await post_role_panel_to_discord(panel, items)
+    # 既存メッセージがある場合は編集、なければ新規投稿
+    if panel.message_id:
+        # 既存メッセージを編集
+        success, error_msg = await edit_role_panel_in_discord(panel, items)
+        message_id = panel.message_id if success else None
+        action_text = "Updated"
+    else:
+        # 新規投稿
+        success, message_id, error_msg = await post_role_panel_to_discord(panel, items)
+        action_text = "Posted"
 
     if not success:
         error_encoded = (error_msg or "Unknown error").replace(" ", "+")
@@ -2483,19 +2494,25 @@ async def rolepanel_post_to_discord(
             status_code=302,
         )
 
-    # メッセージ ID を保存
-    panel.message_id = message_id
-    await db.commit()
+    # 新規投稿の場合はメッセージ ID を保存
+    if message_id and not panel.message_id:
+        panel.message_id = message_id
+        await db.commit()
 
-    # リアクション式の場合はリアクションを追加
-    if panel.panel_type == "reaction" and items and message_id:
+    # リアクション式の場合はリアクションを追加/更新
+    target_message_id = message_id or panel.message_id
+    if panel.panel_type == "reaction" and items and target_message_id:
+        # 編集時は既存リアクションをクリア
+        is_edit = action_text == "Updated"
         react_success, react_error = await add_reactions_to_message(
-            panel.channel_id, message_id, items
+            panel.channel_id,
+            target_message_id,
+            items,
+            clear_existing=is_edit,
         )
         if not react_success:
-            # リアクション追加失敗は警告のみ
             return RedirectResponse(
-                url=f"/rolepanels/{panel_id}?success=Posted+but+reactions+failed:+{react_error}",
+                url=f"/rolepanels/{panel_id}?success={action_text}+but+reactions+failed:+{react_error}",
                 status_code=302,
             )
 
@@ -2503,7 +2520,7 @@ async def rolepanel_post_to_discord(
     record_form_submit(user_email, path)
 
     return RedirectResponse(
-        url=f"/rolepanels/{panel_id}?success=Posted+to+Discord",
+        url=f"/rolepanels/{panel_id}?success={action_text}+to+Discord",
         status_code=302,
     )
 

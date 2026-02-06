@@ -1306,6 +1306,57 @@ async def delete_role_panels_by_guild(session: AsyncSession, guild_id: str) -> i
     return count
 
 
+async def delete_role_panels_by_channel(session: AsyncSession, channel_id: str) -> int:
+    """指定チャンネルの全ロールパネルを削除する。
+
+    チャンネルが削除されたときにクリーンアップとして使用。
+    カスケード削除により、関連する RolePanelItem も自動削除される。
+
+    Args:
+        session: DB セッション
+        channel_id: Discord チャンネルの ID
+
+    Returns:
+        削除したロールパネルの数
+    """
+    result = await session.execute(
+        select(RolePanel).where(RolePanel.channel_id == channel_id)
+    )
+    panels = list(result.scalars().all())
+    count = len(panels)
+    for panel in panels:
+        await session.delete(panel)
+    if count > 0:
+        await session.commit()
+    return count
+
+
+async def delete_role_panel_by_message_id(
+    session: AsyncSession, message_id: str
+) -> bool:
+    """指定メッセージIDのロールパネルを削除する。
+
+    パネルメッセージが削除されたときにクリーンアップとして使用。
+    カスケード削除により、関連する RolePanelItem も自動削除される。
+
+    Args:
+        session: DB セッション
+        message_id: Discord メッセージの ID
+
+    Returns:
+        削除した場合は True、パネルが存在しなかった場合は False
+    """
+    result = await session.execute(
+        select(RolePanel).where(RolePanel.message_id == message_id)
+    )
+    panel = result.scalar_one_or_none()
+    if panel:
+        await session.delete(panel)
+        await session.commit()
+        return True
+    return False
+
+
 # =============================================================================
 # RolePanelItem (ロールパネルアイテム) 操作
 # =============================================================================

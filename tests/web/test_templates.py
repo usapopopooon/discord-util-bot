@@ -14,6 +14,7 @@ from src.database.models import (
 )
 from src.web.templates import (
     _base,
+    _breadcrumb,
     _nav,
     bump_list_page,
     dashboard_page,
@@ -59,6 +60,89 @@ class TestBaseTemplate:
         """コンテンツが含まれる。"""
         result = _base("Test", "<div>Test Content</div>")
         assert "<div>Test Content</div>" in result
+
+
+# ===========================================================================
+# パンくずリスト
+# ===========================================================================
+
+
+class TestBreadcrumb:
+    """_breadcrumb 関数のテスト。"""
+
+    def test_uses_greater_than_separator(self) -> None:
+        """セパレーターに > を使用する。"""
+        result = _breadcrumb([("Dashboard", "/dashboard"), ("Page", None)])
+        assert "&gt;" in result
+        assert "/" not in result or "href=" in result  # URLの/は許容
+
+    def test_links_for_intermediate_items(self) -> None:
+        """中間の項目はリンクになる。"""
+        result = _breadcrumb([("Dashboard", "/dashboard"), ("Current", None)])
+        assert 'href="/dashboard"' in result
+        assert ">Dashboard</a>" in result
+
+    def test_current_page_not_linked(self) -> None:
+        """現在のページはリンクではない。"""
+        result = _breadcrumb([("Dashboard", "/dashboard"), ("Current", None)])
+        assert "<span" in result and "Current" in result
+
+    def test_escapes_labels(self) -> None:
+        """ラベルがエスケープされる。"""
+        result = _breadcrumb([("<script>", None)])
+        assert "&lt;script&gt;" in result
+        assert "<script>" not in result
+
+    def test_three_level_breadcrumb(self) -> None:
+        """3階層のパンくずリスト。"""
+        result = _breadcrumb(
+            [
+                ("Dashboard", "/dashboard"),
+                ("Settings", "/settings"),
+                ("Current", None),
+            ]
+        )
+        assert 'href="/dashboard"' in result
+        assert 'href="/settings"' in result
+        assert "Current" in result
+        # 2つのセパレーター
+        assert result.count("&gt;") == 2
+
+
+class TestListPageBreadcrumbs:
+    """リストページのパンくずリストテスト。"""
+
+    def test_role_panels_list_has_breadcrumb(self) -> None:
+        """Role Panels リストページにパンくずリストがある。"""
+        result = role_panels_list_page([], {})
+        assert 'href="/dashboard"' in result
+        assert "Dashboard" in result
+        assert "Role Panels" in result
+        assert "&gt;" in result
+
+    def test_lobbies_list_has_breadcrumb(self) -> None:
+        """Lobbies リストページにパンくずリストがある。"""
+        result = lobbies_list_page([])
+        assert 'href="/dashboard"' in result
+        assert "Dashboard" in result
+        assert "Lobbies" in result
+        assert "&gt;" in result
+
+    def test_sticky_list_has_breadcrumb(self) -> None:
+        """Sticky Messages リストページにパンくずリストがある。"""
+        result = sticky_list_page([])
+        assert 'href="/dashboard"' in result
+        assert "Dashboard" in result
+        assert "Sticky Messages" in result
+        assert "&gt;" in result
+
+    def test_bump_list_has_breadcrumb(self) -> None:
+        """Bump Reminders リストページにパンくずリストがある。"""
+        result = bump_list_page([], [])
+        assert 'href="/dashboard"' in result
+        assert "Dashboard" in result
+        assert "Bump Reminders" in result
+        assert "&gt;" in result
 
 
 # ===========================================================================
@@ -1315,11 +1399,12 @@ class TestMaintenancePage:
         assert "Refresh Stats" in result
         assert "/settings/maintenance/refresh" in result
 
-    def test_contains_back_link(self) -> None:
-        """設定へ戻るリンクが含まれる。"""
+    def test_contains_breadcrumb_with_settings_link(self) -> None:
+        """パンくずリストに Settings へのリンクが含まれる。"""
         result = maintenance_page(0, 0, 0, 0, 0, 0, 0, 0, 0)
-        assert "Back to Settings" in result
         assert 'href="/settings"' in result
+        assert "Settings" in result
+        assert "Database Maintenance" in result
 
     def test_contains_csrf_token(self) -> None:
         """CSRFトークンが含まれる。"""

@@ -35,18 +35,56 @@ def _base(title: str, content: str) -> str:
 </html>"""
 
 
-def _nav(title: str, show_dashboard_link: bool = True) -> str:
-    """Navigation bar component."""
-    dashboard_link = ""
-    if show_dashboard_link:
-        dashboard_link = (
+def _breadcrumb(crumbs: list[tuple[str, str | None]]) -> str:
+    """パンくずリストを生成する.
+
+    Args:
+        crumbs: (label, url) のリスト。最後の要素は現在のページ (url=None)。
+
+    Returns:
+        パンくずリストの HTML
+    """
+    items = []
+    for i, (label, url) in enumerate(crumbs):
+        if url:
+            items.append(
+                f'<a href="{escape(url)}" class="text-gray-400 hover:text-white">'
+                f"{escape(label)}</a>"
+            )
+        else:
+            # 現在のページ (最後の要素)
+            items.append(f'<span class="text-gray-300">{escape(label)}</span>')
+        if i < len(crumbs) - 1:
+            items.append('<span class="text-gray-600">&gt;</span>')
+    return " ".join(items)
+
+
+def _nav(
+    title: str,
+    show_dashboard_link: bool = True,
+    breadcrumbs: list[tuple[str, str | None]] | None = None,
+) -> str:
+    """Navigation bar component.
+
+    Args:
+        title: ページタイトル (h1)
+        show_dashboard_link: Dashboard リンクを表示するか (breadcrumbs がある場合は無視)
+        breadcrumbs: パンくずリスト。指定時は show_dashboard_link は無視される。
+    """
+    nav_content = ""
+    if breadcrumbs:
+        nav_content = _breadcrumb(breadcrumbs)
+    elif show_dashboard_link:
+        nav_content = (
             '<a href="/dashboard" class="text-gray-400 hover:text-white">'
             "&larr; Dashboard</a>"
         )
     return f"""
     <nav class="flex justify-between items-center mb-8">
         <div class="flex items-center gap-4">
-            {dashboard_link}
+            <div class="flex items-center gap-2 text-sm">
+                {nav_content}
+            </div>
             <h1 class="text-2xl font-bold">{escape(title)}</h1>
         </div>
         <a href="/logout"
@@ -387,12 +425,18 @@ def maintenance_page(
 
     content = f"""
     <div class="p-6">
-        {_nav("Database Maintenance", show_dashboard_link=True)}
+        {
+        _nav(
+            "Database Maintenance",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Settings", "/settings"),
+                ("Database Maintenance", None),
+            ],
+        )
+    }
         <div class="max-w-2xl">
             {message_html}
-            <div class="mb-6 text-gray-400 text-sm">
-                <a href="/settings" class="hover:text-white">&larr; Back to Settings</a>
-            </div>
             <div class="bg-gray-800 p-6 rounded-lg mb-6">
                 <h2 class="text-lg font-semibold mb-4">Database Statistics</h2>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
@@ -426,7 +470,9 @@ def maintenance_page(
                     </div>
                 </div>
                 <div class="mt-4 text-center">
-                    <p class="text-gray-400">Active Guilds: <span class="text-white font-semibold">{guild_count}</span></p>
+                    <p class="text-gray-400">Active Guilds: <span class="text-white font-semibold">{
+        guild_count
+    }</span></p>
                 </div>
             </div>
 
@@ -451,7 +497,11 @@ def maintenance_page(
                             class="bg-red-600 hover:bg-red-700 px-6 py-2 rounded font-semibold
                                    transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             {"disabled" if total_orphaned == 0 else ""}>
-                        {f"Cleanup {total_orphaned} Records" if total_orphaned > 0 else "No Orphaned Data"}
+                        {
+        f"Cleanup {total_orphaned} Records"
+        if total_orphaned > 0
+        else "No Orphaned Data"
+    }
                     </button>
                 </div>
             </div>
@@ -466,10 +516,26 @@ def maintenance_page(
                 The following orphaned data will be permanently deleted:
             </p>
             <div class="bg-gray-700 rounded p-4 mb-4 space-y-2 text-sm">
-                {"" if lobby_orphaned == 0 else f'<div class="flex justify-between"><span>Lobbies:</span><span class="text-yellow-400">{lobby_orphaned}</span></div>'}
-                {"" if bump_orphaned == 0 else f'<div class="flex justify-between"><span>Bump Configs:</span><span class="text-yellow-400">{bump_orphaned}</span></div>'}
-                {"" if sticky_orphaned == 0 else f'<div class="flex justify-between"><span>Stickies:</span><span class="text-yellow-400">{sticky_orphaned}</span></div>'}
-                {"" if panel_orphaned == 0 else f'<div class="flex justify-between"><span>Role Panels:</span><span class="text-yellow-400">{panel_orphaned}</span></div>'}
+                {
+        ""
+        if lobby_orphaned == 0
+        else f'<div class="flex justify-between"><span>Lobbies:</span><span class="text-yellow-400">{lobby_orphaned}</span></div>'
+    }
+                {
+        ""
+        if bump_orphaned == 0
+        else f'<div class="flex justify-between"><span>Bump Configs:</span><span class="text-yellow-400">{bump_orphaned}</span></div>'
+    }
+                {
+        ""
+        if sticky_orphaned == 0
+        else f'<div class="flex justify-between"><span>Stickies:</span><span class="text-yellow-400">{sticky_orphaned}</span></div>'
+    }
+                {
+        ""
+        if panel_orphaned == 0
+        else f'<div class="flex justify-between"><span>Role Panels:</span><span class="text-yellow-400">{panel_orphaned}</span></div>'
+    }
                 <div class="border-t border-gray-600 pt-2 mt-2 flex justify-between font-semibold">
                     <span>Total:</span>
                     <span class="text-red-400">{total_orphaned}</span>
@@ -576,7 +642,16 @@ def email_change_page(
 
     content = f"""
     <div class="p-6">
-        {_nav("Change Email", show_dashboard_link=True)}
+        {
+        _nav(
+            "Change Email",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Settings", "/settings"),
+                ("Change Email", None),
+            ],
+        )
+    }
         <div class="max-w-md">
             <div class="bg-gray-800 p-6 rounded-lg">
                 {message_html}
@@ -612,11 +687,6 @@ def email_change_page(
                 <p class="mt-4 text-gray-500 text-sm">
                     A verification email will be sent to the new address.
                 </p>
-                <div class="mt-4">
-                    <a href="/settings" class="text-gray-400 hover:text-white text-sm">
-                        &larr; Back to settings
-                    </a>
-                </div>
             </div>
         </div>
     </div>
@@ -646,7 +716,16 @@ def password_change_page(
 
     content = f"""
     <div class="p-6">
-        {_nav("Change Password", show_dashboard_link=True)}
+        {
+        _nav(
+            "Change Password",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Settings", "/settings"),
+                ("Change Password", None),
+            ],
+        )
+    }
         <div class="max-w-md">
             <div class="bg-gray-800 p-6 rounded-lg">
                 {message_html}
@@ -693,11 +772,6 @@ def password_change_page(
                 <p class="mt-4 text-gray-500 text-sm">
                     You will be logged out after changing your password.
                 </p>
-                <div class="mt-4">
-                    <a href="/settings" class="text-gray-400 hover:text-white text-sm">
-                        &larr; Back to settings
-                    </a>
-                </div>
             </div>
         </div>
     </div>
@@ -938,7 +1012,15 @@ def lobbies_list_page(
 
     content = f"""
     <div class="p-6">
-        {_nav("Lobbies")}
+        {
+        _nav(
+            "Lobbies",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Lobbies", None),
+            ],
+        )
+    }
         <div class="bg-gray-800 rounded-lg overflow-hidden">
             <table class="w-full">
                 <thead class="bg-gray-700">
@@ -1071,7 +1153,15 @@ def sticky_list_page(
 
     content = f"""
     <div class="p-6">
-        {_nav("Sticky Messages")}
+        {
+        _nav(
+            "Sticky Messages",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Sticky Messages", None),
+            ],
+        )
+    }
         <div class="bg-gray-800 rounded-lg overflow-hidden overflow-x-auto">
             <table class="w-full">
                 <thead class="bg-gray-700">
@@ -1235,7 +1325,15 @@ def bump_list_page(
 
     content = f"""
     <div class="p-6">
-        {_nav("Bump Reminders")}
+        {
+        _nav(
+            "Bump Reminders",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Bump Reminders", None),
+            ],
+        )
+    }
 
         <h2 class="text-xl font-semibold mb-4">Bump Configs</h2>
         <div class="bg-gray-800 rounded-lg overflow-hidden mb-8">
@@ -1423,7 +1521,15 @@ def role_panels_list_page(
 
     content = f"""
     <div class="p-6">
-        {_nav("Role Panels")}
+        {
+        _nav(
+            "Role Panels",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Role Panels", None),
+            ],
+        )
+    }
 
         <div class="flex justify-end mb-4">
             <a href="/rolepanels/new"
@@ -1544,7 +1650,16 @@ def role_panel_create_page(
 
     content = f"""
     <div class="p-6">
-        {_nav("Create Role Panel")}
+        {
+        _nav(
+            "Create Role Panel",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Role Panels", "/rolepanels"),
+                ("Create", None),
+            ],
+        )
+    }
         <div class="max-w-2xl mx-auto">
             <div class="bg-gray-800 p-6 rounded-lg">
                 {message_html}
@@ -1731,11 +1846,6 @@ def role_panel_create_page(
                 <p class="mt-4 text-gray-500 text-sm">
                     The panel will be created with the roles you add above.
                 </p>
-                <div class="mt-4">
-                    <a href="/rolepanels" class="text-gray-400 hover:text-white text-sm">
-                        &larr; Back to role panels
-                    </a>
-                </div>
             </div>
         </div>
     </div>
@@ -2194,7 +2304,16 @@ def role_panel_detail_page(
 
     content = f"""
     <div class="p-6">
-        {_nav(f"Panel: {escape(panel.title)}")}
+        {
+        _nav(
+            f"Panel: {escape(panel.title)}",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Role Panels", "/rolepanels"),
+                (escape(panel.title), None),
+            ],
+        )
+    }
 
         {message_html}
 
@@ -2454,12 +2573,6 @@ def role_panel_detail_page(
         if discord_roles
         else '<p class="mt-2 text-red-400 text-sm">No roles found for this guild. Please sync roles by starting the Bot first.</p>'
     }
-        </div>
-
-        <div class="mt-6">
-            <a href="/rolepanels" class="text-gray-400 hover:text-white text-sm">
-                &larr; Back to role panels
-            </a>
         </div>
     </div>
     {
