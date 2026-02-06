@@ -1575,6 +1575,7 @@ def role_panel_create_page(
     title: str = "",
     description: str = "",
     use_embed: bool = True,
+    color: str = "",
     remove_reaction: bool = False,
     guilds_map: dict[str, str] | None = None,
     channels_map: dict[str, list[tuple[str, str]]] | None = None,
@@ -1585,6 +1586,7 @@ def role_panel_create_page(
 
     Args:
         use_embed: メッセージ形式 (True: Embed, False: テキスト)
+        color: Embed のカラーコード (例: "#3498DB")
         remove_reaction: リアクション自動削除フラグ (リアクション式のみ)
         guilds_map: ギルドID -> ギルド名 のマッピング
         channels_map: ギルドID -> [(channel_id, channel_name), ...] のマッピング
@@ -1754,6 +1756,40 @@ def role_panel_create_page(
                         </div>
                     </div>
 
+                    <!-- Embed Color option (embed only) -->
+                    <div id="embedColorOption" class="mb-4{
+        " hidden" if not use_embed else ""
+    }">
+                        <label for="embed_color" class="block text-sm font-medium mb-2">
+                            Embed Color
+                        </label>
+                        <div class="flex items-center gap-3">
+                            <input
+                                type="color"
+                                id="embed_color"
+                                name="color"
+                                value="{color if color else "#3498DB"}"
+                                class="w-12 h-10 p-1 bg-gray-700 border border-gray-600 rounded
+                                       cursor-pointer focus:outline-none focus:ring-2
+                                       focus:ring-blue-500"
+                            >
+                            <input
+                                type="text"
+                                id="embed_color_text"
+                                value="{color if color else "#3498DB"}"
+                                maxlength="7"
+                                pattern="#[0-9A-Fa-f]{{6}}"
+                                class="w-28 px-3 py-2 bg-gray-700 border border-gray-600 rounded
+                                       focus:outline-none focus:ring-2 focus:ring-blue-500
+                                       text-gray-100 font-mono text-sm"
+                                placeholder="#3498DB"
+                            >
+                        </div>
+                        <p class="text-gray-500 text-xs mt-1">
+                            Select the color for the embed sidebar
+                        </p>
+                    </div>
+
                     <!-- Remove Reaction option (reaction type only) -->
                     <div id="removeReactionOption" class="mb-4 hidden">
                         <label class="flex items-center gap-2 cursor-pointer">
@@ -1897,6 +1933,35 @@ def role_panel_create_page(
                 channelSelect.value = initialChannelId;
             }}
         }}
+
+        // --- Embed Color Picker ---
+        const embedColorOption = document.getElementById('embedColorOption');
+        const embedColorPicker = document.getElementById('embed_color');
+        const embedColorText = document.getElementById('embed_color_text');
+        const useEmbedRadios = document.querySelectorAll('input[name="use_embed"]');
+
+        // カラーピッカーとテキスト入力を同期
+        embedColorPicker.addEventListener('input', function() {{
+            embedColorText.value = this.value.toUpperCase();
+        }});
+
+        embedColorText.addEventListener('input', function() {{
+            // 有効なカラーコードかチェック
+            if (/^#[0-9A-Fa-f]{{6}}$/.test(this.value)) {{
+                embedColorPicker.value = this.value;
+            }}
+        }});
+
+        // Embed/Text 選択でカラーピッカーの表示を切り替え
+        useEmbedRadios.forEach(function(radio) {{
+            radio.addEventListener('change', function() {{
+                if (this.value === '1') {{
+                    embedColorOption.classList.remove('hidden');
+                }} else {{
+                    embedColorOption.classList.add('hidden');
+                }}
+            }});
+        }});
 
         // --- Role Items Management ---
         const discordRoles = {discord_roles_json};

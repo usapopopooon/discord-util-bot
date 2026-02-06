@@ -3382,6 +3382,126 @@ class TestRolePanelCreateRoutes:
         assert panel is not None
         assert panel.use_embed is False
 
+    async def test_create_with_color(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """color を指定してパネルを作成できる。"""
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "button",
+            "title": "Colored Panel",
+            "use_embed": "1",
+            "color": "#FF5733",
+            "item_emoji[]": "🎨",
+            "item_role_id[]": "111222333444555666",
+            "item_label[]": "Artist",
+            "item_position[]": "0",
+        }
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data=form_data,
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Colored Panel")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is not None
+        assert panel.color == 0xFF5733  # 16724787 in decimal
+
+    async def test_create_with_color_without_hash(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """color を # なしで指定しても正しく保存される。"""
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "button",
+            "title": "Colored Panel No Hash",
+            "use_embed": "1",
+            "color": "00FF00",
+            "item_emoji[]": "🌿",
+            "item_role_id[]": "111222333444555666",
+            "item_label[]": "Nature",
+            "item_position[]": "0",
+        }
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data=form_data,
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Colored Panel No Hash")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is not None
+        assert panel.color == 0x00FF00
+
+    async def test_create_with_color_ignored_when_text_format(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """use_embed=0 の場合、color は無視される (None になる)。"""
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "button",
+            "title": "Text Panel With Color",
+            "use_embed": "0",
+            "color": "#FF0000",
+            "item_emoji[]": "📝",
+            "item_role_id[]": "111222333444555666",
+            "item_label[]": "Writer",
+            "item_position[]": "0",
+        }
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data=form_data,
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Text Panel With Color")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is not None
+        assert panel.color is None
+
+    async def test_create_with_invalid_color_uses_none(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """無効な color はNoneになる。"""
+        form_data = {
+            "guild_id": "123456789012345678",
+            "channel_id": "987654321098765432",
+            "panel_type": "button",
+            "title": "Invalid Color Panel",
+            "use_embed": "1",
+            "color": "invalid",
+            "item_emoji[]": "❓",
+            "item_role_id[]": "111222333444555666",
+            "item_label[]": "Unknown",
+            "item_position[]": "0",
+        }
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data=form_data,
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(
+            select(RolePanel).where(RolePanel.title == "Invalid Color Panel")
+        )
+        panel = result.scalar_one_or_none()
+        assert panel is not None
+        assert panel.color is None
+
     async def test_create_missing_guild_id(
         self, authenticated_client: AsyncClient
     ) -> None:

@@ -130,8 +130,11 @@ PostgreSQL と Bot が一緒に起動する。
 | `make setup` | venv 作成 + 依存関係インストール |
 | `make run` | Bot を起動 |
 | `make test` | テスト実行 |
+| `make test-db` | PostgreSQL コンテナを使ったテスト実行 |
 | `make lint` | Ruff リンター実行 |
 | `make typecheck` | mypy 型チェック実行 |
+| `make spellcheck` | cspell スペルチェック実行 |
+| `make ci` | CI と同じ全チェックを実行 |
 | `make clean` | venv とキャッシュを削除 |
 
 ### テスト

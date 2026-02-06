@@ -6,7 +6,7 @@ import re
 import secrets
 import time
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, cast
 
@@ -2094,6 +2094,7 @@ async def rolepanel_create_post(
     title: Annotated[str, Form()] = "",
     description: Annotated[str, Form()] = "",
     use_embed: Annotated[str, Form()] = "1",
+    color: Annotated[str, Form()] = "",
     remove_reaction: Annotated[str, Form()] = "",
     csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
@@ -2145,6 +2146,16 @@ async def rolepanel_create_post(
     # Convert use_embed to boolean
     use_embed_bool = use_embed == "1"
 
+    # Convert color to integer (hex string -> int)
+    color_int: int | None = None
+    color = color.strip()
+    if color and use_embed_bool:
+        # Remove # prefix if present
+        color_hex = color.lstrip("#")
+        if len(color_hex) == 6:
+            with suppress(ValueError):
+                color_int = int(color_hex, 16)
+
     # Convert remove_reaction to boolean (only effective for reaction panels)
     remove_reaction_bool = remove_reaction == "1" and panel_type == "reaction"
 
@@ -2159,6 +2170,7 @@ async def rolepanel_create_post(
                 title=title,
                 description=description,
                 use_embed=use_embed_bool,
+                color=color,
                 remove_reaction=remove_reaction_bool,
                 guilds_map=guilds_map,
                 channels_map=channels_map,
@@ -2283,6 +2295,7 @@ async def rolepanel_create_post(
             panel_type=panel_type,
             title=title,
             description=description if description else None,
+            color=color_int,
             use_embed=use_embed_bool,
             remove_reaction=remove_reaction_bool,
         )

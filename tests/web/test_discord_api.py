@@ -71,6 +71,34 @@ class TestCreateEmbedPayload:
 
         assert result["color"] == 0x3498DB  # Blue
 
+    def test_embed_color_zero_uses_default(self) -> None:
+        """color=0 の場合はデフォルトの青を使用 (0 は黒で、意図しない可能性が高い)。"""
+        panel = RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+            color=0,
+        )
+        result = _create_embed_payload(panel, [])
+
+        assert result["color"] == 0x3498DB  # Blue default
+
+    def test_embed_custom_color_preserved(self) -> None:
+        """カスタムカラーが正しく保持される。"""
+        panel = RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+            color=0xFF5733,  # Orange
+        )
+        result = _create_embed_payload(panel, [])
+
+        assert result["color"] == 0xFF5733
+
     def test_embed_no_fields(self) -> None:
         """Embed にはフィールドを追加しない (タイトルと説明のみ)。"""
         panel = RolePanel(

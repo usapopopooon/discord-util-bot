@@ -903,6 +903,47 @@ class TestRolePanelCreatePage:
         assert "updateSubmitButton();" in result
         assert "updateLabelFieldsVisibility();" in result
 
+    def test_contains_color_field(self) -> None:
+        """Embed Color フィールドが含まれる。"""
+        result = role_panel_create_page()
+        assert 'name="color"' in result
+        assert 'id="embed_color"' in result
+        assert 'type="color"' in result
+
+    def test_contains_color_text_input(self) -> None:
+        """Embed Color のテキスト入力フィールドが含まれる。"""
+        result = role_panel_create_page()
+        assert 'id="embed_color_text"' in result
+
+    def test_color_default_value(self) -> None:
+        """色のデフォルト値が設定されている。"""
+        result = role_panel_create_page()
+        # デフォルトカラー #3498DB (Discord Blue)
+        assert "#3498DB" in result
+
+    def test_color_value_preserved(self) -> None:
+        """入力した色が保持される。"""
+        result = role_panel_create_page(color="#FF5733")
+        assert "#FF5733" in result
+
+    def test_color_option_hidden_when_text_selected(self) -> None:
+        """use_embed=False の場合、カラーオプションが非表示になる。"""
+        result = role_panel_create_page(use_embed=False)
+        # hidden クラスが含まれる
+        assert 'id="embedColorOption" class="mb-4 hidden"' in result
+
+    def test_color_option_visible_when_embed_selected(self) -> None:
+        """use_embed=True の場合、カラーオプションが表示される。"""
+        result = role_panel_create_page(use_embed=True)
+        # hidden クラスが含まれない
+        assert 'id="embedColorOption" class="mb-4"' in result
+
+    def test_color_picker_sync_javascript(self) -> None:
+        """カラーピッカーとテキスト入力の同期 JavaScript が含まれる。"""
+        result = role_panel_create_page()
+        assert "embedColorPicker.addEventListener" in result
+        assert "embedColorText.addEventListener" in result
+
 
 class TestRolePanelDetailPage:
     """role_panel_detail_page テンプレートのテスト。"""

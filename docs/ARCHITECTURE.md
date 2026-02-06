@@ -49,6 +49,7 @@ src/
 │   └── role_panel_view.py # ロールパネル UI (View/Button/Modal)
 └── web/
     ├── app.py           # FastAPI Web 管理画面
+    ├── discord_api.py   # Discord REST API クライアント (パネル投稿等)
     ├── email_service.py # メール送信サービス (SMTP)
     └── templates.py     # HTML テンプレート
 
@@ -71,6 +72,7 @@ tests/
 │   └── test_role_panel_view.py
 └── web/
     ├── test_app.py
+    ├── test_discord_api.py # Discord REST API クライアントのテスト
     ├── test_email_service.py
     ├── test_lifespan.py # FastAPI lifespan のテスト
     └── test_templates.py # テンプレート関数のテスト
@@ -344,16 +346,23 @@ async def _schedule_repost(channel_id: str, delay: float):
     _pending_tasks[channel_id] = asyncio.create_task(_delayed_repost(...))
 ```
 
-### 4. ロールパネル機能 (`role_panel.py` + `role_panel_view.py`)
+### 4. ロールパネル機能 (`role_panel.py` + `role_panel_view.py` + `discord_api.py`)
 
 #### 概要
 ボタンまたはリアクションでロールを付与/解除できるパネルを作成する機能。
+Web 管理画面からパネルを作成し、Discord に投稿・更新できる。
 
 #### パネルタイプ
 | タイプ | 説明 |
 |--------|------|
 | button | ボタンをクリックしてロールをトグル |
 | reaction | 絵文字リアクションでロールをトグル |
+
+#### メッセージ形式
+| 形式 | 説明 |
+|------|------|
+| Embed | カラー付きの埋め込みメッセージ (カスタムカラー設定可能) |
+| Text | プレーンテキストメッセージ |
 
 #### フロー (ボタン式)
 1. `/rolepanel create button` → Modal でタイトル・説明入力 → Embed 送信
@@ -364,6 +373,28 @@ async def _schedule_repost(channel_id: str, delay: float):
 1. `/rolepanel create reaction` → Modal でタイトル・説明入力 → Embed 送信
 2. `/rolepanel add @role 🎮` → パネルにリアクション追加 (Bot が絵文字を付ける)
 3. ユーザーがリアクション → ロール付与、リアクション外す → 解除
+
+#### Web 管理画面からの作成フロー
+1. `/rolepanels/new` → フォームでサーバー・チャンネル・タイトル・色等を入力
+2. ロールアイテムを追加 (ドラッグ&ドロップで並べ替え可能)
+3. パネルを作成 → DB に保存
+4. 詳細ページから「Post to Discord」ボタンで Discord に投稿
+5. `discord_api.py` が Discord REST API を直接呼び出してメッセージ送信
+
+#### Discord REST API クライアント (`discord_api.py`)
+Bot と Web アプリが別プロセスで動作するため、Web 画面からの投稿/更新は
+Discord REST API を直接使用する。
+
+```python
+async def post_role_panel_to_discord(panel, items) -> tuple[bool, str | None, str | None]:
+    """パネルを Discord に投稿 (新規)"""
+
+async def edit_role_panel_in_discord(panel, items) -> tuple[bool, str | None]:
+    """既存のパネルメッセージを編集"""
+
+async def add_reactions_to_message(channel_id, message_id, items) -> tuple[bool, str | None]:
+    """リアクション式パネルに絵文字リアクションを追加"""
+```
 
 #### 永続 View 設計
 ```python
@@ -437,8 +468,10 @@ Bot オーナー/管理者用のメンテナンスコマンド。
 | `/bump` | Bump 設定一覧 (サーバー名/チャンネル名表示) |
 | `/sticky` | Sticky メッセージ一覧 (サーバー名/チャンネル名表示) |
 | `/rolepanels` | ロールパネル一覧 (サーバー名/チャンネル名表示) |
-| `/rolepanels/new` | ロールパネル作成 |
-| `/rolepanels/{id}` | ロールパネル詳細・編集 |
+| `/rolepanels/new` | ロールパネル作成 (カラー選択・ロールアイテム設定) |
+| `/rolepanels/{id}` | ロールパネル詳細・編集・Discord 投稿/更新 |
+| `/rolepanels/{id}/post` | パネルを Discord に投稿 (POST) |
+| `/rolepanels/{id}/items/{item_id}/delete` | ロールアイテム削除 |
 | `/rolepanels/{id}/delete` | ロールパネル削除 |
 | `/settings` | 設定画面 (パスワード変更等) |
 | `/settings/maintenance` | メンテナンス画面 (統計/クリーンアップ) |
