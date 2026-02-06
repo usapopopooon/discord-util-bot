@@ -1082,6 +1082,29 @@ class TestRolePanelDetailPage:
         assert "Format:" in result
         assert "Text" in result
 
+    def test_unposted_panel_shows_post_button(self, button_panel: RolePanel) -> None:
+        """未投稿パネルは「Post to Discord」ボタンが表示される。"""
+        button_panel.message_id = None
+        result = role_panel_detail_page(button_panel, [])
+        assert "Post to Discord" in result
+        assert "Update in Discord" not in result
+        assert "The panel will be posted to the channel above" in result
+
+    def test_posted_panel_shows_update_button(self, button_panel: RolePanel) -> None:
+        """投稿済みパネルは「Update in Discord」ボタンが表示される。"""
+        button_panel.message_id = "111111111111111111"
+        result = role_panel_detail_page(button_panel, [])
+        assert "Update in Discord" in result
+        assert ">Post to Discord<" not in result  # ボタンのテキストとして出現しない
+        assert "Updates the existing message and reactions" in result
+
+    def test_posted_panel_shows_posted_indicator(self, button_panel: RolePanel) -> None:
+        """投稿済みパネルには「Posted to Discord」インジケーターが表示される。"""
+        button_panel.message_id = "111111111111111111"
+        result = role_panel_detail_page(button_panel, [])
+        assert "Posted to Discord" in result
+        assert "Message ID: 111111111111111111" in result
+
 
 class TestRolePanelCreatePageEdgeCases:
     """role_panel_create_page のエッジケーステスト。"""

@@ -2417,18 +2417,20 @@ def role_panel_detail_page(
         else ""
     }
                 <form method="POST" action="/rolepanels/{panel.id}/post"
-                      onsubmit="return confirm('Post this panel to Discord?');">
+                      onsubmit="return confirm('{
+        "Update this panel in Discord?"
+        if panel.message_id
+        else "Post this panel to Discord?"
+    }');">
                     {_csrf_field(csrf_token)}
                     <button type="submit"
                             class="bg-green-600 hover:bg-green-700 px-6 py-2 rounded font-semibold
                                    transition-colors">
-                        {
-        "Re-post to Discord" if panel.message_id else "Post to Discord"
-    }
+                        {"Update in Discord" if panel.message_id else "Post to Discord"}
                     </button>
                     <span class="ml-4 text-gray-400 text-sm">
                         {
-        "A new message will be created."
+        "Updates the existing message and reactions."
         if panel.message_id
         else "The panel will be posted to the channel above."
     }
