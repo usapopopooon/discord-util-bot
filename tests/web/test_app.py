@@ -4058,12 +4058,12 @@ class TestRolePanelDetailPageWithDiscordRoles:
         # ロール名が表示される
         assert "@Gamer Role" in response.text
 
-    async def test_detail_page_shows_role_select(
+    async def test_detail_page_shows_role_autocomplete(
         self,
         authenticated_client: AsyncClient,
         db_session: AsyncSession,
     ) -> None:
-        """パネル詳細ページでロール選択セレクトボックスが表示される。"""
+        """パネル詳細ページでロール選択オートコンプリートが表示される。"""
         # パネルを作成
         panel = RolePanel(
             guild_id="123456789012345678",
@@ -4087,9 +4087,10 @@ class TestRolePanelDetailPageWithDiscordRoles:
 
         response = await authenticated_client.get(f"/rolepanels/{panel.id}")
         assert response.status_code == 200
-        # セレクトボックスにロールが表示される
-        assert "@Available Role" in response.text
-        assert 'id="role_select"' in response.text
+        # オートコンプリート用 JSON 配列にロールが含まれる
+        assert '"name": "Available Role"' in response.text
+        assert 'id="role_input"' in response.text
+        assert "role-autocomplete" in response.text
 
     async def test_detail_page_disables_add_button_when_no_roles(
         self,
@@ -4176,7 +4177,10 @@ class TestRolePanelDetailPageWithDiscordRoles:
 
         response = await authenticated_client.get(f"/rolepanels/{panel.id}")
         assert response.status_code == 200
-        assert "@Default Color Role" in response.text
+        # オートコンプリート用 JSON 配列にロールが含まれる
+        assert '"name": "Default Color Role"' in response.text
+        # color=0 も正しく含まれる
+        assert '"color": 0' in response.text
 
 
 class TestGetDiscordRolesByGuildEdgeCases:

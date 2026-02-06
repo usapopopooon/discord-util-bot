@@ -944,6 +944,44 @@ class TestRolePanelCreatePage:
         assert "embedColorPicker.addEventListener" in result
         assert "embedColorText.addEventListener" in result
 
+    def test_role_autocomplete_input_field(self) -> None:
+        """ロール選択がオートコンプリート用のテキスト入力として生成される。"""
+        result = role_panel_create_page()
+        assert "role-autocomplete" in result
+        assert "role-input" in result
+        assert 'placeholder="Type to search roles..."' in result
+
+    def test_role_autocomplete_dropdown_container(self) -> None:
+        """オートコンプリートのドロップダウンコンテナが含まれる。"""
+        result = role_panel_create_page()
+        assert "role-dropdown" in result
+        assert "max-h-48" in result  # ドロップダウンの最大高さ
+
+    def test_role_autocomplete_javascript_functions(self) -> None:
+        """オートコンプリート用の JavaScript 関数が含まれる。"""
+        result = role_panel_create_page()
+        assert "setupRoleAutocomplete" in result
+        assert "showDropdown" in result
+        assert "hideDropdown" in result
+
+    def test_role_autocomplete_filter_functionality(self) -> None:
+        """オートコンプリートのフィルタリング機能が含まれる。"""
+        result = role_panel_create_page()
+        assert "filterLower" in result
+        assert "r.name.toLowerCase().includes(filterLower)" in result
+
+    def test_role_autocomplete_escape_html_function(self) -> None:
+        """HTML エスケープ関数が含まれる。"""
+        result = role_panel_create_page()
+        assert "function escapeHtml" in result
+        assert "textContent" in result
+
+    def test_role_autocomplete_role_option_class(self) -> None:
+        """オートコンプリートのオプションに role-option クラスが使用される。"""
+        result = role_panel_create_page()
+        assert "role-option" in result
+        assert "hover:bg-gray-600" in result
+
 
 class TestRolePanelDetailPage:
     """role_panel_detail_page テンプレートのテスト。"""
@@ -1021,15 +1059,19 @@ class TestRolePanelDetailPage:
         # Label フィールドが存在しないことを確認
         assert "Label (for buttons)" not in result
 
-    def test_discord_roles_select_rendered(self, button_panel: RolePanel) -> None:
-        """Discord ロールがセレクトボックスに表示される。"""
+    def test_discord_roles_autocomplete_rendered(self, button_panel: RolePanel) -> None:
+        """Discord ロールがオートコンプリート用の JSON 配列に含まれる。"""
         discord_roles = [
             ("456", "Gamer", 0xFF0000),
             ("789", "Member", 0x00FF00),
         ]
         result = role_panel_detail_page(button_panel, [], discord_roles=discord_roles)
-        assert "@Gamer" in result
-        assert "@Member" in result
+        # ロール名が JavaScript 用 JSON 配列に含まれていることを確認
+        assert '"name": "Gamer"' in result
+        assert '"name": "Member"' in result
+        # オートコンプリート用の入力フィールドが存在することを確認
+        assert "role-autocomplete" in result
+        assert 'placeholder="Type to search roles..."' in result
 
     def test_no_roles_shows_warning(self, button_panel: RolePanel) -> None:
         """ロールがない場合に警告が表示される。"""

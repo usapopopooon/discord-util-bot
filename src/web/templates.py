@@ -19,6 +19,14 @@ def _csrf_field(csrf_token: str) -> str:
     return f'<input type="hidden" name="csrf_token" value="{escape(csrf_token)}">'
 
 
+def _roles_to_js_array(roles: list[tuple[str, str, int]]) -> str:
+    """Discord ロールリストを JavaScript 配列文字列に変換する."""
+    import json
+
+    js_roles = [{"id": r[0], "name": r[1], "color": r[2]} for r in roles]
+    return json.dumps(js_roles)
+
+
 def _base(title: str, content: str) -> str:
     """Base HTML template with Tailwind CDN."""
     return f"""<!DOCTYPE html>
@@ -2003,6 +2011,13 @@ def role_panel_create_page(
             return '#' + color.toString(16).padStart(6, '0');
         }}
 
+        // HTML エスケープ
+        function escapeHtml(text) {{
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }}
+
         function createRoleItemRow(index) {{
             const row = document.createElement('div');
             row.className = 'role-item-row bg-gray-700 p-4 rounded flex flex-wrap gap-3 items-end';
@@ -2011,17 +2026,20 @@ def role_panel_create_page(
             const availableRoles = getRolesForCurrentGuild();
             let roleSelectHtml = '';
             if (availableRoles.length > 0) {{
-                const roleOptions = availableRoles.map(r => {{
-                    const colorStyle = r.color ? `style="color: ${{colorToHex(r.color)}}"` : '';
-                    return `<option value="${{r.id}}" ${{colorStyle}}>@${{r.name}}</option>`;
-                }}).join('');
                 roleSelectHtml = `
-                    <select class="role-select w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded
+                    <div class="role-autocomplete relative">
+                        <input
+                            type="text"
+                            class="role-input w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded
                                    focus:outline-none focus:ring-2 focus:ring-blue-500
-                                   text-gray-100 text-sm" required>
-                        <option value="">-- Select Role --</option>
-                        ${{roleOptions}}
-                    </select>
+                                   text-gray-100 text-sm"
+                            placeholder="Type to search roles..."
+                            autocomplete="off"
+                        >
+                        <div class="role-dropdown absolute z-50 w-full mt-1 bg-gray-700 border border-gray-500
+                                    rounded shadow-lg max-h-48 overflow-y-auto hidden">
+                        </div>
+                    </div>
                 `;
             }}
 
@@ -2100,16 +2118,85 @@ def role_panel_create_page(
                 </div>
             `;
 
-            // ロールセレクト変更時のイベント
-            const roleSelect = row.querySelector('.role-select');
-            const roleIdInput = row.querySelector('.role-id-input');
-            if (roleSelect) {{
-                roleSelect.addEventListener('change', function() {{
-                    roleIdInput.value = this.value;
-                }});
-            }}
+            // ロールオートコンプリートのイベント設定
+            setupRoleAutocomplete(row);
 
             return row;
+        }}
+
+        // ロールオートコンプリートの設定
+        function setupRoleAutocomplete(row) {{
+            const roleInput = row.querySelector('.role-input');
+            const roleDropdown = row.querySelector('.role-dropdown');
+            const roleIdInput = row.querySelector('.role-id-input');
+
+            if (!roleInput || !roleDropdown || !roleIdInput) return;
+
+            const availableRoles = getRolesForCurrentGuild();
+
+            // ドロップダウンを表示
+            function showDropdown(filter = '') {{
+                const filterLower = filter.toLowerCase();
+                const filteredRoles = availableRoles.filter(r =>
+                    r.name.toLowerCase().includes(filterLower)
+                );
+
+                if (filteredRoles.length === 0) {{
+                    roleDropdown.innerHTML = '<div class="px-3 py-2 text-gray-400 text-sm">No matching roles</div>';
+                }} else {{
+                    roleDropdown.innerHTML = filteredRoles.map(r => {{
+                        const colorStyle = r.color ? `color: ${{colorToHex(r.color)}}` : 'color: #99aab5';
+                        return `<div class="role-option px-3 py-2 hover:bg-gray-600 cursor-pointer text-sm"
+                                     data-id="${{r.id}}" data-name="${{escapeHtml(r.name)}}" style="${{colorStyle}}">
+                                    @${{escapeHtml(r.name)}}
+                                </div>`;
+                    }}).join('');
+                }}
+                roleDropdown.classList.remove('hidden');
+            }}
+
+            // ドロップダウンを非表示
+            function hideDropdown() {{
+                roleDropdown.classList.add('hidden');
+            }}
+
+            // 入力時にフィルタリング
+            roleInput.addEventListener('input', function() {{
+                showDropdown(this.value);
+                // 入力が変更されたら選択をクリア
+                roleIdInput.value = '';
+            }});
+
+            // フォーカス時にドロップダウン表示
+            roleInput.addEventListener('focus', function() {{
+                showDropdown(this.value);
+            }});
+
+            // ドロップダウンからの選択
+            roleDropdown.addEventListener('click', function(e) {{
+                const option = e.target.closest('.role-option');
+                if (option) {{
+                    const roleId = option.dataset.id;
+                    const roleName = option.dataset.name;
+                    roleInput.value = '@' + roleName;
+                    roleIdInput.value = roleId;
+                    hideDropdown();
+                }}
+            }});
+
+            // 外部クリックでドロップダウンを閉じる
+            document.addEventListener('click', function(e) {{
+                if (!row.contains(e.target)) {{
+                    hideDropdown();
+                }}
+            }});
+
+            // Escape キーでドロップダウンを閉じる
+            roleInput.addEventListener('keydown', function(e) {{
+                if (e.key === 'Escape') {{
+                    hideDropdown();
+                }}
+            }});
         }}
 
         addRoleItemBtn.addEventListener('click', function() {{
@@ -2561,17 +2648,22 @@ def role_panel_detail_page(
                         {
         ""
         if not discord_roles
-        else f'''
-                        <select
-                            id="role_select"
-                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
-                                   focus:outline-none focus:ring-2 focus:ring-blue-500
-                                   text-gray-100"
-                            required
-                        >
-                            <option value="">-- Select Role --</option>
-                            {"".join(f'<option value="{escape(r[0])}" style="color: #{r[2] if r[2] else 0x99AAB5:06x}">@{escape(r[1])}</option>' for r in discord_roles)}
-                        </select>
+        else '''
+                        <div class="role-autocomplete relative">
+                            <input
+                                type="text"
+                                id="role_input"
+                                class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
+                                       focus:outline-none focus:ring-2 focus:ring-blue-500
+                                       text-gray-100"
+                                placeholder="Type to search roles..."
+                                autocomplete="off"
+                            >
+                            <div id="role_dropdown"
+                                 class="absolute z-50 w-full mt-1 bg-gray-700 border border-gray-600
+                                        rounded shadow-lg max-h-48 overflow-y-auto hidden">
+                            </div>
+                        </div>
                         <input type="hidden" id="role_id" name="role_id">
                         '''
     }
@@ -2648,18 +2740,79 @@ def role_panel_detail_page(
     {
         ""
         if not discord_roles
-        else '''
+        else f'''
     <script>
-    (function() {
-        const roleSelect = document.getElementById("role_select");
+    (function() {{
+        const roleInput = document.getElementById("role_input");
+        const roleDropdown = document.getElementById("role_dropdown");
         const roleIdInput = document.getElementById("role_id");
 
-        if (roleSelect) {
-            roleSelect.addEventListener("change", function() {
-                roleIdInput.value = this.value;
-            });
-        }
-    })();
+        if (!roleInput || !roleDropdown || !roleIdInput) return;
+
+        const roles = {_roles_to_js_array(discord_roles)};
+
+        function colorToHex(color) {{
+            if (!color) return '#99aab5';
+            return '#' + color.toString(16).padStart(6, '0');
+        }}
+
+        function escapeHtml(text) {{
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }}
+
+        function showDropdown(filter) {{
+            const filterLower = (filter || '').toLowerCase();
+            const filtered = roles.filter(r => r.name.toLowerCase().includes(filterLower));
+
+            if (filtered.length === 0) {{
+                roleDropdown.innerHTML = '<div class="px-4 py-2 text-gray-400 text-sm">No matching roles</div>';
+            }} else {{
+                roleDropdown.innerHTML = filtered.map(r => {{
+                    const colorStyle = r.color ? 'color: ' + colorToHex(r.color) : 'color: #99aab5';
+                    return '<div class="role-option px-4 py-2 hover:bg-gray-600 cursor-pointer" ' +
+                           'data-id="' + r.id + '" data-name="' + escapeHtml(r.name) + '" style="' + colorStyle + '">' +
+                           '@' + escapeHtml(r.name) + '</div>';
+                }}).join('');
+            }}
+            roleDropdown.classList.remove('hidden');
+        }}
+
+        function hideDropdown() {{
+            roleDropdown.classList.add('hidden');
+        }}
+
+        roleInput.addEventListener('input', function() {{
+            showDropdown(this.value);
+            roleIdInput.value = '';
+        }});
+
+        roleInput.addEventListener('focus', function() {{
+            showDropdown(this.value);
+        }});
+
+        roleDropdown.addEventListener('click', function(e) {{
+            const option = e.target.closest('.role-option');
+            if (option) {{
+                roleInput.value = '@' + option.dataset.name;
+                roleIdInput.value = option.dataset.id;
+                hideDropdown();
+            }}
+        }});
+
+        document.addEventListener('click', function(e) {{
+            if (!roleInput.contains(e.target) && !roleDropdown.contains(e.target)) {{
+                hideDropdown();
+            }}
+        }});
+
+        roleInput.addEventListener('keydown', function(e) {{
+            if (e.key === 'Escape') {{
+                hideDropdown();
+            }}
+        }});
+    }})();
     </script>
     '''
     }
