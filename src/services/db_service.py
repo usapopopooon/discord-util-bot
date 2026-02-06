@@ -43,6 +43,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import (
+    AutoBanLog,
+    AutoBanRule,
     BumpConfig,
     BumpReminder,
     DiscordChannel,
@@ -1844,5 +1846,140 @@ async def get_discord_channels_by_guild(
         select(DiscordChannel)
         .where(DiscordChannel.guild_id == guild_id)
         .order_by(DiscordChannel.position)
+    )
+    return list(result.scalars().all())
+
+
+# =============================================================================
+# AutoBan (自動 BAN) 操作
+# =============================================================================
+
+
+async def get_all_autoban_rules(
+    session: AsyncSession,
+) -> list[AutoBanRule]:
+    """全 autoban ルールを取得する。"""
+    result = await session.execute(
+        select(AutoBanRule).order_by(AutoBanRule.guild_id, AutoBanRule.created_at)
+    )
+    return list(result.scalars().all())
+
+
+async def get_autoban_rules_by_guild(
+    session: AsyncSession, guild_id: str
+) -> list[AutoBanRule]:
+    """サーバーの全 autoban ルールを取得する。"""
+    result = await session.execute(
+        select(AutoBanRule).where(AutoBanRule.guild_id == guild_id)
+    )
+    return list(result.scalars().all())
+
+
+async def get_enabled_autoban_rules_by_guild(
+    session: AsyncSession, guild_id: str
+) -> list[AutoBanRule]:
+    """サーバーの有効な autoban ルールを取得する。"""
+    result = await session.execute(
+        select(AutoBanRule).where(
+            AutoBanRule.guild_id == guild_id,
+            AutoBanRule.is_enabled.is_(True),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def get_autoban_rule(session: AsyncSession, rule_id: int) -> AutoBanRule | None:
+    """ルール ID から autoban ルールを取得する。"""
+    result = await session.execute(select(AutoBanRule).where(AutoBanRule.id == rule_id))
+    return result.scalar_one_or_none()
+
+
+async def create_autoban_rule(
+    session: AsyncSession,
+    guild_id: str,
+    rule_type: str,
+    action: str = "ban",
+    pattern: str | None = None,
+    use_wildcard: bool = False,
+    threshold_hours: int | None = None,
+) -> AutoBanRule:
+    """新しい autoban ルールを作成する。"""
+    rule = AutoBanRule(
+        guild_id=guild_id,
+        rule_type=rule_type,
+        action=action,
+        pattern=pattern,
+        use_wildcard=use_wildcard,
+        threshold_hours=threshold_hours,
+    )
+    session.add(rule)
+    await session.commit()
+    await session.refresh(rule)
+    return rule
+
+
+async def delete_autoban_rule(session: AsyncSession, rule_id: int) -> bool:
+    """autoban ルールを削除する。"""
+    rule = await get_autoban_rule(session, rule_id)
+    if rule:
+        await session.delete(rule)
+        await session.commit()
+        return True
+    return False
+
+
+async def toggle_autoban_rule(session: AsyncSession, rule_id: int) -> bool | None:
+    """autoban ルールの有効/無効を切り替える。新しい状態を返す。"""
+    rule = await get_autoban_rule(session, rule_id)
+    if rule:
+        rule.is_enabled = not rule.is_enabled
+        await session.commit()
+        return rule.is_enabled
+    return None
+
+
+async def create_autoban_log(
+    session: AsyncSession,
+    guild_id: str,
+    user_id: str,
+    username: str,
+    rule_id: int,
+    action_taken: str,
+    reason: str,
+) -> AutoBanLog:
+    """autoban 実行ログを作成する。"""
+    log = AutoBanLog(
+        guild_id=guild_id,
+        user_id=user_id,
+        username=username,
+        rule_id=rule_id,
+        action_taken=action_taken,
+        reason=reason,
+    )
+    session.add(log)
+    await session.commit()
+    await session.refresh(log)
+    return log
+
+
+async def get_autoban_logs_by_guild(
+    session: AsyncSession, guild_id: str, limit: int = 50
+) -> list[AutoBanLog]:
+    """サーバーの autoban ログを取得する (新しい順)。"""
+    result = await session.execute(
+        select(AutoBanLog)
+        .where(AutoBanLog.guild_id == guild_id)
+        .order_by(AutoBanLog.created_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def get_all_autoban_logs(
+    session: AsyncSession, limit: int = 100
+) -> list[AutoBanLog]:
+    """全 autoban ログを取得する (新しい順)。"""
+    result = await session.execute(
+        select(AutoBanLog).order_by(AutoBanLog.created_at.desc()).limit(limit)
     )
     return list(result.scalars().all())

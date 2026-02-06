@@ -472,9 +472,37 @@ class TestRolePanelCog:
                     mock_get_items.return_value = mock_items
 
                     cog = RolePanelCog(mock_bot)
+                    cog._sync_views_task.start = MagicMock()
                     await cog.cog_load()
 
         mock_bot.add_view.assert_called()
+
+    async def test_cog_load_starts_sync_task(self, mock_bot: MagicMock) -> None:
+        """cog_load が定期同期タスクを開始する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.get_all_role_panels") as mock_get_panels:
+                mock_get_panels.return_value = []
+
+                cog = RolePanelCog(mock_bot)
+                cog._sync_views_task.start = MagicMock()
+                await cog.cog_load()
+
+        cog._sync_views_task.start.assert_called_once()
+
+    async def test_cog_unload_cancels_sync_task(self, mock_bot: MagicMock) -> None:
+        """cog_unload が定期同期タスクを停止する。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+        cog._sync_views_task.cancel = MagicMock()
+        await cog.cog_unload()
+
+        cog._sync_views_task.cancel.assert_called_once()
 
     async def test_cog_load_skips_reaction_panels(self, mock_bot: MagicMock) -> None:
         """cog_load がリアクション式パネルをスキップする。"""
@@ -492,10 +520,104 @@ class TestRolePanelCog:
                 mock_get_panels.return_value = [mock_panel]
 
                 cog = RolePanelCog(mock_bot)
+                cog._sync_views_task.start = MagicMock()
                 await cog.cog_load()
 
         # リアクション式は add_view が呼ばれない
         mock_bot.add_view.assert_not_called()
+
+    async def test_sync_views_task_calls_register(self, mock_bot: MagicMock) -> None:
+        """_sync_views_task が _register_all_views を呼ぶ。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch.object(
+            cog, "_register_all_views", new_callable=AsyncMock
+        ) as mock_register:
+            await cog._sync_views_task()
+            mock_register.assert_called_once()
+
+    async def test_sync_views_task_handles_error(self, mock_bot: MagicMock) -> None:
+        """_sync_views_task が例外発生時にクラッシュしない。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+
+        with patch.object(
+            cog, "_register_all_views", side_effect=Exception("DB error")
+        ):
+            # 例外が飛ばずに正常終了する
+            await cog._sync_views_task()
+
+    async def test_register_views_mixed_panels(self, mock_bot: MagicMock) -> None:
+        """ボタン式とリアクション式が混在する場合、ボタン式のみ登録される。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        button_panel = RolePanel(
+            id=1, guild_id="123", channel_id="456", panel_type="button", title="B"
+        )
+        reaction_panel = RolePanel(
+            id=2, guild_id="123", channel_id="456", panel_type="reaction", title="R"
+        )
+        mock_items = [
+            RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮", position=0),
+        ]
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.get_all_role_panels") as mock_get_panels:
+                mock_get_panels.return_value = [button_panel, reaction_panel]
+
+                with patch(
+                    "src.cogs.role_panel.get_role_panel_items"
+                ) as mock_get_items:
+                    mock_get_items.return_value = mock_items
+
+                    cog = RolePanelCog(mock_bot)
+                    await cog._register_all_views()
+
+        # ボタン式の1パネルのみ add_view される
+        assert mock_bot.add_view.call_count == 1
+        # get_role_panel_items はボタン式の1パネル分のみ呼ばれる
+        mock_get_items.assert_called_once_with(mock_db, 1)
+
+    async def test_register_views_multiple_button_panels(
+        self, mock_bot: MagicMock
+    ) -> None:
+        """複数のボタン式パネルが全て登録される。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        panels = [
+            RolePanel(
+                id=i,
+                guild_id="123",
+                channel_id="456",
+                panel_type="button",
+                title=f"P{i}",
+            )
+            for i in range(1, 4)
+        ]
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.cogs.role_panel.get_all_role_panels") as mock_get_panels:
+                mock_get_panels.return_value = panels
+
+                with patch(
+                    "src.cogs.role_panel.get_role_panel_items"
+                ) as mock_get_items:
+                    mock_get_items.return_value = []
+
+                    cog = RolePanelCog(mock_bot)
+                    await cog._register_all_views()
+
+        # 3 パネル全て add_view される
+        assert mock_bot.add_view.call_count == 3
 
 
 class TestSetupFunction:

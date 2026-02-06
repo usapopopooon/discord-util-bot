@@ -37,6 +37,8 @@ from src.constants import (
 from src.database.engine import async_session, check_database_connection
 from src.database.models import (
     AdminUser,
+    AutoBanLog,
+    AutoBanRule,
     BumpConfig,
     BumpReminder,
     DiscordChannel,
@@ -59,6 +61,9 @@ from src.web.email_service import (
     # send_password_reset_email,  # SMTP 未設定のため未使用
 )
 from src.web.templates import (
+    autoban_create_page,
+    autoban_list_page,
+    autoban_logs_page,
     bump_list_page,
     dashboard_page,
     email_change_page,
@@ -2895,3 +2900,204 @@ async def rolepanel_reorder_items(
         await db.commit()
 
     return JSONResponse({"ok": True})
+
+
+# =============================================================================
+# Autoban ルート
+# =============================================================================
+
+
+@app.get("/autoban", response_model=None)
+async def autoban_list_view(
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Autoban ルール一覧ページ。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    result = await db.execute(
+        select(AutoBanRule).order_by(AutoBanRule.guild_id, AutoBanRule.created_at)
+    )
+    rules = list(result.scalars().all())
+    guilds_map, _ = await _get_discord_guilds_and_channels(db)
+
+    return HTMLResponse(
+        content=autoban_list_page(
+            rules,
+            csrf_token=generate_csrf_token(),
+            guilds_map=guilds_map,
+        )
+    )
+
+
+@app.get("/autoban/new", response_model=None)
+async def autoban_create_get(
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Autoban ルール作成フォーム。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    guilds_map, _ = await _get_discord_guilds_and_channels(db)
+
+    return HTMLResponse(
+        content=autoban_create_page(
+            guilds_map=guilds_map,
+            csrf_token=generate_csrf_token(),
+        )
+    )
+
+
+@app.post("/autoban/new", response_model=None)
+async def autoban_create_post(
+    request: Request,
+    guild_id: Annotated[str, Form()],
+    rule_type: Annotated[str, Form()],
+    action: Annotated[str, Form()] = "ban",
+    pattern: Annotated[str, Form()] = "",
+    use_wildcard: Annotated[str, Form()] = "",
+    threshold_hours: Annotated[str, Form()] = "",
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Autoban ルールを作成する。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/autoban/new", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/autoban", status_code=302)
+
+    # Validate rule_type
+    if rule_type not in ("username_match", "account_age", "no_avatar"):
+        return RedirectResponse(url="/autoban/new", status_code=302)
+
+    # Validate action
+    if action not in ("ban", "kick"):
+        return RedirectResponse(url="/autoban/new", status_code=302)
+
+    # Validate fields based on rule_type
+    if rule_type == "username_match" and not pattern.strip():
+        return RedirectResponse(url="/autoban/new", status_code=302)
+
+    threshold_int: int | None = None
+    if rule_type == "account_age":
+        try:
+            threshold_int = int(threshold_hours)
+        except (ValueError, TypeError):
+            return RedirectResponse(url="/autoban/new", status_code=302)
+        if threshold_int < 1 or threshold_int > 336:
+            return RedirectResponse(url="/autoban/new", status_code=302)
+
+    async with get_resource_lock(f"autoban:create:{guild_id}"):
+        rule = AutoBanRule(
+            guild_id=guild_id,
+            rule_type=rule_type,
+            action=action,
+            pattern=pattern.strip() if rule_type == "username_match" else None,
+            use_wildcard=bool(use_wildcard) if rule_type == "username_match" else False,
+            threshold_hours=threshold_int if rule_type == "account_age" else None,
+        )
+        db.add(rule)
+        await db.commit()
+
+        record_form_submit(user_email, path)
+
+    return RedirectResponse(url="/autoban", status_code=302)
+
+
+@app.post("/autoban/{rule_id}/delete", response_model=None)
+async def autoban_delete(
+    request: Request,
+    rule_id: int,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Autoban ルールを削除する。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/autoban", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/autoban", status_code=302)
+
+    async with get_resource_lock(f"autoban:delete:{rule_id}"):
+        result = await db.execute(select(AutoBanRule).where(AutoBanRule.id == rule_id))
+        rule = result.scalar_one_or_none()
+        if rule:
+            await db.delete(rule)
+            await db.commit()
+
+        record_form_submit(user_email, path)
+
+    return RedirectResponse(url="/autoban", status_code=302)
+
+
+@app.post("/autoban/{rule_id}/toggle", response_model=None)
+async def autoban_toggle(
+    request: Request,
+    rule_id: int,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Autoban ルールの有効/無効を切り替える。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/autoban", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/autoban", status_code=302)
+
+    async with get_resource_lock(f"autoban:toggle:{rule_id}"):
+        result = await db.execute(select(AutoBanRule).where(AutoBanRule.id == rule_id))
+        rule = result.scalar_one_or_none()
+        if rule:
+            rule.is_enabled = not rule.is_enabled
+            await db.commit()
+
+        record_form_submit(user_email, path)
+
+    return RedirectResponse(url="/autoban", status_code=302)
+
+
+@app.get("/autoban/logs", response_model=None)
+async def autoban_logs_view(
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Autoban ログ一覧ページ。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    result = await db.execute(
+        select(AutoBanLog).order_by(AutoBanLog.created_at.desc()).limit(100)
+    )
+    logs = list(result.scalars().all())
+    guilds_map, _ = await _get_discord_guilds_and_channels(db)
+
+    return HTMLResponse(
+        content=autoban_logs_page(
+            logs,
+            guilds_map=guilds_map,
+        )
+    )

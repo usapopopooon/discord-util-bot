@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from src.database.models import (
+    AutoBanLog,
+    AutoBanRule,
     BumpConfig,
     BumpReminder,
     Lobby,
@@ -16,6 +18,9 @@ from src.web.templates import (
     _base,
     _breadcrumb,
     _nav,
+    autoban_create_page,
+    autoban_list_page,
+    autoban_logs_page,
     bump_list_page,
     dashboard_page,
     lobbies_list_page,
@@ -1781,3 +1786,187 @@ class TestMaintenancePageCleanupModal:
         """「元に戻せない」警告が表示される。"""
         result = maintenance_page(10, 2, 5, 1, 3, 1, 7, 1, 15)
         assert "cannot be undone" in result
+
+
+# ===========================================================================
+# Autoban テンプレート
+# ===========================================================================
+
+
+class TestAutobanListPage:
+    """autoban_list_page テンプレートのテスト。"""
+
+    def test_empty_state(self) -> None:
+        """ルールなしで空メッセージが表示される。"""
+        result = autoban_list_page([])
+        assert "No autoban rules configured" in result
+
+    def test_contains_create_link(self) -> None:
+        """作成リンクが含まれる。"""
+        result = autoban_list_page([])
+        assert "/autoban/new" in result
+        assert "Create Rule" in result
+
+    def test_contains_logs_link(self) -> None:
+        """ログリンクが含まれる。"""
+        result = autoban_list_page([])
+        assert "/autoban/logs" in result
+        assert "View Logs" in result
+
+    def test_displays_rule(self) -> None:
+        """ルールが表示される。"""
+        rule = AutoBanRule(
+            id=1,
+            guild_id="123",
+            rule_type="username_match",
+            action="ban",
+            pattern="spammer",
+            use_wildcard=True,
+        )
+        result = autoban_list_page([rule])
+        assert "username_match" in result
+        assert "spammer" in result
+        assert "wildcard" in result
+
+    def test_displays_toggle_and_delete(self) -> None:
+        """Toggle と Delete ボタンが表示される。"""
+        rule = AutoBanRule(
+            id=1,
+            guild_id="123",
+            rule_type="no_avatar",
+            action="ban",
+        )
+        result = autoban_list_page([rule], csrf_token="test_csrf")
+        assert "/autoban/1/toggle" in result
+        assert "/autoban/1/delete" in result
+        assert "Toggle" in result
+        assert "Delete" in result
+
+    def test_displays_guild_name(self) -> None:
+        """ギルド名が表示される。"""
+        rule = AutoBanRule(
+            id=1,
+            guild_id="123",
+            rule_type="no_avatar",
+            action="ban",
+        )
+        result = autoban_list_page([rule], guilds_map={"123": "Test Server"})
+        assert "Test Server" in result
+
+    def test_breadcrumbs(self) -> None:
+        """パンくずリストが含まれる。"""
+        result = autoban_list_page([])
+        assert "Dashboard" in result
+        assert "Autoban Rules" in result
+
+
+class TestAutobanCreatePage:
+    """autoban_create_page テンプレートのテスト。"""
+
+    def test_contains_form(self) -> None:
+        """フォームが含まれる。"""
+        result = autoban_create_page()
+        assert 'action="/autoban/new"' in result
+        assert 'method="POST"' in result
+
+    def test_contains_rule_types(self) -> None:
+        """ルールタイプのラジオボタンが含まれる。"""
+        result = autoban_create_page()
+        assert "username_match" in result
+        assert "account_age" in result
+        assert "no_avatar" in result
+
+    def test_contains_action_select(self) -> None:
+        """アクション選択が含まれる。"""
+        result = autoban_create_page()
+        assert '"ban"' in result
+        assert '"kick"' in result
+
+    def test_contains_pattern_field(self) -> None:
+        """パターンフィールドが含まれる。"""
+        result = autoban_create_page()
+        assert 'name="pattern"' in result
+
+    def test_contains_wildcard_checkbox(self) -> None:
+        """ワイルドカードチェックボックスが含まれる。"""
+        result = autoban_create_page()
+        assert 'name="use_wildcard"' in result
+
+    def test_contains_threshold_field(self) -> None:
+        """閾値フィールドが含まれる。"""
+        result = autoban_create_page()
+        assert 'name="threshold_hours"' in result
+
+    def test_contains_guild_options(self) -> None:
+        """ギルド選択にオプションが含まれる。"""
+        result = autoban_create_page(guilds_map={"123": "Test Server"})
+        assert "Test Server" in result
+        assert "123" in result
+
+    def test_contains_js_toggle(self) -> None:
+        """JS のフィールド切替関数が含まれる。"""
+        result = autoban_create_page()
+        assert "updateRuleFields" in result
+
+    def test_breadcrumbs(self) -> None:
+        """パンくずリストが含まれる。"""
+        result = autoban_create_page()
+        assert "Dashboard" in result
+        assert "Autoban Rules" in result
+        assert "Create" in result
+
+
+class TestAutobanLogsPage:
+    """autoban_logs_page テンプレートのテスト。"""
+
+    def test_empty_state(self) -> None:
+        """ログなしで空メッセージが表示される。"""
+        result = autoban_logs_page([])
+        assert "No autoban logs" in result
+
+    def test_displays_log(self) -> None:
+        """ログが表示される。"""
+        log = AutoBanLog(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="baduser",
+            rule_id=1,
+            action_taken="banned",
+            reason="No avatar set",
+        )
+        result = autoban_logs_page([log])
+        assert "baduser" in result
+        assert "banned" in result
+        assert "No avatar set" in result
+
+    def test_displays_guild_name(self) -> None:
+        """ギルド名が表示される。"""
+        log = AutoBanLog(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="baduser",
+            rule_id=1,
+            action_taken="banned",
+            reason="Test",
+        )
+        result = autoban_logs_page([log], guilds_map={"123": "Test Server"})
+        assert "Test Server" in result
+
+    def test_breadcrumbs(self) -> None:
+        """パンくずリストが含まれる。"""
+        result = autoban_logs_page([])
+        assert "Dashboard" in result
+        assert "Autoban Rules" in result
+        assert "Logs" in result
+
+
+class TestDashboardAutobanCard:
+    """ダッシュボードの Autoban カードのテスト。"""
+
+    def test_autoban_card_exists(self) -> None:
+        """ダッシュボードに Autoban カードが存在する。"""
+        result = dashboard_page()
+        assert "/autoban" in result
+        assert "Autoban" in result

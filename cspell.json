@@ -81,7 +81,14 @@
     "surrogateescape",
     "poolclass",
     "isready",
-    "Unposted"
+    "Unposted",
+    "autoban",
+    "Autoban",
+    "baduser",
+    "gooduser",
+    "totalspammer",
+    "badword",
+    "onchange"
   ],
   "ignorePaths": [
     ".venv",

@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.database.models import (
+        AutoBanLog,
+        AutoBanRule,
         BumpConfig,
         BumpReminder,
         Lobby,
@@ -349,6 +351,10 @@ def dashboard_page(email: str = "Admin") -> str:
             <a href="/rolepanels" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
                 <h2 class="text-lg font-semibold mb-2">Role Panels</h2>
                 <p class="text-gray-400 text-sm">View role assignment panels</p>
+            </a>
+            <a href="/autoban" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
+                <h2 class="text-lg font-semibold mb-2">Autoban</h2>
+                <p class="text-gray-400 text-sm">Manage autoban rules and logs</p>
             </a>
             <a href="/settings/maintenance" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
                 <h2 class="text-lg font-semibold mb-2">Database Maintenance</h2>
@@ -1848,22 +1854,20 @@ def role_panel_create_page(
                 <p id="noKnownRolesInfo" class="text-red-400 text-xs mb-4 hidden">
                     No roles found for this guild. Please sync roles by starting the Bot first.
                 </p>
-                <div class="overflow-x-auto">
-                    <table class="w-full" id="roleItemsTable">
-                        <thead class="bg-gray-700">
-                            <tr>
-                                <th class="py-3 px-2 w-8"></th>
-                                <th class="py-3 px-4 text-left">Emoji</th>
-                                <th class="py-3 px-4 text-left">Role</th>
-                                <th class="py-3 px-4 text-left label-field">Label</th>
-                                <th class="py-3 px-4 text-left style-field">Style</th>
-                                <th class="py-3 px-4 text-left">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="roleItemsContainer">
-                        </tbody>
-                    </table>
-                </div>
+                <table class="w-full table-fixed" id="roleItemsTable">
+                    <thead class="bg-gray-700">
+                        <tr>
+                            <th class="py-2 px-1 w-8"></th>
+                            <th class="py-2 px-2 text-left w-20">Emoji</th>
+                            <th class="py-2 px-2 text-left">Role</th>
+                            <th class="py-2 px-2 text-left label-field">Label</th>
+                            <th class="py-2 px-2 text-left style-field w-28">Style</th>
+                            <th class="py-2 px-2 text-left w-16">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="roleItemsContainer">
+                    </tbody>
+                </table>
                 <p id="noRolesInfo" class="py-8 text-center text-gray-500 hidden">
                     No roles configured. Add roles below.
                 </p>
@@ -2071,25 +2075,25 @@ def role_panel_create_page(
             }}
 
             row.innerHTML = `
-                <td class="py-2 px-2 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200">
-                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <td class="py-1 px-1 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                         <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm-6 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
                     </svg>
                     <input type="hidden" name="item_position[]" class="position-input" value="${{index}}">
                 </td>
-                <td class="py-2 px-4">
+                <td class="py-1 px-2">
                     <input
                         type="text"
                         name="item_emoji[]"
                         required
                         maxlength="64"
-                        class="w-20 px-2 py-1 bg-gray-600 border border-gray-500 rounded
+                        class="w-full px-2 py-1 bg-gray-600 border border-gray-500 rounded
                                focus:outline-none focus:ring-2 focus:ring-blue-500
                                text-gray-100 text-sm"
                         placeholder="🎮"
                     >
                 </td>
-                <td class="py-2 px-4">
+                <td class="py-1 px-2">
                     ${{roleSelectHtml}}
                     <input
                         type="hidden"
@@ -2097,7 +2101,7 @@ def role_panel_create_page(
                         class="role-id-input"
                     >
                 </td>
-                <td class="py-2 px-4 label-field">
+                <td class="py-1 px-2 label-field">
                     <input
                         type="text"
                         name="item_label[]"
@@ -2108,7 +2112,7 @@ def role_panel_create_page(
                         placeholder="Gamer"
                     >
                 </td>
-                <td class="py-2 px-4 style-field">
+                <td class="py-1 px-2 style-field">
                     <select
                         name="item_style[]"
                         class="w-full px-2 py-1 bg-gray-600 border border-gray-500 rounded
@@ -2121,7 +2125,7 @@ def role_panel_create_page(
                         <option value="danger">Red</option>
                     </select>
                 </td>
-                <td class="py-2 px-4">
+                <td class="py-1 px-2">
                     <button
                         type="button"
                         class="remove-role-item text-red-400 hover:text-red-300 text-sm"
@@ -2950,3 +2954,326 @@ def role_panel_detail_page(
     </script>
     """
     return _base(f"Panel: {panel.title}", content)
+
+
+def autoban_list_page(
+    rules: list["AutoBanRule"],
+    csrf_token: str = "",
+    guilds_map: dict[str, str] | None = None,
+) -> str:
+    """Autoban rules list page template."""
+    if guilds_map is None:
+        guilds_map = {}
+
+    rows = ""
+    for rule in rules:
+        guild_name = guilds_map.get(rule.guild_id)
+        if guild_name:
+            guild_display = (
+                f'<span class="font-medium">{escape(guild_name)}</span>'
+                f'<br><span class="font-mono text-xs text-gray-500">'
+                f"{escape(rule.guild_id)}</span>"
+            )
+        else:
+            guild_display = (
+                f'<span class="font-mono text-yellow-400">'
+                f"{escape(rule.guild_id)}</span>"
+            )
+
+        # Details column based on rule type
+        if rule.rule_type == "username_match":
+            wildcard = " (wildcard)" if rule.use_wildcard else " (exact)"
+            details = escape(rule.pattern or "") + wildcard
+        elif rule.rule_type == "account_age":
+            details = f"{rule.threshold_hours}h" if rule.threshold_hours else "-"
+        else:
+            details = "-"
+
+        status = "Enabled" if rule.is_enabled else "Disabled"
+        status_class = "text-green-400" if rule.is_enabled else "text-gray-500"
+        created = rule.created_at.strftime("%Y-%m-%d %H:%M") if rule.created_at else "-"
+
+        rows += f"""
+        <tr class="border-b border-gray-700">
+            <td class="py-3 px-4">{guild_display}</td>
+            <td class="py-3 px-4">{escape(rule.rule_type)}</td>
+            <td class="py-3 px-4">{escape(rule.action)}</td>
+            <td class="py-3 px-4 text-gray-400 text-sm">{details}</td>
+            <td class="py-3 px-4">
+                <span class="{status_class}">{status}</span>
+            </td>
+            <td class="py-3 px-4 text-gray-400 text-sm">{created}</td>
+            <td class="py-3 px-4">
+                <div class="flex gap-2">
+                    <form method="POST" action="/autoban/{rule.id}/toggle">
+                        {_csrf_field(csrf_token)}
+                        <button type="submit"
+                                class="text-blue-400 hover:text-blue-300 text-sm">
+                            Toggle
+                        </button>
+                    </form>
+                    <form method="POST" action="/autoban/{rule.id}/delete"
+                          onsubmit="return confirm('Delete this autoban rule?');">
+                        {_csrf_field(csrf_token)}
+                        <button type="submit"
+                                class="text-red-400 hover:text-red-300 text-sm">
+                            Delete
+                        </button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        """
+
+    if not rules:
+        rows = """
+        <tr>
+            <td colspan="7" class="py-8 text-center text-gray-500">
+                No autoban rules configured
+            </td>
+        </tr>
+        """
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            "Autoban Rules",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Autoban Rules", None),
+            ],
+        )
+    }
+        <div class="flex gap-3 mb-4">
+            <a href="/autoban/new"
+               class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm transition-colors">
+                + Create Rule
+            </a>
+            <a href="/autoban/logs"
+               class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition-colors">
+                View Logs
+            </a>
+        </div>
+        <div class="bg-gray-800 rounded-lg overflow-hidden overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-gray-700">
+                    <tr>
+                        <th class="py-3 px-4 text-left">Server</th>
+                        <th class="py-3 px-4 text-left">Type</th>
+                        <th class="py-3 px-4 text-left">Action</th>
+                        <th class="py-3 px-4 text-left">Details</th>
+                        <th class="py-3 px-4 text-left">Status</th>
+                        <th class="py-3 px-4 text-left">Created</th>
+                        <th class="py-3 px-4 text-left">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    """
+    return _base("Autoban Rules", content)
+
+
+def autoban_create_page(
+    guilds_map: dict[str, str] | None = None,
+    csrf_token: str = "",
+) -> str:
+    """Autoban rule create page template."""
+    if guilds_map is None:
+        guilds_map = {}
+
+    guild_options = ""
+    for gid, gname in sorted(guilds_map.items(), key=lambda x: x[1]):
+        guild_options += (
+            f'<option value="{escape(gid)}">{escape(gname)} ({escape(gid)})</option>'
+        )
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            "Create Autoban Rule",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Autoban Rules", "/autoban"),
+                ("Create", None),
+            ],
+        )
+    }
+        <div class="max-w-2xl">
+            <form method="POST" action="/autoban/new" class="space-y-6">
+                {_csrf_field(csrf_token)}
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Server</label>
+                    <select name="guild_id" required
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">Select server...</option>
+                        {guild_options}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Rule Type</label>
+                    <div class="space-y-2" id="ruleTypeGroup">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="rule_type" value="username_match"
+                                   checked onchange="updateRuleFields()">
+                            <span>Username Match</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="rule_type" value="account_age"
+                                   onchange="updateRuleFields()">
+                            <span>Account Age</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="rule_type" value="no_avatar"
+                                   onchange="updateRuleFields()">
+                            <span>No Avatar</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Action</label>
+                    <select name="action"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="ban">Ban</option>
+                        <option value="kick">Kick</option>
+                    </select>
+                </div>
+
+                <div id="usernameFields">
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Pattern</label>
+                            <input type="text" name="pattern"
+                                   placeholder="e.g. spammer"
+                                   class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        </div>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" name="use_wildcard" value="on"
+                                   class="rounded bg-gray-700 border-gray-600">
+                            <span class="text-sm">Use Wildcard (match pattern anywhere in username)</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div id="accountAgeFields" class="hidden">
+                    <label class="block text-sm font-medium mb-1">
+                        Threshold (hours, max 336 = 14 days)
+                    </label>
+                    <input type="number" name="threshold_hours"
+                           min="1" max="336" placeholder="e.g. 24"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                </div>
+
+                <button type="submit"
+                        class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded transition-colors">
+                    Create Rule
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+    function updateRuleFields() {{
+        const ruleType = document.querySelector('input[name="rule_type"]:checked').value;
+        const usernameFields = document.getElementById('usernameFields');
+        const accountAgeFields = document.getElementById('accountAgeFields');
+
+        usernameFields.classList.toggle('hidden', ruleType !== 'username_match');
+        accountAgeFields.classList.toggle('hidden', ruleType !== 'account_age');
+    }}
+    </script>
+    """
+    return _base("Create Autoban Rule", content)
+
+
+def autoban_logs_page(
+    logs: list["AutoBanLog"],
+    guilds_map: dict[str, str] | None = None,
+) -> str:
+    """Autoban logs page template."""
+    if guilds_map is None:
+        guilds_map = {}
+
+    rows = ""
+    for log in logs:
+        guild_name = guilds_map.get(log.guild_id)
+        if guild_name:
+            guild_display = (
+                f'<span class="font-medium">{escape(guild_name)}</span>'
+                f'<br><span class="font-mono text-xs text-gray-500">'
+                f"{escape(log.guild_id)}</span>"
+            )
+        else:
+            guild_display = (
+                f'<span class="font-mono text-yellow-400">{escape(log.guild_id)}</span>'
+            )
+
+        action_class = (
+            "text-red-400" if log.action_taken == "banned" else "text-yellow-400"
+        )
+        created = log.created_at.strftime("%Y-%m-%d %H:%M") if log.created_at else "-"
+
+        rows += f"""
+        <tr class="border-b border-gray-700">
+            <td class="py-3 px-4">{guild_display}</td>
+            <td class="py-3 px-4 font-mono text-sm">{escape(log.user_id)}</td>
+            <td class="py-3 px-4">{escape(log.username)}</td>
+            <td class="py-3 px-4">
+                <span class="{action_class}">{escape(log.action_taken)}</span>
+            </td>
+            <td class="py-3 px-4 text-gray-400 text-sm">{escape(log.reason)}</td>
+            <td class="py-3 px-4 text-gray-400 text-sm">#{log.rule_id}</td>
+            <td class="py-3 px-4 text-gray-400 text-sm">{created}</td>
+        </tr>
+        """
+
+    if not logs:
+        rows = """
+        <tr>
+            <td colspan="7" class="py-8 text-center text-gray-500">
+                No autoban logs
+            </td>
+        </tr>
+        """
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            "Autoban Logs",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Autoban Rules", "/autoban"),
+                ("Logs", None),
+            ],
+        )
+    }
+        <div class="bg-gray-800 rounded-lg overflow-hidden overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-gray-700">
+                    <tr>
+                        <th class="py-3 px-4 text-left">Server</th>
+                        <th class="py-3 px-4 text-left">User ID</th>
+                        <th class="py-3 px-4 text-left">Username</th>
+                        <th class="py-3 px-4 text-left">Action</th>
+                        <th class="py-3 px-4 text-left">Reason</th>
+                        <th class="py-3 px-4 text-left">Rule</th>
+                        <th class="py-3 px-4 text-left">Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    """
+    return _base("Autoban Logs", content)

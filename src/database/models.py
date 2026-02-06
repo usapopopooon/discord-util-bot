@@ -1016,3 +1016,99 @@ class RolePanelItem(Base):
             f"<RolePanelItem(id={self.id}, panel_id={self.panel_id}, "
             f"role_id={self.role_id}, emoji={self.emoji})>"
         )
+
+
+class AutoBanRule(Base):
+    """Autoban ルール設定テーブル。
+
+    新規メンバー参加時に自動 BAN/KICK するルールを定義する。
+    1つのサーバーに複数のルールを設定可能。
+
+    Attributes:
+        id (int): 自動採番の主キー。
+        guild_id (str): Discord サーバーの ID。インデックス付き。
+        rule_type (str): ルールの種類 ("username_match", "account_age", "no_avatar")。
+        is_enabled (bool): ルールが有効かどうか (デフォルト True)。
+        action (str): アクション ("ban" または "kick")。
+        pattern (str | None): ユーザー名マッチング用パターン (username_match のみ)。
+        use_wildcard (bool): ワイルドカード (部分一致) を使用するか (デフォルト False)。
+        threshold_hours (int | None): アカウント年齢の閾値 (時間、最大 336 = 14日)。
+        created_at (datetime): ルール作成日時 (UTC)。
+        logs (list[AutoBanLog]): このルールの実行ログ一覧。
+
+    Notes:
+        - テーブル名: ``autoban_rules``
+        - on_member_join イベントで新規参加メンバーに対してルールを評価
+        - rule_type に応じて使用するフィールドが異なる
+    """
+
+    __tablename__ = "autoban_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    rule_type: Mapped[str] = mapped_column(String, nullable=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False, default="ban")
+    pattern: Mapped[str | None] = mapped_column(String, nullable=True)
+    use_wildcard: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    threshold_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    logs: Mapped[list["AutoBanLog"]] = relationship(
+        "AutoBanLog", back_populates="rule", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return (
+            f"<AutoBanRule(id={self.id}, guild_id={self.guild_id}, "
+            f"type={self.rule_type}, enabled={self.is_enabled})>"
+        )
+
+
+class AutoBanLog(Base):
+    """Autoban 実行ログテーブル。
+
+    Autoban ルールにマッチしてアクションが実行された記録を保存する。
+
+    Attributes:
+        id (int): 自動採番の主キー。
+        guild_id (str): Discord サーバーの ID。インデックス付き。
+        user_id (str): BAN/KICK されたユーザーの ID。
+        username (str): アクション時のユーザー名。
+        rule_id (int): 適用されたルールへの外部キー。
+        action_taken (str): 実行されたアクション ("banned" または "kicked")。
+        reason (str): 人間可読な理由文字列。
+        created_at (datetime): 実行日時 (UTC)。
+        rule (AutoBanRule): 適用されたルール。
+
+    Notes:
+        - テーブル名: ``autoban_logs``
+        - ルール削除時にログもカスケード削除される
+    """
+
+    __tablename__ = "autoban_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    username: Mapped[str] = mapped_column(String, nullable=False)
+    rule_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("autoban_rules.id", ondelete="CASCADE"), nullable=False
+    )
+    action_taken: Mapped[str] = mapped_column(String, nullable=False)
+    reason: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    rule: Mapped["AutoBanRule"] = relationship("AutoBanRule", back_populates="logs")
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return (
+            f"<AutoBanLog(id={self.id}, guild_id={self.guild_id}, "
+            f"user_id={self.user_id}, action={self.action_taken})>"
+        )

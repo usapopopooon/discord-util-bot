@@ -19,7 +19,7 @@ from typing import Literal
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from sqlalchemy.exc import IntegrityError
 
 from src.database.engine import async_session
@@ -60,7 +60,16 @@ class RolePanelCog(commands.Cog):
         self.bot = bot
 
     async def cog_load(self) -> None:
-        """Cog 読み込み時に永続 View を登録する。"""
+        """Cog 読み込み時に永続 View を登録し、定期同期タスクを開始する。"""
+        await self._register_all_views()
+        self._sync_views_task.start()
+
+    async def cog_unload(self) -> None:
+        """Cog アンロード時に定期同期タスクを停止する。"""
+        self._sync_views_task.cancel()
+
+    async def _register_all_views(self) -> None:
+        """DB から全てのボタン式パネルを読み込み、永続 View を登録する。"""
         async with async_session() as db_session:
             panels = await get_all_role_panels(db_session)
             for panel in panels:
@@ -74,6 +83,19 @@ class RolePanelCog(commands.Cog):
             "Loaded %d role panel views",
             len([p for p in panels if p.panel_type == "button"]),
         )
+
+    @tasks.loop(seconds=60)
+    async def _sync_views_task(self) -> None:
+        """Web 管理画面で追加されたパネルの永続 View を定期的に同期する。
+
+        Bot と Web は別プロセスで動作するため、Web 側でパネルが作成/変更
+        されても Bot の永続 View は自動更新されない。このタスクで定期的に
+        DB を確認し、最新のパネル構成を反映する。
+        """
+        try:
+            await self._register_all_views()
+        except Exception:
+            logger.exception("Failed to sync role panel views")
 
     # -------------------------------------------------------------------------
     # コマンドグループ
