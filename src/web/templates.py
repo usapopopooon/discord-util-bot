@@ -2353,11 +2353,11 @@ def role_panel_detail_page(
     }</span>
                 </div>
                 {
-        f'''<div>
+        f'''<div class="flex items-center gap-2">
                     <span class="text-gray-400">Auto-remove:</span>
                     {remove_reaction_badge}
                     <form method="POST" action="/rolepanels/{panel.id}/toggle-remove-reaction"
-                          class="inline ml-2">
+                          class="inline">
                         {_csrf_field(csrf_token)}
                         <button type="submit"
                                 class="text-xs text-blue-400 hover:text-blue-300 underline">
