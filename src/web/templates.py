@@ -1428,24 +1428,11 @@ def role_panels_list_page(
         remove_reaction_badge = ""
         if panel.panel_type == "reaction" and panel.remove_reaction:
             remove_reaction_badge = (
-                '<span class="bg-yellow-600 px-2 py-1 rounded text-xs ml-1">'
-                "Auto-remove</span>"
+                '<span class="bg-yellow-600 px-2 py-1 rounded text-xs ml-1'
+                ' whitespace-nowrap">Auto-remove</span>'
             )
 
         items = items_by_panel.get(panel.id, [])
-        items_html = ""
-        if items:
-            items_html = '<div class="flex flex-wrap gap-1 mt-2">'
-            for item in items:
-                label = escape(item.label) if item.label else ""
-                items_html += f"""
-                <span class="bg-gray-700 px-2 py-1 rounded text-xs">
-                    {escape(item.emoji)} {label}
-                </span>
-                """
-            items_html += "</div>"
-        else:
-            items_html = '<p class="text-gray-500 text-xs mt-2">No roles configured</p>'
 
         created_at = (
             panel.created_at.strftime("%Y-%m-%d %H:%M") if panel.created_at else "-"
@@ -1487,19 +1474,13 @@ def role_panels_list_page(
                    class="font-medium text-blue-400 hover:text-blue-300">
                     {escape(panel.title)}
                 </a>
-                <div class="text-gray-500 text-xs mt-1">
-                    {escape(panel.description or "")}
-                </div>
             </td>
-            <td class="py-3 px-4">
+            <td class="py-3 px-4 whitespace-nowrap">
                 {panel_type_badge}{remove_reaction_badge}
             </td>
             <td class="py-3 px-4">{guild_display}</td>
             <td class="py-3 px-4">{channel_display}</td>
-            <td class="py-3 px-4">
-                <div class="text-sm">{len(items)} role(s)</div>
-                {items_html}
-            </td>
+            <td class="py-3 px-4 text-sm">{len(items)} role(s)</td>
             <td class="py-3 px-4 text-gray-400 text-sm">{created_at}</td>
             <td class="py-3 px-4 align-middle">
                 <div class="flex gap-2 items-center">
@@ -1589,6 +1570,7 @@ def role_panel_create_page(
     channels_map: dict[str, list[tuple[str, str]]] | None = None,
     discord_roles: dict[str, list[tuple[str, str, int]]] | None = None,
     csrf_token: str = "",
+    existing_items: list[dict[str, str | int | None]] | None = None,
 ) -> str:
     """Role panel create page template.
 
@@ -1599,6 +1581,7 @@ def role_panel_create_page(
         guilds_map: ギルドID -> ギルド名 のマッピング
         channels_map: ギルドID -> [(channel_id, channel_name), ...] のマッピング
         discord_roles: ギルドID -> [(role_id, role_name, color), ...] のマッピング
+        existing_items: バリデーションエラー時に保持するロールアイテムのリスト
     """
     if guilds_map is None:
         guilds_map = {}
@@ -1660,6 +1643,9 @@ def role_panel_create_page(
         ]
     discord_roles_json = json.dumps(discord_roles_for_js)
 
+    # バリデーションエラー時に保持するロールアイテムを JSON 化
+    existing_items_json = json.dumps(existing_items or [])
+
     content = f"""
     <div class="p-6">
         {
@@ -1672,13 +1658,18 @@ def role_panel_create_page(
             ],
         )
     }
-        <div class="max-w-2xl mx-auto">
-            <div class="bg-gray-800 p-6 rounded-lg">
-                {message_html}
-                {no_guilds_warning}
-                <form method="POST" action="/rolepanels/new" id="createPanelForm">
-                    {_csrf_field(csrf_token)}
-                    <div class="mb-4">
+
+        {message_html}
+        {no_guilds_warning}
+
+        <form method="POST" action="/rolepanels/new" id="createPanelForm">
+            {_csrf_field(csrf_token)}
+
+            <!-- Card 1: Panel Settings -->
+            <div class="bg-gray-800 p-6 rounded-lg mb-6">
+                <h2 class="text-lg font-semibold mb-4">Panel Settings</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
                         <label for="guild_select" class="block text-sm font-medium mb-2">
                             Server <span class="text-red-400">*</span>
                         </label>
@@ -1694,12 +1685,8 @@ def role_panel_create_page(
                             <option value="">-- Select Server --</option>
                             {guild_options}
                         </select>
-                        <p class="text-gray-500 text-xs mt-1">
-                            Select a Discord server where the Bot is present
-                        </p>
                     </div>
-
-                    <div class="mb-4">
+                    <div>
                         <label for="channel_select" class="block text-sm font-medium mb-2">
                             Channel <span class="text-red-400">*</span>
                         </label>
@@ -1714,12 +1701,10 @@ def role_panel_create_page(
                         >
                             <option value="">-- Select Channel --</option>
                         </select>
-                        <p class="text-gray-500 text-xs mt-1">
-                            Text channel where the panel will be posted
-                        </p>
                     </div>
-
-                    <div class="mb-4">
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
                         <label class="block text-sm font-medium mb-2">
                             Panel Type <span class="text-red-400">*</span>
                         </label>
@@ -1737,12 +1722,8 @@ def role_panel_create_page(
                                 <span>Reaction</span>
                             </label>
                         </div>
-                        <p class="text-gray-500 text-xs mt-1">
-                            Button: users click buttons. Reaction: users add/remove emoji reactions.
-                        </p>
                     </div>
-
-                    <div class="mb-4">
+                    <div>
                         <label class="block text-sm font-medium mb-2">
                             Message Format
                         </label>
@@ -1752,69 +1733,70 @@ def role_panel_create_page(
                                        {embed_selected}
                                        class="text-blue-500 focus:ring-blue-500">
                                 <span>Embed</span>
-                                <span class="text-gray-400 text-xs">(with color and formatting)</span>
                             </label>
                             <label class="flex items-center gap-2 cursor-pointer">
                                 <input type="radio" name="use_embed" value="0"
                                        {text_selected}
                                        class="text-blue-500 focus:ring-blue-500">
                                 <span>Text</span>
-                                <span class="text-gray-400 text-xs">(simple plain text)</span>
                             </label>
                         </div>
                     </div>
+                </div>
 
-                    <!-- Embed Color option (embed only) -->
-                    <div id="embedColorOption" class="mb-4{
+                <!-- Embed Color option (embed only) -->
+                <div id="embedColorOption" class="mt-4{
         " hidden" if not use_embed else ""
     }">
-                        <label for="embed_color" class="block text-sm font-medium mb-2">
-                            Embed Color
-                        </label>
-                        <div class="flex items-center gap-3">
-                            <input
-                                type="color"
-                                id="embed_color"
-                                name="color"
-                                value="{color if color else "#3498DB"}"
-                                class="w-12 h-10 p-1 bg-gray-700 border border-gray-600 rounded
-                                       cursor-pointer focus:outline-none focus:ring-2
-                                       focus:ring-blue-500"
-                            >
-                            <input
-                                type="text"
-                                id="embed_color_text"
-                                value="{color if color else "#3498DB"}"
-                                maxlength="7"
-                                pattern="#[0-9A-Fa-f]{{6}}"
-                                class="w-28 px-3 py-2 bg-gray-700 border border-gray-600 rounded
-                                       focus:outline-none focus:ring-2 focus:ring-blue-500
-                                       text-gray-100 font-mono text-sm"
-                                placeholder="#3498DB"
-                            >
-                        </div>
-                        <p class="text-gray-500 text-xs mt-1">
-                            Select the color for the embed sidebar
-                        </p>
+                    <label for="embed_color" class="block text-sm font-medium mb-2">
+                        Embed Color
+                    </label>
+                    <div class="flex items-center gap-3">
+                        <input
+                            type="color"
+                            id="embed_color"
+                            name="color"
+                            value="{color if color else "#3498DB"}"
+                            class="w-12 h-10 p-1 bg-gray-700 border border-gray-600 rounded
+                                   cursor-pointer focus:outline-none focus:ring-2
+                                   focus:ring-blue-500"
+                        >
+                        <input
+                            type="text"
+                            id="embed_color_text"
+                            value="{color if color else "#3498DB"}"
+                            maxlength="7"
+                            pattern="#[0-9A-Fa-f]{{6}}"
+                            class="w-28 px-3 py-2 bg-gray-700 border border-gray-600 rounded
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500
+                                   text-gray-100 font-mono text-sm"
+                            placeholder="#3498DB"
+                        >
                     </div>
+                </div>
 
-                    <!-- Remove Reaction option (reaction type only) -->
-                    <div id="removeReactionOption" class="mb-4 hidden">
-                        <label class="flex items-center gap-2 cursor-pointer">
-                            <input type="checkbox" name="remove_reaction" value="1"
-                                   id="removeReactionCheckbox"
-                                   {remove_reaction_checked}
-                                   class="rounded bg-gray-700 border-gray-600
-                                          text-blue-500 focus:ring-blue-500">
-                            <span>Auto-remove reactions</span>
-                        </label>
-                        <p class="text-gray-500 text-xs mt-1 ml-6">
-                            When enabled, reactions are automatically removed after toggling the role.
-                            Each reaction stays at count 1.
-                        </p>
-                    </div>
+                <!-- Remove Reaction option (reaction type only) -->
+                <div id="removeReactionOption" class="mt-4 hidden">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" name="remove_reaction" value="1"
+                               id="removeReactionCheckbox"
+                               {remove_reaction_checked}
+                               class="rounded bg-gray-700 border-gray-600
+                                      text-blue-500 focus:ring-blue-500">
+                        <span>Auto-remove reactions</span>
+                    </label>
+                    <p class="text-gray-500 text-xs mt-1 ml-6">
+                        When enabled, reactions are automatically removed after toggling the role.
+                        Each reaction stays at count 1.
+                    </p>
+                </div>
+            </div>
 
-                    <div class="mb-4">
+            <!-- Card 2: Title & Description -->
+            <div class="bg-gray-800 p-6 rounded-lg mb-6">
+                <h2 class="text-lg font-semibold mb-4">Title & Description</h2>
+                <div class="grid grid-cols-1 gap-4">
+                    <div>
                         <label for="title" class="block text-sm font-medium mb-2">
                             Title <span class="text-red-400">*</span>
                         </label>
@@ -1831,8 +1813,7 @@ def role_panel_create_page(
                             placeholder="Role Selection"
                         >
                     </div>
-
-                    <div class="mb-6">
+                    <div>
                         <label for="description" class="block text-sm font-medium mb-2">
                             Description
                         </label>
@@ -1847,53 +1828,62 @@ def role_panel_create_page(
                             placeholder="Click a button to get or remove a role"
                         >{escape(description)}</textarea>
                     </div>
+                </div>
+            </div>
 
-                    <!-- Role Items Section -->
-                    <div class="mb-6 border-t border-gray-600 pt-6">
-                        <div class="flex justify-between items-center mb-4">
-                            <label class="block text-sm font-medium">
-                                Role Items <span class="text-red-400">*</span>
-                            </label>
-                            <button
-                                type="button"
-                                id="addRoleItemBtn"
-                                class="bg-green-600 hover:bg-green-700 text-white text-sm
-                                       py-1 px-3 rounded transition-colors disabled:opacity-50
-                                       disabled:cursor-not-allowed disabled:hover:bg-green-600"
-                            >
-                                + Add Role
-                            </button>
-                        </div>
-                        <p class="text-gray-500 text-xs mb-4">
-                            Add at least one role for users to select.
-                        </p>
-                        <p id="noKnownRolesInfo" class="text-red-400 text-xs mb-4 hidden">
-                            No roles found for this guild. Please sync roles by starting the Bot first.
-                        </p>
-                        <div id="roleItemsContainer" class="space-y-3">
-                            <!-- Role item rows will be added here by JavaScript -->
-                        </div>
-                        <p id="noRolesWarning" class="text-yellow-400 text-sm mt-2">
-                            Please add at least one role item before creating the panel.
-                        </p>
-                    </div>
-
+            <!-- Card 3: Role Items -->
+            <div class="bg-gray-800 p-6 rounded-lg mb-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-lg font-semibold">Role Items</h2>
                     <button
-                        type="submit"
-                        id="submitBtn"
-                        class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium
-                               py-2 px-4 rounded transition-colors disabled:opacity-50
-                               disabled:cursor-not-allowed"
-                        disabled
+                        type="button"
+                        id="addRoleItemBtn"
+                        class="bg-green-600 hover:bg-green-700 text-white text-sm
+                               py-1 px-3 rounded transition-colors disabled:opacity-50
+                               disabled:cursor-not-allowed disabled:hover:bg-green-600"
                     >
-                        Create Panel
+                        + Add Role
                     </button>
-                </form>
-                <p class="mt-4 text-gray-500 text-sm">
-                    The panel will be created with the roles you add above.
+                </div>
+                <p id="noKnownRolesInfo" class="text-red-400 text-xs mb-4 hidden">
+                    No roles found for this guild. Please sync roles by starting the Bot first.
+                </p>
+                <div id="roleItemsContainer" class="space-y-3">
+                    <!-- Role item rows will be added here by JavaScript -->
+                </div>
+                <p id="noRolesWarning" class="text-yellow-400 text-sm mt-2 hidden">
+                    Please add at least one role item.
                 </p>
             </div>
-        </div>
+
+            <!-- Action Buttons -->
+            <div class="flex gap-3">
+                <button
+                    type="submit"
+                    name="action"
+                    value="save_draft"
+                    id="saveDraftBtn"
+                    class="bg-gray-600 hover:bg-gray-500 text-white font-medium
+                           py-2 px-6 rounded transition-colors disabled:opacity-50
+                           disabled:cursor-not-allowed"
+                    disabled
+                >
+                    Save &amp; Continue Editing
+                </button>
+                <button
+                    type="submit"
+                    name="action"
+                    value="create"
+                    id="submitBtn"
+                    class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium
+                           py-2 px-4 rounded transition-colors disabled:opacity-50
+                           disabled:cursor-not-allowed"
+                    disabled
+                >
+                    Create Panel
+                </button>
+            </div>
+        </form>
     </div>
 
     <script>
@@ -1973,9 +1963,11 @@ def role_panel_create_page(
 
         // --- Role Items Management ---
         const discordRoles = {discord_roles_json};
+        const existingItems = {existing_items_json};
         const roleItemsContainer = document.getElementById('roleItemsContainer');
         const addRoleItemBtn = document.getElementById('addRoleItemBtn');
         const submitBtn = document.getElementById('submitBtn');
+        const saveDraftBtn = document.getElementById('saveDraftBtn');
         const noRolesWarning = document.getElementById('noRolesWarning');
         const noKnownRolesInfo = document.getElementById('noKnownRolesInfo');
         let roleItemIndex = 0;
@@ -1984,6 +1976,7 @@ def role_panel_create_page(
             const itemCount = roleItemsContainer.querySelectorAll('.role-item-row').length;
             const hasGuild = guildSelect.value !== '';
             submitBtn.disabled = itemCount === 0 || !hasGuild;
+            saveDraftBtn.disabled = !hasGuild;
             noRolesWarning.classList.toggle('hidden', itemCount > 0);
         }}
 
@@ -2018,7 +2011,7 @@ def role_panel_create_page(
             return div.innerHTML;
         }}
 
-        function createRoleItemRow(index) {{
+        function createRoleItemRow(index, prefill) {{
             const row = document.createElement('div');
             row.className = 'role-item-row bg-gray-700 p-4 rounded flex flex-wrap gap-3 items-end';
             row.draggable = true;
@@ -2120,6 +2113,34 @@ def role_panel_create_page(
 
             // ロールオートコンプリートのイベント設定
             setupRoleAutocomplete(row);
+
+            // プリフィルデータがある場合は値をセット
+            if (prefill) {{
+                const emojiInput = row.querySelector('input[name="item_emoji[]"]');
+                const roleInput = row.querySelector('.role-input');
+                const roleIdInput = row.querySelector('.role-id-input');
+                const labelInput = row.querySelector('input[name="item_label[]"]');
+                const styleSelect = row.querySelector('select[name="item_style[]"]');
+                const posInput = row.querySelector('.position-input');
+
+                if (emojiInput && prefill.emoji) emojiInput.value = prefill.emoji;
+                if (roleIdInput && prefill.role_id) roleIdInput.value = prefill.role_id;
+                if (roleInput && prefill.role_id) {{
+                    // discordRoles からロール名を検索
+                    let roleName = '';
+                    for (const guildId in discordRoles) {{
+                        const found = discordRoles[guildId].find(r => r.id === prefill.role_id);
+                        if (found) {{
+                            roleName = found.name;
+                            break;
+                        }}
+                    }}
+                    roleInput.value = roleName ? '@' + roleName : prefill.role_id;
+                }}
+                if (labelInput && prefill.label) labelInput.value = prefill.label;
+                if (styleSelect && prefill.style) styleSelect.value = prefill.style;
+                if (posInput && prefill.position != null) posInput.value = prefill.position;
+            }}
 
             return row;
         }}
@@ -2319,6 +2340,14 @@ def role_panel_create_page(
             }}
         }}
 
+        // バリデーションエラー時に既存アイテムを復元
+        if (existingItems.length > 0) {{
+            existingItems.forEach(function(item) {{
+                const row = createRoleItemRow(roleItemIndex++, item);
+                roleItemsContainer.appendChild(row);
+            }});
+        }}
+
         // 初期状態を設定
         updateSubmitButton();
         updateRolesInfo();
@@ -2425,12 +2454,16 @@ def role_panel_detail_page(
             f'<td class="py-3 px-4">{style_display}</td>' if is_button_type else ""
         )
         items_rows += f"""
-        <tr class="border-b border-gray-700">
+        <tr class="border-b border-gray-700" data-item-id="{item.id}" draggable="true">
+            <td class="py-3 px-2 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm-6 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
+                </svg>
+            </td>
             <td class="py-3 px-4 text-xl">{escape(item.emoji)}</td>
             <td class="py-3 px-4">{role_id_display}</td>
             {label_cell}
             {style_cell}
-            <td class="py-3 px-4">{item.position}</td>
             <td class="py-3 px-4">
                 <form method="POST" action="/rolepanels/{panel.id}/items/{item.id}/delete"
                       onsubmit="return confirm('Delete this role item?');">
@@ -2453,9 +2486,6 @@ def role_panel_detail_page(
             </td>
         </tr>
         """
-
-    # Next position for new item
-    next_position = max((item.position for item in items), default=-1) + 1
 
     content = f"""
     <div class="p-6">
@@ -2550,6 +2580,24 @@ def role_panel_detail_page(
         escape(panel.description or "")
     }</textarea>
                     </div>
+                    {
+        f'''<div id="editColorOption">
+                        <label for="edit_color" class="block text-sm text-gray-400 mb-1">Embed Color</label>
+                        <div class="flex items-center gap-3">
+                            <input type="color" id="edit_color" name="color"
+                                   value="{f"#{panel.color:06x}" if panel.color else "#3498DB"}"
+                                   class="w-10 h-10 rounded cursor-pointer bg-transparent border-0">
+                            <input type="text" id="edit_color_text"
+                                   value="{f"#{panel.color:06x}".upper() if panel.color else "#3498DB"}"
+                                   maxlength="7" pattern="#[0-9A-Fa-f]{{6}}"
+                                   class="w-28 px-3 py-2 bg-gray-700 border border-gray-600 rounded
+                                          focus:outline-none focus:border-blue-500
+                                          text-gray-100 font-mono text-sm">
+                        </div>
+                    </div>'''
+        if panel.use_embed
+        else ""
+    }
                     <div>
                         <button type="submit"
                                 class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded font-medium
@@ -2601,6 +2649,7 @@ def role_panel_detail_page(
                 <table class="w-full">
                     <thead class="bg-gray-700">
                         <tr>
+                            <th class="py-3 px-2 w-8"></th>
                             <th class="py-3 px-4 text-left">Emoji</th>
                             <th class="py-3 px-4 text-left">Role</th>
                             {
@@ -2608,7 +2657,6 @@ def role_panel_detail_page(
         if not is_button_type
         else '<th class="py-3 px-4 text-left">Label</th><th class="py-3 px-4 text-left">Style</th>'
     }
-                            <th class="py-3 px-4 text-left">Position</th>
                             <th class="py-3 px-4 text-left">Actions</th>
                         </tr>
                     </thead>
@@ -2704,21 +2752,6 @@ def role_panel_detail_page(
         if is_button_type
         else ""
     }
-                    <div>
-                        <label for="position" class="block text-sm font-medium mb-2">
-                            Position
-                        </label>
-                        <input
-                            type="number"
-                            id="position"
-                            name="position"
-                            value="{next_position}"
-                            min="0"
-                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
-                                   focus:outline-none focus:ring-2 focus:ring-blue-500
-                                   text-gray-100"
-                        >
-                    </div>
                 </div>
                 <button
                     type="submit"
@@ -2816,5 +2849,71 @@ def role_panel_detail_page(
     </script>
     '''
     }
+    <script>
+    (function() {{
+        const editColorPicker = document.getElementById('edit_color');
+        const editColorText = document.getElementById('edit_color_text');
+        if (editColorPicker && editColorText) {{
+            editColorPicker.addEventListener('input', function() {{
+                editColorText.value = this.value.toUpperCase();
+            }});
+            editColorText.addEventListener('input', function() {{
+                if (/^#[0-9A-Fa-f]{{6}}$/.test(this.value)) {{
+                    editColorPicker.value = this.value;
+                }}
+            }});
+        }}
+    }})();
+    </script>
+    <script>
+    (function() {{
+        const tbody = document.querySelector('table tbody');
+        if (!tbody) return;
+        const panelId = {panel.id};
+        let dragRow = null;
+
+        tbody.addEventListener('dragstart', function(e) {{
+            dragRow = e.target.closest('tr[data-item-id]');
+            if (!dragRow) return;
+            dragRow.classList.add('opacity-50');
+            e.dataTransfer.effectAllowed = 'move';
+        }});
+
+        tbody.addEventListener('dragend', function() {{
+            if (dragRow) dragRow.classList.remove('opacity-50');
+            dragRow = null;
+            tbody.querySelectorAll('tr').forEach(r => r.classList.remove('border-t-2', 'border-blue-400'));
+        }});
+
+        tbody.addEventListener('dragover', function(e) {{
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const target = e.target.closest('tr[data-item-id]');
+            tbody.querySelectorAll('tr').forEach(r => r.classList.remove('border-t-2', 'border-blue-400'));
+            if (target && target !== dragRow) {{
+                target.classList.add('border-t-2', 'border-blue-400');
+            }}
+        }});
+
+        tbody.addEventListener('drop', function(e) {{
+            e.preventDefault();
+            const target = e.target.closest('tr[data-item-id]');
+            if (!target || !dragRow || target === dragRow) return;
+            tbody.insertBefore(dragRow, target);
+            // Collect new order and send to server
+            const itemIds = Array.from(tbody.querySelectorAll('tr[data-item-id]'))
+                .map(r => parseInt(r.dataset.itemId));
+            const csrfInput = document.querySelector('input[name="csrf_token"]');
+            fetch('/rolepanels/' + panelId + '/items/reorder', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{
+                    item_ids: itemIds,
+                    csrf_token: csrfInput ? csrfInput.value : ''
+                }})
+            }});
+        }});
+    }})();
+    </script>
     """
     return _base(f"Panel: {panel.title}", content)

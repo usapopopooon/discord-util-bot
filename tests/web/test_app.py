@@ -3115,8 +3115,8 @@ class TestRolePanelsRoutes:
         response = await authenticated_client.get("/rolepanels")
         assert response.status_code == 200
         assert "Panel with Items" in response.text
-        assert "🎮" in response.text
-        assert "Gamer" in response.text
+        # アイテム数のみ表示される（個別の絵文字やラベルは非表示）
+        assert "1 role(s)" in response.text
 
     async def test_delete_rolepanel(
         self, authenticated_client: AsyncClient, db_session: AsyncSession
@@ -3649,6 +3649,30 @@ class TestRolePanelCreateRoutes:
         assert "123456789012345678" in response.text
         assert "987654321098765432" in response.text
         assert "Test desc" in response.text
+
+    async def test_create_preserves_role_items_on_error(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """バリデーションエラー時にロールアイテムが保持される。"""
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+                "panel_type": "reaction",
+                "title": "",  # Empty title causes error
+                "item_emoji[]": "🎮",
+                "item_role_id[]": "111222333444555666",
+                "item_label[]": "Gamer",
+                "item_style[]": "primary",
+                "item_position[]": "0",
+            },
+        )
+        assert response.status_code == 200
+        assert "Title is required" in response.text
+        # ロールアイテムが existingItems JSON に保持される
+        assert '"role_id": "111222333444555666"' in response.text
+        assert '"label": "Gamer"' in response.text
 
     async def test_create_without_description(
         self, authenticated_client: AsyncClient, db_session: AsyncSession
@@ -5701,8 +5725,8 @@ class TestRolePanelEndToEnd:
         list_response = await authenticated_client.get("/rolepanels")
         assert list_response.status_code == 200
         assert "Itemized Panel" in list_response.text
-        # アイテム数 (絵文字) が表示される
-        assert "🎮" in list_response.text
+        # アイテム数が表示される
+        assert "3 role(s)" in list_response.text
 
     async def test_add_custom_discord_emoji(
         self, authenticated_client: AsyncClient, db_session: AsyncSession

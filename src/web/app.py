@@ -12,9 +12,9 @@ from typing import Annotated, Any, cast
 
 import bcrypt
 from fastapi import Cookie, Depends, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from itsdangerous import BadSignature, URLSafeTimedSerializer
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -2096,6 +2096,7 @@ async def rolepanel_create_post(
     use_embed: Annotated[str, Form()] = "1",
     color: Annotated[str, Form()] = "",
     remove_reaction: Annotated[str, Form()] = "",
+    action: Annotated[str, Form()] = "create",
     csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
 ) -> Response:
@@ -2159,6 +2160,31 @@ async def rolepanel_create_post(
     # Convert remove_reaction to boolean (only effective for reaction panels)
     remove_reaction_bool = remove_reaction == "1" and panel_type == "reaction"
 
+    # Parse role items from form data (バリデーションエラー時に保持するため先に解析)
+    form_data = await request.form()
+    item_emojis = form_data.getlist("item_emoji[]")
+    item_role_ids = form_data.getlist("item_role_id[]")
+    item_labels = form_data.getlist("item_label[]")
+    item_styles = form_data.getlist("item_style[]")
+    item_positions = form_data.getlist("item_position[]")
+
+    # フォームから送信されたアイテムを保持用に収集
+    submitted_items: list[dict[str, str | int | None]] = []
+    for i in range(len(item_emojis)):
+        submitted_items.append(
+            {
+                "emoji": str(item_emojis[i]).strip() if i < len(item_emojis) else "",
+                "role_id": str(item_role_ids[i]).strip()
+                if i < len(item_role_ids)
+                else "",
+                "label": str(item_labels[i]).strip() if i < len(item_labels) else "",
+                "style": str(item_styles[i]).strip()
+                if i < len(item_styles)
+                else "secondary",
+                "position": i,
+            }
+        )
+
     # Validation helper
     def error_response(error: str) -> HTMLResponse:
         return HTMLResponse(
@@ -2176,6 +2202,7 @@ async def rolepanel_create_post(
                 channels_map=channels_map,
                 discord_roles=discord_roles,
                 csrf_token=generate_csrf_token(),
+                existing_items=submitted_items,
             )
         )
 
@@ -2204,16 +2231,9 @@ async def rolepanel_create_post(
     if len(description) > 4096:
         return error_response("Description must be 4096 characters or less")
 
-    # Parse role items from form data
-    form_data = await request.form()
-    item_emojis = form_data.getlist("item_emoji[]")
-    item_role_ids = form_data.getlist("item_role_id[]")
-    item_labels = form_data.getlist("item_label[]")
-    item_styles = form_data.getlist("item_style[]")
-    item_positions = form_data.getlist("item_position[]")
-
-    # Validate at least one role item
-    if not item_emojis:
+    # Validate at least one role item (only for "create" action)
+    is_draft = action == "save_draft"
+    if not is_draft and not item_emojis:
         return error_response("At least one role item is required")
 
     # Validate and collect role items
@@ -2386,11 +2406,12 @@ async def rolepanel_edit(
     panel_id: int,
     title: Annotated[str, Form()] = "",
     description: Annotated[str, Form()] = "",
+    color: Annotated[str, Form()] = "",
     csrf_token: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    """Edit role panel title and description."""
+    """Edit role panel title, description, and color."""
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
@@ -2438,6 +2459,15 @@ async def rolepanel_edit(
 
     panel.title = title
     panel.description = description if description else None
+
+    # Update color if panel uses embed
+    if panel.use_embed:
+        color = color.strip()
+        color_hex = color.lstrip("#")
+        if len(color_hex) == 6:
+            with suppress(ValueError):
+                panel.color = int(color_hex, 16)
+
     await db.commit()
 
     # クールタイム記録
@@ -2546,7 +2576,6 @@ async def rolepanel_add_item(
     role_id: Annotated[str, Form()] = "",
     label: Annotated[str, Form()] = "",
     style: Annotated[str, Form()] = "secondary",
-    position: Annotated[int, Form()] = 0,
     csrf_token: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -2666,6 +2695,9 @@ async def rolepanel_add_item(
     if style not in valid_styles:
         style = "secondary"
 
+    # Auto-calculate position from existing items
+    next_position = max((it.position for it in items), default=-1) + 1
+
     # 二重ロック: 同じパネルへの同時アイテム追加を防止
     async with get_resource_lock(f"rolepanel:add_item:{panel_id}"):
         # Create the item
@@ -2675,7 +2707,7 @@ async def rolepanel_add_item(
             emoji=normalized_emoji,
             label=label if label else None,
             style=style,
-            position=position,
+            position=next_position,
         )
         db.add(item)
 
@@ -2744,3 +2776,44 @@ async def rolepanel_delete_item(
     return RedirectResponse(
         url=f"/rolepanels/{panel_id}?success=Role+item+deleted", status_code=302
     )
+
+
+@app.post("/rolepanels/{panel_id}/items/reorder", response_model=None)
+async def rolepanel_reorder_items(
+    request: Request,
+    panel_id: int,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Reorder role items via drag-and-drop."""
+    if not user:
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+    body = await request.json()
+    csrf_token = body.get("csrf_token", "")
+    if not validate_csrf_token(csrf_token):
+        return JSONResponse({"error": "Invalid CSRF token"}, status_code=403)
+
+    item_ids = body.get("item_ids", [])
+    if not isinstance(item_ids, list):
+        return JSONResponse({"error": "Invalid item_ids"}, status_code=400)
+
+    # Check panel exists
+    panel_result = await db.execute(select(RolePanel).where(RolePanel.id == panel_id))
+    panel = panel_result.scalar_one_or_none()
+    if not panel:
+        return JSONResponse({"error": "Panel not found"}, status_code=404)
+
+    async with get_resource_lock(f"rolepanel:reorder:{panel_id}"):
+        for position, item_id in enumerate(item_ids):
+            await db.execute(
+                update(RolePanelItem)
+                .where(
+                    RolePanelItem.id == int(item_id),
+                    RolePanelItem.panel_id == panel_id,
+                )
+                .values(position=position)
+            )
+        await db.commit()
+
+    return JSONResponse({"ok": True})

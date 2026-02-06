@@ -930,13 +930,13 @@ class TestRolePanelCreatePage:
         """use_embed=False の場合、カラーオプションが非表示になる。"""
         result = role_panel_create_page(use_embed=False)
         # hidden クラスが含まれる
-        assert 'id="embedColorOption" class="mb-4 hidden"' in result
+        assert 'id="embedColorOption" class="mt-4 hidden"' in result
 
     def test_color_option_visible_when_embed_selected(self) -> None:
         """use_embed=True の場合、カラーオプションが表示される。"""
         result = role_panel_create_page(use_embed=True)
         # hidden クラスが含まれない
-        assert 'id="embedColorOption" class="mb-4"' in result
+        assert 'id="embedColorOption" class="mt-4"' in result
 
     def test_color_picker_sync_javascript(self) -> None:
         """カラーピッカーとテキスト入力の同期 JavaScript が含まれる。"""
@@ -981,6 +981,44 @@ class TestRolePanelCreatePage:
         result = role_panel_create_page()
         assert "role-option" in result
         assert "hover:bg-gray-600" in result
+
+    def test_existing_items_preserved_on_error(self) -> None:
+        """バリデーションエラー時に既存アイテムが保持される。"""
+        items = [
+            {
+                "emoji": "🎮",
+                "role_id": "123",
+                "label": "Gamer",
+                "style": "primary",
+                "position": 0,
+            },
+            {
+                "emoji": "⭐",
+                "role_id": "456",
+                "label": "",
+                "style": "secondary",
+                "position": 1,
+            },
+        ]
+        result = role_panel_create_page(
+            error="Title is required",
+            existing_items=items,
+        )
+        assert "existingItems" in result
+        assert '"role_id": "123"' in result
+        assert '"label": "Gamer"' in result
+        assert '"style": "primary"' in result
+
+    def test_existing_items_empty_by_default(self) -> None:
+        """デフォルトでは既存アイテムは空。"""
+        result = role_panel_create_page()
+        assert "const existingItems = []" in result
+
+    def test_existing_items_restore_javascript(self) -> None:
+        """既存アイテム復元用の JavaScript が含まれる。"""
+        result = role_panel_create_page()
+        assert "existingItems.forEach" in result
+        assert "createRoleItemRow(roleItemIndex++, item)" in result
 
 
 class TestRolePanelDetailPage:
