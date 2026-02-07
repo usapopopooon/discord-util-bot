@@ -4516,6 +4516,123 @@ class TestGetDiscordGuildsAndChannels:
         assert "general" in channel_names
         assert "voice-lobby" in channel_names
 
+    async def test_excludes_category_channels(self, db_session: AsyncSession) -> None:
+        """カテゴリチャンネル (type=4) は除外される。"""
+        from src.web.app import _get_discord_guilds_and_channels
+
+        db_session.add(DiscordGuild(guild_id="123", guild_name="Test Guild"))
+        db_session.add(
+            DiscordChannel(
+                guild_id="123",
+                channel_id="1",
+                channel_name="general",
+                channel_type=0,
+                position=0,
+            )
+        )
+        db_session.add(
+            DiscordChannel(
+                guild_id="123",
+                channel_id="2",
+                channel_name="Support",
+                channel_type=4,
+                position=1,
+            )
+        )
+        await db_session.commit()
+
+        _, channels_map = await _get_discord_guilds_and_channels(db_session)
+
+        assert len(channels_map["123"]) == 1
+        assert channels_map["123"][0] == ("1", "general")
+
+
+class TestGetDiscordCategories:
+    """_get_discord_categories のテスト。"""
+
+    async def test_returns_only_categories(self, db_session: AsyncSession) -> None:
+        """カテゴリチャンネル (type=4) のみ返される。"""
+        from src.web.app import _get_discord_categories
+
+        db_session.add(DiscordGuild(guild_id="123", guild_name="Test Guild"))
+        db_session.add(
+            DiscordChannel(
+                guild_id="123",
+                channel_id="1",
+                channel_name="general",
+                channel_type=0,
+                position=0,
+            )
+        )
+        db_session.add(
+            DiscordChannel(
+                guild_id="123",
+                channel_id="2",
+                channel_name="Support",
+                channel_type=4,
+                position=1,
+            )
+        )
+        db_session.add(
+            DiscordChannel(
+                guild_id="123",
+                channel_id="3",
+                channel_name="Development",
+                channel_type=4,
+                position=2,
+            )
+        )
+        await db_session.commit()
+
+        categories_map = await _get_discord_categories(db_session)
+
+        assert len(categories_map["123"]) == 2
+        names = [c[1] for c in categories_map["123"]]
+        assert "Support" in names
+        assert "Development" in names
+        assert "general" not in names
+
+    async def test_returns_empty_when_no_categories(
+        self, db_session: AsyncSession
+    ) -> None:
+        """カテゴリがない場合は空の辞書を返す。"""
+        from src.web.app import _get_discord_categories
+
+        categories_map = await _get_discord_categories(db_session)
+        assert categories_map == {}
+
+    async def test_grouped_by_guild(self, db_session: AsyncSession) -> None:
+        """ギルドごとにグループ化される。"""
+        from src.web.app import _get_discord_categories
+
+        db_session.add(DiscordGuild(guild_id="111", guild_name="Guild A"))
+        db_session.add(DiscordGuild(guild_id="222", guild_name="Guild B"))
+        db_session.add(
+            DiscordChannel(
+                guild_id="111",
+                channel_id="1",
+                channel_name="Cat A",
+                channel_type=4,
+                position=0,
+            )
+        )
+        db_session.add(
+            DiscordChannel(
+                guild_id="222",
+                channel_id="2",
+                channel_name="Cat B",
+                channel_type=4,
+                position=0,
+            )
+        )
+        await db_session.commit()
+
+        categories_map = await _get_discord_categories(db_session)
+
+        assert len(categories_map) == 2
+        assert categories_map["111"] == [("1", "Cat A")]
+        assert categories_map["222"] == [("2", "Cat B")]
+
 
 class TestGetKnownGuildsAndChannels:
     """_get_known_guilds_and_channels のテスト。"""
@@ -10258,6 +10375,8 @@ class TestTicketCategoryRoutes:
         response = await authenticated_client.get("/tickets/categories/new")
         assert response.status_code == 200
         assert "Create" in response.text
+        assert "discordCategorySelect" in response.text
+        assert "categoriesData" in response.text
 
     async def test_category_create_page_requires_auth(
         self, client: AsyncClient
@@ -10310,6 +10429,27 @@ class TestTicketCategoryRoutes:
         cats = list(result.scalars().all())
         assert len(cats) == 1
         assert cats[0].log_channel_id == "555666777"
+
+    async def test_category_create_with_discord_category(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """discord_category_id 付きでカテゴリを作成できる。"""
+        response = await authenticated_client.post(
+            "/tickets/categories/new",
+            data={
+                "guild_id": "123456789012345678",
+                "name": "Support",
+                "staff_role_id": "999888777",
+                "discord_category_id": "444555666",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(TicketCategory))
+        cats = list(result.scalars().all())
+        assert len(cats) == 1
+        assert cats[0].discord_category_id == "444555666"
 
     async def test_category_create_without_log_channel(
         self, authenticated_client: AsyncClient, db_session: AsyncSession

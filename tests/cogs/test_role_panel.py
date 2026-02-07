@@ -3457,16 +3457,18 @@ class TestGuildInfoAndChannelSyncEventListeners:
         assert count == 1
         mock_upsert.assert_called_once()
 
-    async def test_sync_guild_channels_skips_category(
+    async def test_sync_guild_channels_includes_category(
         self, mock_bot: MagicMock, mock_guild: MagicMock
     ) -> None:
-        """_sync_guild_channels がカテゴリーをスキップする。"""
+        """_sync_guild_channels がカテゴリチャンネルを同期する。"""
         from src.cogs.role_panel import RolePanelCog
 
         category = MagicMock()
         category.id = 222
         category.name = "Category"
         category.type = discord.ChannelType.category
+        category.category_id = None
+        category.position = 0
         category.guild = mock_guild
         perms = MagicMock()
         perms.view_channel = True
@@ -3483,8 +3485,8 @@ class TestGuildInfoAndChannelSyncEventListeners:
             with patch("src.cogs.role_panel.upsert_discord_channel") as mock_upsert:
                 count = await cog._sync_guild_channels(mock_guild)
 
-        assert count == 0
-        mock_upsert.assert_not_called()
+        assert count == 1
+        mock_upsert.assert_called_once()
 
     async def test_sync_guild_channels_skips_no_view_permission(
         self, mock_bot: MagicMock, mock_guild: MagicMock, mock_text_channel: MagicMock
@@ -3763,9 +3765,9 @@ class TestGuildInfoAndChannelSyncEventListeners:
         before = MagicMock()
         before.type = discord.ChannelType.text
 
-        # タイプがカテゴリーに変更 (非対象)
+        # タイプがステージに変更 (非対象)
         after = MagicMock()
-        after.type = discord.ChannelType.category
+        after.type = discord.ChannelType.stage_voice
         after.guild = mock_text_channel.guild
         after.id = mock_text_channel.id
 

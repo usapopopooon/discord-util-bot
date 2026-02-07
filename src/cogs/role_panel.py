@@ -481,10 +481,11 @@ class RolePanelCog(commands.Cog):
     # 同期イベント (ギルド、チャンネル、ロール)
     # -------------------------------------------------------------------------
 
-    # 同期対象のチャンネルタイプ (テキスト系 + ボイス)
+    # 同期対象のチャンネルタイプ (テキスト系 + ボイス + カテゴリ)
     SYNC_CHANNEL_TYPES = {
         discord.ChannelType.text,  # 0
         discord.ChannelType.voice,  # 2
+        discord.ChannelType.category,  # 4
         discord.ChannelType.news,  # 5 (announcement)
         discord.ChannelType.forum,  # 15
     }

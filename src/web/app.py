@@ -2139,11 +2139,11 @@ async def _get_discord_guilds_and_channels(
         g.guild_id: g.guild_name for g in guilds_result.scalars()
     }
 
-    # チャンネル情報を取得
+    # チャンネル情報を取得 (カテゴリ type=4 は除外)
     channels_result = await db.execute(
-        select(DiscordChannel).order_by(
-            DiscordChannel.guild_id, DiscordChannel.position
-        )
+        select(DiscordChannel)
+        .where(DiscordChannel.channel_type != 4)
+        .order_by(DiscordChannel.guild_id, DiscordChannel.position)
     )
 
     channels_map: dict[str, list[tuple[str, str]]] = {}
@@ -2155,6 +2155,29 @@ async def _get_discord_guilds_and_channels(
         )
 
     return guilds_map, channels_map
+
+
+async def _get_discord_categories(
+    db: AsyncSession,
+) -> dict[str, list[tuple[str, str]]]:
+    """キャッシュされた Discord カテゴリチャンネル情報を取得する。
+
+    Returns:
+        ギルドID -> [(カテゴリID, カテゴリ名), ...] のマッピング
+    """
+    result = await db.execute(
+        select(DiscordChannel)
+        .where(DiscordChannel.channel_type == 4)
+        .order_by(DiscordChannel.guild_id, DiscordChannel.position)
+    )
+
+    categories_map: dict[str, list[tuple[str, str]]] = {}
+    for cat in result.scalars():
+        if cat.guild_id not in categories_map:
+            categories_map[cat.guild_id] = []
+        categories_map[cat.guild_id].append((cat.channel_id, cat.channel_name))
+
+    return categories_map
 
 
 @app.get("/rolepanels/new", response_model=None)
@@ -3181,6 +3204,7 @@ async def ticket_category_create_get(
 
     guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
     discord_roles = await _get_discord_roles_by_guild(db)
+    categories_map = await _get_discord_categories(db)
 
     # Convert roles to simple (id, name) format
     roles_map: dict[str, list[tuple[str, str]]] = {}
@@ -3192,6 +3216,7 @@ async def ticket_category_create_get(
             guilds_map=guilds_map,
             roles_map=roles_map,
             channels_map=channels_map,
+            categories_map=categories_map,
             csrf_token=generate_csrf_token(),
         )
     )
@@ -3227,6 +3252,7 @@ async def ticket_category_create_post(
     if not guild_id or not name or not staff_role_id:
         guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
         discord_roles = await _get_discord_roles_by_guild(db)
+        categories_map = await _get_discord_categories(db)
         roles_map: dict[str, list[tuple[str, str]]] = {}
         for gid, role_list in discord_roles.items():
             roles_map[gid] = [(rid, name) for rid, name, _ in role_list]
@@ -3235,6 +3261,7 @@ async def ticket_category_create_post(
                 guilds_map=guilds_map,
                 roles_map=roles_map,
                 channels_map=channels_map,
+                categories_map=categories_map,
                 csrf_token=generate_csrf_token(),
                 error="Server, name, and staff role are required.",
             ),

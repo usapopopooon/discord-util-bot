@@ -2363,6 +2363,28 @@ class TestTicketCategoryCreatePage:
         assert "channelsData" in result
         assert "456" in result
 
+    def test_discord_category_select(self) -> None:
+        """Discord カテゴリのドロップダウンが表示される。"""
+        result = ticket_category_create_page(
+            guilds_map={"123": "Test Guild"},
+            roles_map={},
+            categories_map={"123": [("789", "Support")]},
+            csrf_token="token",
+        )
+        assert "discordCategorySelect" in result
+        assert "Discord Category" in result
+
+    def test_categories_data_in_script(self) -> None:
+        """カテゴリデータが JavaScript に埋め込まれる。"""
+        result = ticket_category_create_page(
+            guilds_map={"123": "Test Guild"},
+            roles_map={},
+            categories_map={"123": [("789", "Support")]},
+            csrf_token="token",
+        )
+        assert "categoriesData" in result
+        assert "789" in result
+
 
 class TestTicketPanelsListPage:
     """ticket_panels_list_page のテスト。"""

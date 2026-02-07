@@ -3624,6 +3624,7 @@ def ticket_category_create_page(
     guilds_map: dict[str, str] | None = None,
     roles_map: dict[str, list[tuple[str, str]]] | None = None,
     channels_map: dict[str, list[tuple[str, str]]] | None = None,
+    categories_map: dict[str, list[tuple[str, str]]] | None = None,
     csrf_token: str = "",
     error: str | None = None,
 ) -> str:
@@ -3634,6 +3635,8 @@ def ticket_category_create_page(
         roles_map = {}
     if channels_map is None:
         channels_map = {}
+    if categories_map is None:
+        categories_map = {}
 
     guild_options = ""
     for gid, gname in sorted(guilds_map.items(), key=lambda x: x[1]):
@@ -3661,6 +3664,11 @@ def ticket_category_create_page(
     for gid, ch_list in channels_map.items():
         channels_data[gid] = [{"id": cid, "name": name} for cid, name in ch_list]
     channels_json = json_mod.dumps(channels_data)
+
+    cat_data: dict[str, list[dict[str, str]]] = {}
+    for gid, cat_list in categories_map.items():
+        cat_data[gid] = [{"id": cid, "name": name} for cid, name in cat_list]
+    categories_json = json_mod.dumps(cat_data)
 
     content = f"""
     <div class="p-6">
@@ -3707,12 +3715,13 @@ def ticket_category_create_page(
 
                 <div>
                     <label class="block text-sm font-medium mb-1">
-                        Discord Category ID
+                        Discord Category
                         <span class="text-gray-400 font-normal">(optional)</span>
                     </label>
-                    <input type="text" name="discord_category_id"
-                           placeholder="e.g. 123456789"
-                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                    <select name="discord_category_id" id="discordCategorySelect"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">None</option>
+                    </select>
                     <p class="text-xs text-gray-500 mt-1">
                         Ticket channels will be created under this Discord category.
                     </p>
@@ -3759,6 +3768,7 @@ def ticket_category_create_page(
     <script>
     const rolesData = {roles_json};
     const channelsData = {channels_json};
+    const categoriesData = {categories_json};
     function updateRoles() {{
         const guildId = document.getElementById('guildSelect').value;
         const roleSelect = document.getElementById('staffRoleSelect');
@@ -3769,6 +3779,16 @@ def ticket_category_create_page(
                 opt.value = role.id;
                 opt.textContent = role.name;
                 roleSelect.appendChild(opt);
+            }});
+        }}
+        const catSelect = document.getElementById('discordCategorySelect');
+        catSelect.innerHTML = '<option value="">None</option>';
+        if (categoriesData[guildId]) {{
+            categoriesData[guildId].forEach(cat => {{
+                const opt = document.createElement('option');
+                opt.value = cat.id;
+                opt.textContent = cat.name;
+                catSelect.appendChild(opt);
             }});
         }}
         const chSelect = document.getElementById('logChannelSelect');
