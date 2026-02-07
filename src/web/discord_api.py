@@ -608,3 +608,117 @@ async def post_ticket_panel_to_discord(
     except httpx.RequestError as e:
         logger.error("Request error posting ticket panel %d: %s", panel.id, e)
         return False, None, f"Discord API への接続に失敗しました: {e}"
+
+
+async def edit_ticket_panel_in_discord(
+    panel: TicketPanel,
+    associations: list[TicketPanelCategory],
+    category_names: dict[int, str],
+) -> tuple[bool, str | None]:
+    """Discord のチケットパネルメッセージを編集する。
+
+    Args:
+        panel: 編集するチケットパネル (message_id が必要)
+        associations: パネルに関連付けられたカテゴリ
+        category_names: カテゴリ ID → 名前のマッピング
+
+    Returns:
+        (success, error_message) のタプル
+    """
+    if not settings.discord_token:
+        return False, "Discord token is not configured"
+
+    if not panel.message_id:
+        return False, "Panel has no message_id"
+
+    # Embed ペイロード
+    payload: dict[str, Any] = {
+        "embeds": [
+            {
+                "title": panel.title,
+                "description": panel.description
+                or "下のボタンをクリックしてチケットを作成してください。",
+                "color": 0x3498DB,
+            }
+        ],
+    }
+
+    # ボタンコンポーネント
+    if associations:
+        buttons: list[dict[str, Any]] = []
+        for assoc in associations[:25]:
+            label = assoc.button_label or category_names.get(
+                assoc.category_id, "Ticket"
+            )
+            button: dict[str, Any] = {
+                "type": 2,
+                "style": BUTTON_STYLE_MAP.get(assoc.button_style, 1),
+                "custom_id": f"ticket_panel:{panel.id}:{assoc.category_id}",
+                "label": label,
+            }
+            if assoc.button_emoji:
+                if assoc.button_emoji.startswith("<"):
+                    animated = assoc.button_emoji.startswith("<a:")
+                    parts = assoc.button_emoji.strip("<>").split(":")
+                    if len(parts) >= 3:
+                        button["emoji"] = {
+                            "name": parts[1],
+                            "id": parts[2],
+                            "animated": animated,
+                        }
+                else:
+                    button["emoji"] = {"name": assoc.button_emoji}
+            buttons.append(button)
+
+        action_rows: list[dict[str, Any]] = []
+        for i in range(0, len(buttons), 5):
+            action_rows.append({"type": 1, "components": buttons[i : i + 5]})
+        payload["components"] = action_rows
+    else:
+        payload["components"] = []
+
+    # Discord API に PATCH リクエスト
+    url = f"{DISCORD_API_BASE}/channels/{panel.channel_id}/messages/{panel.message_id}"
+    headers = {
+        "Authorization": f"Bot {settings.discord_token}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(verify=False) as client:
+            response = await client.patch(
+                url, json=payload, headers=headers, timeout=30
+            )
+
+            if response.status_code == 200:
+                logger.info(
+                    "Edited ticket panel %d message %s",
+                    panel.id,
+                    panel.message_id,
+                )
+                return True, None
+
+            error_data = response.json() if response.content else {}
+            error_msg = error_data.get("message", f"HTTP {response.status_code}")
+
+            if response.status_code == 403:
+                error_msg = "Bot にこのメッセージの編集権限がありません"
+            elif response.status_code == 404:
+                error_msg = "メッセージが見つかりません (削除された可能性があります)"
+            elif response.status_code == 401:
+                error_msg = "Bot トークンが無効です"
+
+            logger.error(
+                "Failed to edit ticket panel %d: %s (status=%d)",
+                panel.id,
+                error_msg,
+                response.status_code,
+            )
+            return False, error_msg
+
+    except httpx.TimeoutException:
+        logger.error("Timeout editing ticket panel %d", panel.id)
+        return False, "Discord API への接続がタイムアウトしました"
+    except httpx.RequestError as e:
+        logger.error("Request error editing ticket panel %d: %s", panel.id, e)
+        return False, f"Discord API への接続に失敗しました: {e}"

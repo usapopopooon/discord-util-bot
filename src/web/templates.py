@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         StickyMessage,
         Ticket,
         TicketPanel,
+        TicketPanelCategory,
     )
 
 
@@ -3323,13 +3324,13 @@ def ticket_list_page(
 
         rows += f"""
         <tr class="border-b border-gray-700">
-            <td class="py-3 px-4 font-mono">#{ticket.ticket_number}</td>
-            <td class="py-3 px-4">{escape(ticket.username)}</td>
-            <td class="py-3 px-4">
+            <td class="py-3 px-4 align-middle font-mono">#{ticket.ticket_number}</td>
+            <td class="py-3 px-4 align-middle">{escape(ticket.username)}</td>
+            <td class="py-3 px-4 align-middle">
                 <span class="{status_class}">{escape(ticket.status)}</span>
             </td>
-            <td class="py-3 px-4">{guild_display}</td>
-            <td class="py-3 px-4 text-gray-400 text-sm">{created}</td>
+            <td class="py-3 px-4 align-middle">{guild_display}</td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created}</td>
             <td class="py-3 px-4 align-middle">
                 <div class="flex gap-2 items-center">
                     <a href="/tickets/{ticket.id}"
@@ -3458,6 +3459,13 @@ def ticket_detail_page(
             <pre class="bg-gray-700 rounded p-4 overflow-x-auto text-sm text-gray-300 whitespace-pre-wrap">{escape(ticket.transcript)}</pre>
         </div>
         """
+    elif ticket.status != "closed":
+        transcript_html = """
+        <div class="mt-6">
+            <h3 class="text-lg font-semibold mb-2">Transcript</h3>
+            <p class="text-gray-500 text-sm">Transcript will be available after the ticket is closed.</p>
+        </div>
+        """
 
     delete_form = f"""
         <div class="flex justify-end mb-4">
@@ -3558,7 +3566,12 @@ def ticket_panels_list_page(
 
         rows += f"""
         <tr class="border-b border-gray-700">
-            <td class="py-3 px-4">{escape(panel.title)}</td>
+            <td class="py-3 px-4">
+                <a href="/tickets/panels/{panel.id}"
+                   class="font-medium text-blue-400 hover:text-blue-300">
+                    {escape(panel.title)}
+                </a>
+            </td>
             <td class="py-3 px-4 text-sm">{escape(guild_name)}</td>
             <td class="py-3 px-4 text-sm">{escape(get_channel_name(panel.guild_id, panel.channel_id))}</td>
             <td class="py-3 px-4 text-sm">{posted}</td>
@@ -3837,3 +3850,191 @@ def ticket_panel_create_page(
     </script>
     """
     return _base("Create Ticket Panel", content)
+
+
+def ticket_panel_detail_page(
+    panel: "TicketPanel",
+    associations: list[tuple["TicketPanelCategory", str]],
+    success: str | None = None,
+    guild_name: str | None = None,
+    channel_name: str | None = None,
+    csrf_token: str = "",
+) -> str:
+    """Ticket panel detail/edit page template.
+
+    Args:
+        panel: チケットパネル
+        associations: (TicketPanelCategory, category_name) のリスト
+        success: 成功メッセージ
+        guild_name: ギルド名
+        channel_name: チャンネル名
+        csrf_token: CSRF トークン
+    """
+    success_html = ""
+    if success:
+        success_html = f"""
+        <div class="bg-green-900/50 border border-green-700 rounded-lg p-3 mb-4">
+            <span class="text-green-400">{escape(success)}</span>
+        </div>
+        """
+
+    server_display = escape(guild_name or panel.guild_id)
+    channel_display = escape(channel_name or panel.channel_id)
+    message_display = escape(panel.message_id) if panel.message_id else "(not posted)"
+    created = format_datetime(panel.created_at)
+
+    # Post/Update to Discord ボタン
+    if panel.message_id:
+        discord_btn_label = "Update in Discord"
+        discord_confirm = "Update the panel message in Discord?"
+    else:
+        discord_btn_label = "Post to Discord"
+        discord_confirm = "Post this panel to Discord?"
+
+    # カテゴリボタン行
+    button_rows = ""
+    style_options_map = {
+        "primary": "Blue",
+        "secondary": "Gray",
+        "success": "Green",
+        "danger": "Red",
+    }
+    for assoc, cat_name in associations:
+        style_options = ""
+        for val, label in style_options_map.items():
+            selected = "selected" if assoc.button_style == val else ""
+            style_options += f'<option value="{val}" {selected}>{label}</option>'
+
+        button_rows += f"""
+        <tr class="border-b border-gray-700">
+            <td class="py-3 px-4 text-sm">{escape(cat_name)}</td>
+            <td class="py-3 px-4">
+                <form method="POST"
+                      action="/tickets/panels/{panel.id}/buttons/{assoc.id}/edit"
+                      class="flex gap-2 items-center flex-wrap">
+                    {_csrf_field(csrf_token)}
+                    <input type="text" name="button_label"
+                           value="{escape(assoc.button_label or "")}"
+                           placeholder="{escape(cat_name)}"
+                           maxlength="80"
+                           class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm w-32">
+                    <select name="button_style"
+                            class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm">
+                        {style_options}
+                    </select>
+                    <input type="text" name="button_emoji"
+                           value="{escape(assoc.button_emoji or "")}"
+                           placeholder="Emoji"
+                           maxlength="64"
+                           class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm w-20">
+                    <button type="submit"
+                            class="bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded text-sm transition-colors">
+                        Save
+                    </button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    if not associations:
+        button_rows = """
+        <tr>
+            <td colspan="2" class="py-8 text-center text-gray-500">
+                No category buttons configured
+            </td>
+        </tr>
+        """
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            escape(panel.title),
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Tickets", "/tickets"),
+                ("Panels", "/tickets/panels"),
+                (escape(panel.title), None),
+            ],
+        )
+    }
+        {success_html}
+
+        <div class="bg-gray-800 rounded-lg p-6 mb-6">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div>
+                    <div class="text-sm text-gray-400">Server</div>
+                    <div class="text-sm">{server_display}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-400">Channel</div>
+                    <div class="text-sm">{channel_display}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-400">Message ID</div>
+                    <div class="text-sm font-mono">{message_display}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-400">Created</div>
+                    <div class="text-sm">{created}</div>
+                </div>
+            </div>
+
+            <div class="border-t border-gray-700 pt-4">
+                <h3 class="text-lg font-semibold mb-3">Edit Panel</h3>
+                <form method="POST" action="/tickets/panels/{panel.id}/edit"
+                      class="space-y-4">
+                    {_csrf_field(csrf_token)}
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Title</label>
+                        <input type="text" name="title"
+                               value="{escape(panel.title)}"
+                               required maxlength="100"
+                               class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Description</label>
+                        <textarea name="description" rows="3" maxlength="2000"
+                                  class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100"
+                                  >{escape(panel.description or "")}</textarea>
+                    </div>
+                    <button type="submit"
+                            class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm transition-colors">
+                        Save Changes
+                    </button>
+                </form>
+            </div>
+
+            <div class="border-t border-gray-700 pt-4 mt-4">
+                <form method="POST" action="/tickets/panels/{panel.id}/post"
+                      onsubmit="return confirm('{discord_confirm}');">
+                    {_csrf_field(csrf_token)}
+                    <button type="submit"
+                            class="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded text-sm transition-colors">
+                        {discord_btn_label}
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div class="bg-gray-800 rounded-lg p-6">
+            <h3 class="text-lg font-semibold mb-4">Category Buttons ({
+        len(associations)
+    })</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-700">
+                        <tr>
+                            <th class="py-3 px-4 text-left">Category</th>
+                            <th class="py-3 px-4 text-left">Button Settings</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {button_rows}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    """
+    return _base(f"Panel: {escape(panel.title)}", content)

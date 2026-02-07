@@ -21,6 +21,7 @@ from src.web.discord_api import (
     clear_reactions_from_message,
     delete_discord_message,
     edit_role_panel_in_discord,
+    edit_ticket_panel_in_discord,
     post_role_panel_to_discord,
     post_ticket_panel_to_discord,
 )
@@ -1959,3 +1960,195 @@ class TestPostTicketPanelToDiscord:
         payload = mock_post.call_args.kwargs.get("json", {})
         button = payload["components"][0]["components"][0]
         assert button["style"] == 1
+
+
+class TestEditTicketPanelInDiscord:
+    """edit_ticket_panel_in_discord 関数のテスト。"""
+
+    @pytest.fixture
+    def panel(self) -> TicketPanel:
+        """テスト用のチケットパネル。"""
+        return TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="Test Panel",
+            description="Test description",
+            message_id="msg789",
+        )
+
+    async def test_success(
+        self,
+        panel: TicketPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """正常に PATCH リクエストが送信される。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        associations = [
+            TicketPanelCategory(
+                id=1,
+                panel_id=1,
+                category_id=10,
+                button_label="Help",
+                button_style="primary",
+                button_emoji="🔧",
+                position=0,
+            ),
+        ]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_patch = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.patch = mock_patch
+
+            success, error = await edit_ticket_panel_in_discord(
+                panel, associations, {10: "Support"}
+            )
+
+        assert success is True
+        assert error is None
+
+        # PATCH が正しい URL に送信される
+        call_args = mock_patch.call_args
+        assert "/messages/msg789" in call_args.args[0]
+
+        # ペイロードの確認
+        payload = call_args.kwargs.get("json", {})
+        assert payload["embeds"][0]["title"] == "Test Panel"
+        button = payload["components"][0]["components"][0]
+        assert button["label"] == "Help"
+        assert button["emoji"]["name"] == "🔧"
+
+    async def test_no_message_id(self) -> None:
+        """message_id がない場合はエラーを返す。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="No Message",
+            message_id=None,
+        )
+        success, error = await edit_ticket_panel_in_discord(panel, [], {})
+
+        assert success is False
+        assert "no message_id" in error.lower()
+
+    async def test_no_token(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """トークンが設定されていない場合はエラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "")
+
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="Test",
+            message_id="msg123",
+        )
+        success, error = await edit_ticket_panel_in_discord(panel, [], {})
+
+        assert success is False
+        assert "token" in error.lower()
+
+    async def test_403_error(
+        self,
+        panel: TicketPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """403 エラーの場合は権限エラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.content = b'{"message": "Missing permissions"}'
+        mock_response.json.return_value = {"message": "Missing permissions"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_patch = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.patch = mock_patch
+
+            success, error = await edit_ticket_panel_in_discord(panel, [], {})
+
+        assert success is False
+        assert "権限" in error
+
+    async def test_404_error(
+        self,
+        panel: TicketPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """404 エラーの場合はメッセージ未発見エラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.content = b'{"message": "Unknown Message"}'
+        mock_response.json.return_value = {"message": "Unknown Message"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_patch = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.patch = mock_patch
+
+            success, error = await edit_ticket_panel_in_discord(panel, [], {})
+
+        assert success is False
+        assert "見つかりません" in error
+
+    async def test_timeout(
+        self,
+        panel: TicketPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """タイムアウトの場合はエラーを返す。"""
+        import httpx as httpx_module
+
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_patch = AsyncMock(side_effect=httpx_module.TimeoutException("timeout"))
+            mock_client.return_value.__aenter__.return_value.patch = mock_patch
+
+            success, error = await edit_ticket_panel_in_discord(panel, [], {})
+
+        assert success is False
+        assert "タイムアウト" in error
+
+    async def test_empty_associations_sends_empty_components(
+        self,
+        panel: TicketPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """カテゴリがない場合は空のコンポーネントを送信。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_patch = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.patch = mock_patch
+
+            success, error = await edit_ticket_panel_in_discord(panel, [], {})
+
+        assert success is True
+        payload = mock_patch.call_args.kwargs.get("json", {})
+        assert payload["components"] == []

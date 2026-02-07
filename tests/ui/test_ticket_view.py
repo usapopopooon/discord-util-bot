@@ -1123,6 +1123,125 @@ class TestGenerateTranscriptEdgeCases:
         assert "Created at: 2026-02-07 19:00:00" in result
         assert "[2026-02-07 19:00:05] user1: Hello" in result
 
+    async def test_transcript_with_sticker_only(self) -> None:
+        """スタンプのみのメッセージがトランスクリプトに含まれる。"""
+        ticket = _make_ticket()
+        channel = MagicMock(spec=discord.TextChannel)
+
+        msg = MagicMock()
+        msg.author = MagicMock()
+        msg.author.bot = False
+        msg.author.name = "user1"
+        msg.embeds = []
+        msg.content = ""
+        msg.attachments = []
+        sticker = MagicMock()
+        sticker.name = "cool_sticker"
+        msg.stickers = [sticker]
+        msg.created_at = datetime(2026, 2, 7, 10, 0, 0, tzinfo=UTC)
+
+        async def message_history(*_args: object, **_kwargs: object):
+            yield msg
+
+        channel.history = MagicMock(return_value=message_history())
+
+        result = await generate_transcript(channel, ticket, "General", "staff")
+
+        assert "[Stickers: cool_sticker]" in result
+        assert "user1" in result
+
+    async def test_transcript_with_text_and_sticker(self) -> None:
+        """テキスト＋スタンプのメッセージが両方含まれる。"""
+        ticket = _make_ticket()
+        channel = MagicMock(spec=discord.TextChannel)
+
+        msg = MagicMock()
+        msg.author = MagicMock()
+        msg.author.bot = False
+        msg.author.name = "user1"
+        msg.embeds = []
+        msg.content = "Check this out"
+        msg.attachments = []
+        sticker = MagicMock()
+        sticker.name = "like_sticker"
+        msg.stickers = [sticker]
+        msg.created_at = datetime(2026, 2, 7, 10, 0, 0, tzinfo=UTC)
+
+        async def message_history(*_args: object, **_kwargs: object):
+            yield msg
+
+        channel.history = MagicMock(return_value=message_history())
+
+        result = await generate_transcript(channel, ticket, "General", "staff")
+
+        assert "Check this out" in result
+        assert "[Stickers: like_sticker]" in result
+
+    async def test_transcript_messages_in_chronological_order(self) -> None:
+        """メッセージが時系列順に並ぶ。"""
+        ticket = _make_ticket()
+        channel = MagicMock(spec=discord.TextChannel)
+
+        msg1 = MagicMock()
+        msg1.author = MagicMock()
+        msg1.author.bot = False
+        msg1.author.name = "user1"
+        msg1.embeds = []
+        msg1.content = "First"
+        msg1.attachments = []
+        msg1.stickers = []
+        msg1.created_at = datetime(2026, 2, 7, 10, 0, 0, tzinfo=UTC)
+
+        msg2 = MagicMock()
+        msg2.author = MagicMock()
+        msg2.author.bot = False
+        msg2.author.name = "user1"
+        msg2.embeds = []
+        msg2.content = "Second"
+        msg2.attachments = []
+        msg2.stickers = []
+        msg2.created_at = datetime(2026, 2, 7, 10, 5, 0, tzinfo=UTC)
+
+        # channel.history() はデフォルトで新しい順 (msg2, msg1) で返す
+        async def message_history(*_args: object, **_kwargs: object):
+            for m in [msg2, msg1]:
+                yield m
+
+        channel.history = MagicMock(return_value=message_history())
+
+        result = await generate_transcript(channel, ticket, "General", "staff")
+
+        # reverse() により古い順に並ぶ
+        first_pos = result.index("First")
+        second_pos = result.index("Second")
+        assert first_pos < second_pos
+
+    async def test_transcript_attachment_only_no_content(self) -> None:
+        """テキストなし・添付ファイルのみのメッセージが含まれる。"""
+        ticket = _make_ticket()
+        channel = MagicMock(spec=discord.TextChannel)
+
+        msg = MagicMock()
+        msg.author = MagicMock()
+        msg.author.bot = False
+        msg.author.name = "user1"
+        msg.embeds = []
+        msg.content = ""
+        attachment = MagicMock()
+        attachment.url = "https://cdn.discord.com/img.png"
+        msg.attachments = [attachment]
+        msg.stickers = []
+        msg.created_at = datetime(2026, 2, 7, 10, 0, 0, tzinfo=UTC)
+
+        async def message_history(*_args: object, **_kwargs: object):
+            yield msg
+
+        channel.history = MagicMock(return_value=message_history())
+
+        result = await generate_transcript(channel, ticket, "General", "staff")
+
+        assert "user1: [Attachments: https://cdn.discord.com/img.png]" in result
+
 
 # =============================================================================
 # TicketCategoryButton callback 追加テスト

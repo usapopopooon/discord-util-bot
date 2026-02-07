@@ -15,6 +15,7 @@ from src.database.models import (
     StickyMessage,
     Ticket,
     TicketPanel,
+    TicketPanelCategory,
 )
 from src.web.templates import (
     _base,
@@ -36,6 +37,7 @@ from src.web.templates import (
     ticket_detail_page,
     ticket_list_page,
     ticket_panel_create_page,
+    ticket_panel_detail_page,
     ticket_panels_list_page,
 )
 
@@ -2303,6 +2305,45 @@ class TestTicketDetailPage:
         assert "/tickets/42/delete" in result
         assert "Delete" in result
 
+    def test_open_ticket_shows_transcript_placeholder(self) -> None:
+        """オープンチケットにトランスクリプト未生成メッセージが表示される。"""
+        ticket = Ticket(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=1,
+            status="open",
+            ticket_number=1,
+        )
+        result = ticket_detail_page(
+            ticket,
+            category_name="General",
+            guild_name="Guild",
+            csrf_token="token",
+        )
+        assert "will be available after the ticket is closed" in result
+
+    def test_closed_ticket_without_transcript(self) -> None:
+        """クローズ済みでトランスクリプトがないチケットにはプレースホルダーを表示しない。"""
+        ticket = Ticket(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=1,
+            status="closed",
+            ticket_number=1,
+            transcript=None,
+        )
+        result = ticket_detail_page(
+            ticket,
+            category_name="General",
+            guild_name="Guild",
+            csrf_token="token",
+        )
+        assert "will be available" not in result
+
 
 class TestTicketPanelsListPage:
     """ticket_panels_list_page のテスト。"""
@@ -2385,6 +2426,18 @@ class TestTicketPanelsListPage:
         )
         assert "456" in result
 
+    def test_edit_links(self) -> None:
+        """パネルタイトルが詳細ページへのリンクになっている。"""
+        panel = TicketPanel(
+            id=7,
+            guild_id="123",
+            channel_id="456",
+            title="Linked Panel",
+        )
+        result = ticket_panels_list_page([panel], csrf_token="token", guilds_map={})
+        assert 'href="/tickets/panels/7"' in result
+        assert "Linked Panel" in result
+
 
 class TestTicketPanelCreatePage:
     """ticket_panel_create_page のテスト。"""
@@ -2446,3 +2499,165 @@ class TestTicketPanelCreatePage:
         )
         assert "log_channel_id" in result
         assert "Log Channel" in result
+
+
+class TestTicketPanelDetailPage:
+    """ticket_panel_detail_page のテスト。"""
+
+    def test_basic_rendering(self) -> None:
+        """基本的なパネル詳細が表示される。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="Test Panel",
+            description="Panel description",
+        )
+        result = ticket_panel_detail_page(panel, [], csrf_token="token")
+        assert "Test Panel" in result
+        assert "Edit Panel" in result
+        assert "Post to Discord" in result
+
+    def test_with_associations(self) -> None:
+        """カテゴリボタンが表示される。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="Panel",
+        )
+        assoc = TicketPanelCategory(
+            id=10,
+            panel_id=1,
+            category_id=100,
+            button_style="primary",
+            button_label="Help",
+            button_emoji="🔧",
+            position=0,
+        )
+        result = ticket_panel_detail_page(
+            panel,
+            [(assoc, "Support Category")],
+            csrf_token="token",
+        )
+        assert "Support Category" in result
+        assert "Category Buttons" in result
+        assert "/tickets/panels/1/buttons/10/edit" in result
+        assert 'value="Help"' in result
+
+    def test_success_message(self) -> None:
+        """成功メッセージが表示される。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="Panel",
+        )
+        result = ticket_panel_detail_page(
+            panel, [], success="Panel updated", csrf_token="token"
+        )
+        assert "Panel updated" in result
+        assert "bg-green-900" in result
+
+    def test_xss_escape(self) -> None:
+        """XSS がエスケープされる。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="<script>alert('xss')</script>",
+        )
+        result = ticket_panel_detail_page(panel, [], csrf_token="token")
+        assert "&lt;script&gt;" in result
+        assert "<script>alert" not in result
+
+    def test_update_button_when_message_id_exists(self) -> None:
+        """message_id がある場合は Update ボタンが表示される。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="Panel",
+            message_id="msg123",
+        )
+        result = ticket_panel_detail_page(panel, [], csrf_token="token")
+        assert "Update in Discord" in result
+
+    def test_post_button_when_no_message_id(self) -> None:
+        """message_id がない場合は Post ボタンが表示される。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="Panel",
+        )
+        result = ticket_panel_detail_page(panel, [], csrf_token="token")
+        assert "Post to Discord" in result
+
+    def test_guild_and_channel_name(self) -> None:
+        """ギルド名とチャンネル名が表示される。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="Panel",
+        )
+        result = ticket_panel_detail_page(
+            panel,
+            [],
+            guild_name="My Server",
+            channel_name="support-tickets",
+            csrf_token="token",
+        )
+        assert "My Server" in result
+        assert "support-tickets" in result
+
+    def test_no_associations_message(self) -> None:
+        """カテゴリがない場合はメッセージが表示される。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="Panel",
+        )
+        result = ticket_panel_detail_page(panel, [], csrf_token="token")
+        assert "No category buttons configured" in result
+
+    def test_button_style_selected(self) -> None:
+        """ボタンスタイルが正しく選択される。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="Panel",
+        )
+        assoc = TicketPanelCategory(
+            id=10,
+            panel_id=1,
+            category_id=100,
+            button_style="danger",
+            position=0,
+        )
+        result = ticket_panel_detail_page(
+            panel,
+            [(assoc, "Category")],
+            csrf_token="token",
+        )
+        assert 'value="danger" selected' in result
+
+    def test_success_message_xss_escaped(self) -> None:
+        """成功メッセージも XSS エスケープされる。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="Panel",
+        )
+        result = ticket_panel_detail_page(
+            panel,
+            [],
+            success="<script>bad</script>",
+            csrf_token="token",
+        )
+        assert "&lt;script&gt;" in result
+        assert "<script>bad" not in result

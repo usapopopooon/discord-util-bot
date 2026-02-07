@@ -58,6 +58,7 @@ from src.web.discord_api import (
     add_reactions_to_message,
     delete_discord_message,
     edit_role_panel_in_discord,
+    edit_ticket_panel_in_discord,
     post_role_panel_to_discord,
     post_ticket_panel_to_discord,
 )
@@ -88,6 +89,7 @@ from src.web.templates import (
     ticket_detail_page,
     ticket_list_page,
     ticket_panel_create_page,
+    ticket_panel_detail_page,
     ticket_panels_list_page,
 )
 
@@ -3328,6 +3330,260 @@ async def ticket_panel_delete(
         await db.commit()
 
     return RedirectResponse(url="/tickets/panels", status_code=302)
+
+
+@app.get("/tickets/panels/{panel_id}", response_model=None)
+async def ticket_panel_detail(
+    panel_id: int,
+    success: str | None = None,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """チケットパネル詳細・編集ページ。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    result = await db.execute(
+        select(TicketPanel)
+        .options(
+            selectinload(TicketPanel.category_associations).selectinload(
+                TicketPanelCategory.category
+            )
+        )
+        .where(TicketPanel.id == panel_id)
+    )
+    panel = result.scalar_one_or_none()
+    if not panel:
+        return RedirectResponse(url="/tickets/panels", status_code=302)
+
+    sorted_cat_assoc = sorted(panel.category_associations, key=lambda a: a.position)
+    associations = [
+        (a, a.category.name if a.category else "Unknown") for a in sorted_cat_assoc
+    ]
+
+    guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
+    guild_name = guilds_map.get(panel.guild_id)
+    guild_channels = channels_map.get(panel.guild_id, [])
+    channel_name = next(
+        (name for cid, name in guild_channels if cid == panel.channel_id), None
+    )
+
+    return HTMLResponse(
+        content=ticket_panel_detail_page(
+            panel,
+            associations,
+            success=success,
+            guild_name=guild_name,
+            channel_name=channel_name,
+            csrf_token=generate_csrf_token(),
+        )
+    )
+
+
+@app.post("/tickets/panels/{panel_id}/edit", response_model=None)
+async def ticket_panel_edit(
+    request: Request,
+    panel_id: int,
+    title: Annotated[str, Form()] = "",
+    description: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """チケットパネルのタイトル・説明を編集する。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(
+            url=f"/tickets/panels/{panel_id}?success=Invalid+security+token",
+            status_code=302,
+        )
+
+    user_email = user.get("email", "")
+    path = str(request.url.path)
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(
+            url=f"/tickets/panels/{panel_id}?success=Please+wait+before+editing+again",
+            status_code=302,
+        )
+
+    title = title.strip()
+    if not title:
+        return RedirectResponse(
+            url=f"/tickets/panels/{panel_id}?success=Title+is+required",
+            status_code=302,
+        )
+    if len(title) > 100:
+        return RedirectResponse(
+            url=f"/tickets/panels/{panel_id}?success=Title+must+be+100+characters+or+less",
+            status_code=302,
+        )
+
+    description = description.strip()
+    if len(description) > 2000:
+        return RedirectResponse(
+            url=f"/tickets/panels/{panel_id}?success=Description+must+be+2000+characters+or+less",
+            status_code=302,
+        )
+
+    result = await db.execute(select(TicketPanel).where(TicketPanel.id == panel_id))
+    panel = result.scalar_one_or_none()
+    if not panel:
+        return RedirectResponse(url="/tickets/panels", status_code=302)
+
+    panel.title = title
+    panel.description = description if description else None
+    await db.commit()
+    record_form_submit(user_email, path)
+
+    return RedirectResponse(
+        url=f"/tickets/panels/{panel_id}?success=Panel+updated",
+        status_code=302,
+    )
+
+
+@app.post("/tickets/panels/{panel_id}/buttons/{assoc_id}/edit", response_model=None)
+async def ticket_panel_button_edit(
+    request: Request,
+    panel_id: int,
+    assoc_id: int,
+    button_label: Annotated[str, Form()] = "",
+    button_style: Annotated[str, Form()] = "primary",
+    button_emoji: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """チケットパネルのボタン設定を編集する。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(
+            url=f"/tickets/panels/{panel_id}?success=Invalid+security+token",
+            status_code=302,
+        )
+
+    user_email = user.get("email", "")
+    path = str(request.url.path)
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(
+            url=f"/tickets/panels/{panel_id}?success=Please+wait",
+            status_code=302,
+        )
+
+    result = await db.execute(
+        select(TicketPanelCategory).where(
+            TicketPanelCategory.id == assoc_id,
+            TicketPanelCategory.panel_id == panel_id,
+        )
+    )
+    assoc = result.scalar_one_or_none()
+    if not assoc:
+        return RedirectResponse(
+            url=f"/tickets/panels/{panel_id}?success=Button+not+found",
+            status_code=302,
+        )
+
+    label = button_label.strip()
+    if len(label) > 80:
+        label = label[:80]
+    assoc.button_label = label or None
+
+    valid_styles = ("primary", "secondary", "success", "danger")
+    assoc.button_style = button_style if button_style in valid_styles else "primary"
+
+    emoji = button_emoji.strip()
+    if len(emoji) > 64:
+        emoji = emoji[:64]
+    assoc.button_emoji = emoji or None
+
+    await db.commit()
+    record_form_submit(user_email, path)
+
+    return RedirectResponse(
+        url=f"/tickets/panels/{panel_id}?success=Button+updated",
+        status_code=302,
+    )
+
+
+@app.post("/tickets/panels/{panel_id}/post", response_model=None)
+async def ticket_panel_post_to_discord(
+    request: Request,
+    panel_id: int,
+    csrf_token: Annotated[str, Form()] = "",
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """チケットパネルを Discord に投稿/更新する。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(
+            url=f"/tickets/panels/{panel_id}?success=Invalid+security+token",
+            status_code=302,
+        )
+
+    user_email = user.get("email", "")
+    path = str(request.url.path)
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(
+            url=f"/tickets/panels/{panel_id}?success=Please+wait",
+            status_code=302,
+        )
+
+    result = await db.execute(
+        select(TicketPanel)
+        .options(
+            selectinload(TicketPanel.category_associations).selectinload(
+                TicketPanelCategory.category
+            )
+        )
+        .where(TicketPanel.id == panel_id)
+    )
+    panel = result.scalar_one_or_none()
+    if not panel:
+        return RedirectResponse(url="/tickets/panels", status_code=302)
+
+    sorted_cat_assoc = sorted(panel.category_associations, key=lambda a: a.position)
+    category_names = {
+        a.category_id: (a.category.name if a.category else "Ticket")
+        for a in sorted_cat_assoc
+    }
+
+    if panel.message_id:
+        ok, error = await edit_ticket_panel_in_discord(
+            panel, sorted_cat_assoc, category_names
+        )
+        if not ok:
+            return RedirectResponse(
+                url=f"/tickets/panels/{panel_id}?success=Error:+{error or 'Unknown'}",
+                status_code=302,
+            )
+        record_form_submit(user_email, path)
+        return RedirectResponse(
+            url=f"/tickets/panels/{panel_id}?success=Updated+in+Discord",
+            status_code=302,
+        )
+    else:
+        ok, message_id, error = await post_ticket_panel_to_discord(
+            panel, sorted_cat_assoc, category_names
+        )
+        if not ok:
+            return RedirectResponse(
+                url=f"/tickets/panels/{panel_id}?success=Error:+{error or 'Unknown'}",
+                status_code=302,
+            )
+        if message_id:
+            panel.message_id = message_id
+            await db.commit()
+        record_form_submit(user_email, path)
+        return RedirectResponse(
+            url=f"/tickets/panels/{panel_id}?success=Posted+to+Discord",
+            status_code=302,
+        )
 
 
 @app.post("/tickets/{ticket_id}/delete", response_model=None)

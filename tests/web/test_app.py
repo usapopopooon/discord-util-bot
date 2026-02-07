@@ -10949,3 +10949,405 @@ class TestTicketDetailExtra:
         response = await authenticated_client.get(f"/tickets/{ticket.id}")
         assert response.status_code == 200
         assert "Ticket #51" in response.text
+
+
+class TestTicketPanelDetailRoutes:
+    """チケットパネル詳細・編集ルートのテスト。"""
+
+    async def test_detail_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.get("/tickets/panels/1", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_detail_not_found(self, authenticated_client: AsyncClient) -> None:
+        """存在しないパネルは /tickets/panels にリダイレクトされる。"""
+        response = await authenticated_client.get(
+            "/tickets/panels/99999", follow_redirects=False
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/tickets/panels"
+
+    async def test_detail_with_data(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """パネル詳細が表示される。"""
+        panel = TicketPanel(guild_id="123", channel_id="456", title="Detail Test Panel")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.get(f"/tickets/panels/{panel.id}")
+        assert response.status_code == 200
+        assert "Detail Test Panel" in response.text
+
+    async def test_detail_with_associations(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """カテゴリ関連付きパネル詳細が表示される。"""
+        cat = TicketCategory(guild_id="123", name="Support", staff_role_id="999")
+        db_session.add(cat)
+        await db_session.commit()
+        await db_session.refresh(cat)
+
+        panel = TicketPanel(guild_id="123", channel_id="456", title="With Cats")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        assoc = TicketPanelCategory(
+            panel_id=panel.id,
+            category_id=cat.id,
+            button_style="primary",
+            position=0,
+        )
+        db_session.add(assoc)
+        await db_session.commit()
+
+        response = await authenticated_client.get(f"/tickets/panels/{panel.id}")
+        assert response.status_code == 200
+        assert "Support" in response.text
+        assert "Category Buttons" in response.text
+
+    async def test_edit_title(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """タイトル・説明を更新できる。"""
+        panel = TicketPanel(guild_id="123", channel_id="456", title="Old Title")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/tickets/panels/{panel.id}/edit",
+            data={"title": "New Title", "description": "New Desc"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "success=Panel+updated" in response.headers["location"]
+
+        await db_session.refresh(panel)
+        assert panel.title == "New Title"
+        assert panel.description == "New Desc"
+
+    async def test_edit_requires_auth(self, client: AsyncClient) -> None:
+        """編集は認証が必要。"""
+        response = await client.post(
+            "/tickets/panels/1/edit",
+            data={"title": "Test"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_edit_csrf_failure(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """CSRF 失敗時はリダイレクトされる。"""
+        from unittest.mock import patch
+
+        panel = TicketPanel(guild_id="123", channel_id="456", title="Original")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await authenticated_client.post(
+                f"/tickets/panels/{panel.id}/edit",
+                data={"title": "Hacked", "csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "Invalid+security+token" in response.headers["location"]
+
+        await db_session.refresh(panel)
+        assert panel.title == "Original"
+
+    async def test_edit_empty_title(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """空タイトルはエラーになる。"""
+        panel = TicketPanel(guild_id="123", channel_id="456", title="Keep")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/tickets/panels/{panel.id}/edit",
+            data={"title": "", "description": ""},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "Title+is+required" in response.headers["location"]
+
+        await db_session.refresh(panel)
+        assert panel.title == "Keep"
+
+    async def test_edit_not_found(self, authenticated_client: AsyncClient) -> None:
+        """存在しないパネルの編集は /tickets/panels にリダイレクト。"""
+        response = await authenticated_client.post(
+            "/tickets/panels/99999/edit",
+            data={"title": "Test"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/tickets/panels"
+
+    async def test_edit_cooldown(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """クールタイム中は編集できない。"""
+        from src.web.app import record_form_submit
+
+        panel = TicketPanel(guild_id="123", channel_id="456", title="Test")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        record_form_submit("test@example.com", f"/tickets/panels/{panel.id}/edit")
+        response = await authenticated_client.post(
+            f"/tickets/panels/{panel.id}/edit",
+            data={"title": "Updated"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "Please+wait" in response.headers["location"]
+
+    async def test_button_edit(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ボタン設定を更新できる。"""
+        cat = TicketCategory(guild_id="123", name="Bug", staff_role_id="999")
+        db_session.add(cat)
+        await db_session.commit()
+        await db_session.refresh(cat)
+
+        panel = TicketPanel(guild_id="123", channel_id="456", title="Panel")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        assoc = TicketPanelCategory(
+            panel_id=panel.id,
+            category_id=cat.id,
+            button_style="primary",
+            position=0,
+        )
+        db_session.add(assoc)
+        await db_session.commit()
+        await db_session.refresh(assoc)
+
+        response = await authenticated_client.post(
+            f"/tickets/panels/{panel.id}/buttons/{assoc.id}/edit",
+            data={
+                "button_label": "Report Bug",
+                "button_style": "danger",
+                "button_emoji": "🐛",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "success=Button+updated" in response.headers["location"]
+
+        await db_session.refresh(assoc)
+        assert assoc.button_label == "Report Bug"
+        assert assoc.button_style == "danger"
+        assert assoc.button_emoji == "🐛"
+
+    async def test_button_edit_not_found(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """存在しないボタンの編集はリダイレクト。"""
+        panel = TicketPanel(guild_id="123", channel_id="456", title="Panel")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/tickets/panels/{panel.id}/buttons/99999/edit",
+            data={"button_label": "Test", "button_style": "primary"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "Button+not+found" in response.headers["location"]
+
+    async def test_button_edit_requires_auth(self, client: AsyncClient) -> None:
+        """ボタン編集は認証が必要。"""
+        response = await client.post(
+            "/tickets/panels/1/buttons/1/edit",
+            data={"button_label": "Test"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_button_edit_csrf_failure(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ボタン編集 CSRF 失敗。"""
+        from unittest.mock import patch
+
+        cat = TicketCategory(guild_id="123", name="Test", staff_role_id="999")
+        db_session.add(cat)
+        await db_session.commit()
+        await db_session.refresh(cat)
+
+        panel = TicketPanel(guild_id="123", channel_id="456", title="Panel")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        assoc = TicketPanelCategory(
+            panel_id=panel.id,
+            category_id=cat.id,
+            button_style="primary",
+            position=0,
+        )
+        db_session.add(assoc)
+        await db_session.commit()
+        await db_session.refresh(assoc)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await authenticated_client.post(
+                f"/tickets/panels/{panel.id}/buttons/{assoc.id}/edit",
+                data={"button_label": "Hacked", "csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "Invalid+security+token" in response.headers["location"]
+
+        await db_session.refresh(assoc)
+        assert assoc.button_label is None  # unchanged
+
+    async def test_post_to_discord_new(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """新規 Discord 投稿。"""
+        from unittest.mock import AsyncMock, patch
+
+        panel = TicketPanel(guild_id="123", channel_id="456", title="Post Test")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        with patch(
+            "src.web.app.post_ticket_panel_to_discord",
+            new_callable=AsyncMock,
+            return_value=(True, "msg_posted_123", None),
+        ):
+            response = await authenticated_client.post(
+                f"/tickets/panels/{panel.id}/post",
+                data={},
+                follow_redirects=False,
+            )
+
+        assert response.status_code == 302
+        assert "success=Posted+to+Discord" in response.headers["location"]
+
+        await db_session.refresh(panel)
+        assert panel.message_id == "msg_posted_123"
+
+    async def test_update_in_discord(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """既存メッセージの Discord 更新。"""
+        from unittest.mock import AsyncMock, patch
+
+        panel = TicketPanel(
+            guild_id="123",
+            channel_id="456",
+            title="Update Test",
+            message_id="existing123",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        with patch(
+            "src.web.app.edit_ticket_panel_in_discord",
+            new_callable=AsyncMock,
+            return_value=(True, None),
+        ):
+            response = await authenticated_client.post(
+                f"/tickets/panels/{panel.id}/post",
+                data={},
+                follow_redirects=False,
+            )
+
+        assert response.status_code == 302
+        assert "success=Updated+in+Discord" in response.headers["location"]
+
+    async def test_post_requires_auth(self, client: AsyncClient) -> None:
+        """Discord 投稿は認証が必要。"""
+        response = await client.post(
+            "/tickets/panels/1/post",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_post_not_found(self, authenticated_client: AsyncClient) -> None:
+        """存在しないパネルの投稿は /tickets/panels にリダイレクト。"""
+        response = await authenticated_client.post(
+            "/tickets/panels/99999/post",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/tickets/panels"
+
+    async def test_post_discord_api_failure(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Discord API 失敗時はエラーメッセージ付きリダイレクト。"""
+        from unittest.mock import AsyncMock, patch
+
+        panel = TicketPanel(guild_id="123", channel_id="456", title="Fail Test")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        with patch(
+            "src.web.app.post_ticket_panel_to_discord",
+            new_callable=AsyncMock,
+            return_value=(False, None, "Bot permission denied"),
+        ):
+            response = await authenticated_client.post(
+                f"/tickets/panels/{panel.id}/post",
+                data={},
+                follow_redirects=False,
+            )
+
+        assert response.status_code == 302
+        assert "Error" in response.headers["location"]
+
+    async def test_update_discord_api_failure(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Discord PATCH API 失敗時はエラーメッセージ付きリダイレクト。"""
+        from unittest.mock import AsyncMock, patch
+
+        panel = TicketPanel(
+            guild_id="123",
+            channel_id="456",
+            title="Fail Update",
+            message_id="existing456",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        with patch(
+            "src.web.app.edit_ticket_panel_in_discord",
+            new_callable=AsyncMock,
+            return_value=(False, "Message not found"),
+        ):
+            response = await authenticated_client.post(
+                f"/tickets/panels/{panel.id}/post",
+                data={},
+                follow_redirects=False,
+            )
+
+        assert response.status_code == 302
+        assert "Error" in response.headers["location"]

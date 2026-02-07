@@ -109,7 +109,10 @@ async def generate_transcript(
     lines.append("")
 
     try:
-        async for message in channel.history(limit=500, oldest_first=True):
+        messages = [msg async for msg in channel.history(limit=500)]
+        messages.reverse()  # oldest first
+
+        for message in messages:
             if message.author.bot and message.embeds:
                 # Bot の Embed メッセージはスキップ (開始 Embed など)
                 continue
@@ -117,7 +120,16 @@ async def generate_transcript(
             content = message.content or ""
             if message.attachments:
                 attachment_urls = ", ".join(a.url for a in message.attachments)
-                content += f" [Attachments: {attachment_urls}]"
+                if content:
+                    content += f" [Attachments: {attachment_urls}]"
+                else:
+                    content = f"[Attachments: {attachment_urls}]"
+            if message.stickers:
+                sticker_names = ", ".join(s.name for s in message.stickers)
+                if content:
+                    content += f" [Stickers: {sticker_names}]"
+                else:
+                    content = f"[Stickers: {sticker_names}]"
             if content:
                 lines.append(f"[{timestamp}] {message.author.name}: {content}")
     except discord.HTTPException as e:
