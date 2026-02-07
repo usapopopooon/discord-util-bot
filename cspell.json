@@ -89,7 +89,8 @@
     "totalspammer",
     "badword",
     "onchange",
-    "testuser"
+    "testuser",
+    "coro"
   ],
   "ignorePaths": [
     ".venv",

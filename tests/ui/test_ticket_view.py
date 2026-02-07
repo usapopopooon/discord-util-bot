@@ -1150,3 +1150,368 @@ class TestGenerateTranscriptEdgeCases:
         result = await generate_transcript(channel, ticket, "General", "staff")
 
         assert "Bot message" in result
+
+
+# =============================================================================
+# TicketCategoryButton callback 追加テスト
+# =============================================================================
+
+
+class TestTicketCategoryButtonCallbackExtra:
+    """TicketCategoryButton.callback の追加テスト。"""
+
+    async def test_callback_existing_open_ticket(self) -> None:
+        """既にオープンチケットがある場合はエラーメッセージ。"""
+        assoc = _make_association(category_id=1)
+        button = TicketCategoryButton(
+            panel_id=1, association=assoc, category_name="Test"
+        )
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.guild.id = 100
+        interaction.user = MagicMock()
+        interaction.user.id = 1
+        interaction.response = AsyncMock()
+
+        category = _make_category(is_enabled=True, form_questions=None)
+
+        # 既存チケットのモック
+        existing_ticket = MagicMock()
+        existing_ticket.channel_id = "300"
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = existing_ticket
+
+        _, mock_session = _mock_async_session()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with (
+            patch("src.ui.ticket_view.async_session") as mock_factory,
+            patch(
+                "src.ui.ticket_view.get_ticket_category",
+                new_callable=AsyncMock,
+                return_value=category,
+            ),
+        ):
+            mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+            await button.callback(interaction)
+
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "既にオープン中" in msg
+
+    async def test_callback_invalid_form_questions_json(self) -> None:
+        """form_questions の JSON が不正な場合は直接チケット作成にフォールバック。"""
+        assoc = _make_association(category_id=1)
+        button = TicketCategoryButton(
+            panel_id=1, association=assoc, category_name="Test"
+        )
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.guild.id = 100
+        interaction.user = MagicMock(spec=discord.Member)
+        interaction.user.id = 1
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        category = _make_category(is_enabled=True, form_questions="INVALID JSON{")
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = None
+
+        _, mock_session = _mock_async_session()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        mock_channel = MagicMock(spec=discord.TextChannel)
+        mock_channel.mention = "<#999>"
+
+        with (
+            patch("src.ui.ticket_view.async_session") as mock_factory,
+            patch(
+                "src.ui.ticket_view.get_ticket_category",
+                new_callable=AsyncMock,
+                return_value=category,
+            ),
+            patch(
+                "src.ui.ticket_view._create_ticket_channel",
+                new_callable=AsyncMock,
+                return_value=mock_channel,
+            ),
+        ):
+            mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+            await button.callback(interaction)
+
+        interaction.response.defer.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "チケットを作成しました" in msg
+
+    async def test_callback_direct_creation_success(self) -> None:
+        """フォームなしで直接チケット作成に成功。"""
+        assoc = _make_association(category_id=1)
+        button = TicketCategoryButton(
+            panel_id=1, association=assoc, category_name="Test"
+        )
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.guild.id = 100
+        interaction.user = MagicMock(spec=discord.Member)
+        interaction.user.id = 1
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        category = _make_category(is_enabled=True, form_questions=None)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = None
+
+        _, mock_session = _mock_async_session()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        mock_channel = MagicMock(spec=discord.TextChannel)
+        mock_channel.mention = "<#999>"
+
+        with (
+            patch("src.ui.ticket_view.async_session") as mock_factory,
+            patch(
+                "src.ui.ticket_view.get_ticket_category",
+                new_callable=AsyncMock,
+                return_value=category,
+            ),
+            patch(
+                "src.ui.ticket_view._create_ticket_channel",
+                new_callable=AsyncMock,
+                return_value=mock_channel,
+            ),
+        ):
+            mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+            await button.callback(interaction)
+
+        msg = interaction.followup.send.call_args[0][0]
+        assert "チケットを作成しました" in msg
+
+    async def test_callback_direct_creation_failure(self) -> None:
+        """チャンネル作成失敗時はエラーメッセージ。"""
+        assoc = _make_association(category_id=1)
+        button = TicketCategoryButton(
+            panel_id=1, association=assoc, category_name="Test"
+        )
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.guild.id = 100
+        interaction.user = MagicMock(spec=discord.Member)
+        interaction.user.id = 1
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        category = _make_category(is_enabled=True, form_questions=None)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = None
+
+        _, mock_session = _mock_async_session()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with (
+            patch("src.ui.ticket_view.async_session") as mock_factory,
+            patch(
+                "src.ui.ticket_view.get_ticket_category",
+                new_callable=AsyncMock,
+                return_value=category,
+            ),
+            patch(
+                "src.ui.ticket_view._create_ticket_channel",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+            await button.callback(interaction)
+
+        msg = interaction.followup.send.call_args[0][0]
+        assert "失敗" in msg
+
+    async def test_callback_with_valid_form_questions(self) -> None:
+        """有効な form_questions で Modal が表示される。"""
+        assoc = _make_association(category_id=1)
+        button = TicketCategoryButton(
+            panel_id=1, association=assoc, category_name="Test"
+        )
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.guild.id = 100
+        interaction.user = MagicMock(spec=discord.Member)
+        interaction.user.id = 1
+        interaction.response = AsyncMock()
+
+        category = _make_category(is_enabled=True, form_questions='["Q1", "Q2"]')
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = None
+
+        _, mock_session = _mock_async_session()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with (
+            patch("src.ui.ticket_view.async_session") as mock_factory,
+            patch(
+                "src.ui.ticket_view.get_ticket_category",
+                new_callable=AsyncMock,
+                return_value=category,
+            ),
+        ):
+            mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+            await button.callback(interaction)
+
+        interaction.response.send_modal.assert_awaited_once()
+
+
+# =============================================================================
+# TicketFormModal.on_submit テスト
+# =============================================================================
+
+
+class TestTicketFormModalOnSubmit:
+    """TicketFormModal.on_submit のテスト。"""
+
+    async def test_on_submit_success(self) -> None:
+        """フォーム送信成功時にチケットチャンネルが作成される。"""
+        guild = MagicMock(spec=discord.Guild)
+        user = MagicMock(spec=discord.Member)
+        category = _make_category()
+
+        modal = TicketFormModal(
+            guild=guild, user=user, category=category, questions=["Q1"]
+        )
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        mock_channel = MagicMock(spec=discord.TextChannel)
+        mock_channel.mention = "<#999>"
+
+        with patch(
+            "src.ui.ticket_view._create_ticket_channel",
+            new_callable=AsyncMock,
+            return_value=mock_channel,
+        ):
+            await modal.on_submit(interaction)
+
+        interaction.response.defer.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "チケットを作成しました" in msg
+
+    async def test_on_submit_failure(self) -> None:
+        """チャンネル作成失敗時はエラーメッセージ。"""
+        guild = MagicMock(spec=discord.Guild)
+        user = MagicMock(spec=discord.Member)
+        category = _make_category()
+
+        modal = TicketFormModal(
+            guild=guild, user=user, category=category, questions=["Q1"]
+        )
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        with patch(
+            "src.ui.ticket_view._create_ticket_channel",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            await modal.on_submit(interaction)
+
+        msg = interaction.followup.send.call_args[0][0]
+        assert "失敗" in msg
+
+
+# =============================================================================
+# TicketCloseButton channel delete failure テスト
+# =============================================================================
+
+
+class TestTicketCloseButtonChannelDeleteFailure:
+    """TicketCloseButton でチャンネル削除失敗時のテスト。"""
+
+    async def test_close_button_channel_delete_http_exception(self) -> None:
+        """チャンネル削除失敗時に followup メッセージを送信。"""
+        button = TicketCloseButton(ticket_id=1)
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.channel = MagicMock(spec=discord.TextChannel)
+        interaction.channel.delete = AsyncMock(
+            side_effect=discord.HTTPException(
+                MagicMock(status=403), "Missing Permissions"
+            )
+        )
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+        interaction.user = MagicMock()
+        interaction.user.id = 1
+        interaction.user.name = "closer"
+
+        ticket = _make_ticket(status="open", ticket_number=42)
+        category = _make_category(name="General")
+        _, mock_session = _mock_async_session()
+        with (
+            patch("src.ui.ticket_view.async_session") as mock_factory,
+            patch(
+                "src.ui.ticket_view.get_ticket",
+                new_callable=AsyncMock,
+                return_value=ticket,
+            ),
+            patch(
+                "src.ui.ticket_view.get_ticket_category",
+                new_callable=AsyncMock,
+                return_value=category,
+            ),
+            patch(
+                "src.ui.ticket_view.generate_transcript",
+                new_callable=AsyncMock,
+                return_value="transcript",
+            ),
+            patch(
+                "src.ui.ticket_view.update_ticket_status",
+                new_callable=AsyncMock,
+            ),
+        ):
+            mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+            await button.callback(interaction)
+
+        msg = interaction.followup.send.call_args[0][0]
+        assert "チャンネルの削除に失敗" in msg
+
+
+# =============================================================================
+# TicketFormModal label 切り詰めテスト
+# =============================================================================
+
+
+class TestTicketFormModalTruncation:
+    """TicketFormModal の label 切り詰めテスト。"""
+
+    async def test_long_question_label_truncated(self) -> None:
+        """45文字を超える質問は切り詰められる。"""
+        guild = MagicMock(spec=discord.Guild)
+        user = MagicMock(spec=discord.Member)
+        category = _make_category()
+
+        long_question = "A" * 60
+        modal = TicketFormModal(
+            guild=guild, user=user, category=category, questions=[long_question]
+        )
+
+        text_input = modal.children[0]
+        assert len(text_input.label) == 45

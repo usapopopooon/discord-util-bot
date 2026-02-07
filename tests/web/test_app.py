@@ -10903,3 +10903,67 @@ class TestTicketDetailExtra:
         assert response.status_code == 200
         assert "Ticket #12" in response.text
         assert "closed" in response.text.lower()
+
+    async def test_ticket_detail_missing_category(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """カテゴリが削除された場合は 'Unknown' が表示される。"""
+        cat = TicketCategory(guild_id="123", name="Temp", staff_role_id="999")
+        db_session.add(cat)
+        await db_session.commit()
+        await db_session.refresh(cat)
+
+        ticket = Ticket(
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=cat.id,
+            channel_id="ch_miss",
+            ticket_number=50,
+            status="open",
+        )
+        db_session.add(ticket)
+        await db_session.commit()
+        await db_session.refresh(ticket)
+
+        # FK 制約を一時無効化してカテゴリを削除
+        from sqlalchemy import text
+
+        await db_session.execute(text("SET session_replication_role = 'replica'"))
+        await db_session.execute(
+            text("DELETE FROM ticket_categories WHERE id = :cid"),
+            {"cid": cat.id},
+        )
+        await db_session.commit()
+        await db_session.execute(text("SET session_replication_role = 'origin'"))
+
+        response = await authenticated_client.get(f"/tickets/{ticket.id}")
+        assert response.status_code == 200
+        assert "Ticket #50" in response.text
+        assert "Unknown" in response.text
+
+    async def test_ticket_detail_missing_guild(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ギルドが見つからない場合もエラーなく表示される。"""
+        cat = TicketCategory(guild_id="999999", name="Test", staff_role_id="1")
+        db_session.add(cat)
+        await db_session.commit()
+        await db_session.refresh(cat)
+
+        ticket = Ticket(
+            guild_id="999999",
+            user_id="456",
+            username="testuser",
+            category_id=cat.id,
+            channel_id="ch2",
+            ticket_number=51,
+            status="open",
+        )
+        db_session.add(ticket)
+        await db_session.commit()
+        await db_session.refresh(ticket)
+
+        response = await authenticated_client.get(f"/tickets/{ticket.id}")
+        assert response.status_code == 200
+        assert "Ticket #51" in response.text

@@ -1815,3 +1815,147 @@ class TestPostTicketPanelToDiscord:
         payload = mock_post.call_args.kwargs.get("json", {})
         embed = payload["embeds"][0]
         assert "ボタンをクリック" in embed["description"]
+
+    async def test_max_25_buttons_limit(
+        self,
+        panel: TicketPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """26 個以上のカテゴリでも 25 ボタンに制限される。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        associations = [
+            TicketPanelCategory(
+                id=i,
+                panel_id=1,
+                category_id=i * 10,
+                button_style="primary",
+                position=i,
+            )
+            for i in range(1, 31)
+        ]
+        category_names = {i * 10: f"Cat {i}" for i in range(1, 31)}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "999"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_post = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.post = mock_post
+
+            await post_ticket_panel_to_discord(panel, associations, category_names)
+
+        payload = mock_post.call_args.kwargs.get("json", {})
+        total_buttons = sum(len(row["components"]) for row in payload["components"])
+        assert total_buttons == 25
+
+    async def test_malformed_custom_emoji(
+        self,
+        panel: TicketPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """不正なカスタム絵文字形式でもクラッシュしない。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        associations = [
+            TicketPanelCategory(
+                id=1,
+                panel_id=1,
+                category_id=10,
+                button_emoji="<:incomplete",
+                button_style="primary",
+                position=0,
+            ),
+        ]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "999"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_post = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.post = mock_post
+
+            success, message_id, error = await post_ticket_panel_to_discord(
+                panel, associations, {10: "Test"}
+            )
+
+        assert success is True
+        # ボタンは作成されるが emoji はセットされない (parts < 3)
+        payload = mock_post.call_args.kwargs.get("json", {})
+        button = payload["components"][0]["components"][0]
+        assert "emoji" not in button
+
+    async def test_default_label_when_category_name_missing(
+        self,
+        panel: TicketPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """カテゴリ名がない場合はデフォルト 'Ticket' ラベルを使用。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        associations = [
+            TicketPanelCategory(
+                id=1,
+                panel_id=1,
+                category_id=10,
+                button_label=None,
+                button_style="primary",
+                position=0,
+            ),
+        ]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "999"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_post = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.post = mock_post
+
+            await post_ticket_panel_to_discord(panel, associations, {})
+
+        payload = mock_post.call_args.kwargs.get("json", {})
+        button = payload["components"][0]["components"][0]
+        assert button["label"] == "Ticket"
+
+    async def test_unknown_button_style_defaults_to_primary(
+        self,
+        panel: TicketPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """不明なボタンスタイルはデフォルト (1=primary) になる。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        associations = [
+            TicketPanelCategory(
+                id=1,
+                panel_id=1,
+                category_id=10,
+                button_style="unknown_style",
+                position=0,
+            ),
+        ]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "999"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_post = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.post = mock_post
+
+            await post_ticket_panel_to_discord(panel, associations, {10: "Test"})
+
+        payload = mock_post.call_args.kwargs.get("json", {})
+        button = payload["components"][0]["components"][0]
+        assert button["style"] == 1

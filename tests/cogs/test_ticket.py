@@ -763,6 +763,195 @@ class TestOnRawMessageDelete:
 
 
 # =============================================================================
+# /ticket close チャンネル削除失敗
+# =============================================================================
+
+
+class TestTicketCloseChannelDeleteFailure:
+    """ticket_close コマンドのチャンネル削除失敗テスト。"""
+
+    async def test_close_channel_delete_http_exception(self) -> None:
+        """チャンネル削除失敗時に followup メッセージを送信。"""
+        from src.cogs.ticket import TicketCog
+
+        bot = MagicMock(spec=commands.Bot)
+        cog = TicketCog(bot)
+        interaction = _make_interaction()
+        interaction.channel.delete = AsyncMock(
+            side_effect=discord.HTTPException(
+                MagicMock(status=403), "Missing Permissions"
+            )
+        )
+        ticket = _make_ticket(status="open")
+        category = _make_category()
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.cogs.ticket.async_session", mock_factory),
+            patch(
+                "src.cogs.ticket.get_ticket_by_channel_id",
+                new_callable=AsyncMock,
+                return_value=ticket,
+            ),
+            patch(
+                "src.cogs.ticket.get_ticket_category",
+                new_callable=AsyncMock,
+                return_value=category,
+            ),
+            patch(
+                "src.cogs.ticket.generate_transcript",
+                new_callable=AsyncMock,
+                return_value="transcript",
+            ),
+            patch(
+                "src.cogs.ticket.update_ticket_status",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await cog.ticket_close.callback(cog, interaction, reason=None)
+
+        msg = interaction.followup.send.call_args[0][0]
+        assert "チャンネルの削除に失敗" in msg
+
+
+# =============================================================================
+# /ticket add/remove 非テキストチャンネル
+# =============================================================================
+
+
+class TestTicketAddRemoveNonTextChannel:
+    """ticket_add / ticket_remove の非テキストチャンネルテスト。"""
+
+    async def test_add_non_text_channel(self) -> None:
+        """テキストチャンネルでない場合はエラー。"""
+        from src.cogs.ticket import TicketCog
+
+        bot = MagicMock(spec=commands.Bot)
+        cog = TicketCog(bot)
+        interaction = _make_interaction()
+        # VoiceChannel にする
+        interaction.channel = MagicMock(spec=discord.VoiceChannel)
+        interaction.channel.id = 200
+        interaction.channel_id = 200
+
+        ticket = _make_ticket(status="open")
+        target_user = MagicMock(spec=discord.Member)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.cogs.ticket.async_session", mock_factory),
+            patch(
+                "src.cogs.ticket.get_ticket_by_channel_id",
+                new_callable=AsyncMock,
+                return_value=ticket,
+            ),
+        ):
+            await cog.ticket_add.callback(cog, interaction, user=target_user)
+
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "この操作を実行できません" in msg
+
+    async def test_remove_non_text_channel(self) -> None:
+        """テキストチャンネルでない場合はエラー。"""
+        from src.cogs.ticket import TicketCog
+
+        bot = MagicMock(spec=commands.Bot)
+        cog = TicketCog(bot)
+        interaction = _make_interaction()
+        interaction.channel = MagicMock(spec=discord.VoiceChannel)
+        interaction.channel.id = 200
+        interaction.channel_id = 200
+
+        ticket = _make_ticket(status="open")
+        target_user = MagicMock(spec=discord.Member)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.cogs.ticket.async_session", mock_factory),
+            patch(
+                "src.cogs.ticket.get_ticket_by_channel_id",
+                new_callable=AsyncMock,
+                return_value=ticket,
+            ),
+        ):
+            await cog.ticket_remove.callback(cog, interaction, user=target_user)
+
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "この操作を実行できません" in msg
+
+
+# =============================================================================
+# _sync_views_task 例外ハンドリング
+# =============================================================================
+
+
+class TestSyncViewsTaskException:
+    """_sync_views_task の例外ハンドリングテスト。"""
+
+    async def test_sync_task_catches_exception(self) -> None:
+        """_sync_views_task は例外をキャッチしてクラッシュしない。"""
+        from src.cogs.ticket import TicketCog
+
+        bot = MagicMock(spec=commands.Bot)
+        cog = TicketCog(bot)
+
+        with patch.object(
+            cog,
+            "_register_all_views",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("DB connection failed"),
+        ):
+            # 例外がキャッチされ、外に漏れないことを確認
+            await cog._sync_views_task.coro(cog)
+
+
+# =============================================================================
+# /ticket close カテゴリなし
+# =============================================================================
+
+
+class TestTicketCloseNoCategoryCommand:
+    """ticket_close でカテゴリが見つからないケースのテスト。"""
+
+    async def test_close_with_missing_category(self) -> None:
+        """カテゴリが None でも 'Unknown' でクローズできる。"""
+        from src.cogs.ticket import TicketCog
+
+        bot = MagicMock(spec=commands.Bot)
+        cog = TicketCog(bot)
+        interaction = _make_interaction()
+        ticket = _make_ticket(status="open")
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.cogs.ticket.async_session", mock_factory),
+            patch(
+                "src.cogs.ticket.get_ticket_by_channel_id",
+                new_callable=AsyncMock,
+                return_value=ticket,
+            ),
+            patch(
+                "src.cogs.ticket.get_ticket_category",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "src.cogs.ticket.generate_transcript",
+                new_callable=AsyncMock,
+                return_value="transcript",
+            ) as mock_transcript,
+            patch(
+                "src.cogs.ticket.update_ticket_status",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await cog.ticket_close.callback(cog, interaction, reason=None)
+
+        # generate_transcript に "Unknown" が渡されることを確認
+        assert mock_transcript.call_args[0][2] == "Unknown"
+
+
+# =============================================================================
 # setup 関数
 # =============================================================================
 
