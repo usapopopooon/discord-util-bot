@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import discord
+from sqlalchemy.exc import IntegrityError
 
 from src.config import settings
 from src.database.engine import async_session
@@ -146,7 +147,11 @@ async def send_close_log(
     if category is None or not category.log_channel_id:
         return
 
-    channel = guild.get_channel(int(category.log_channel_id))
+    try:
+        channel = guild.get_channel(int(category.log_channel_id))
+    except (ValueError, TypeError):
+        logger.warning("Invalid log_channel_id: %r", category.log_channel_id)
+        return
     if not isinstance(channel, discord.TextChannel):
         return
 
@@ -505,6 +510,9 @@ class TicketClaimButton(discord.ui.Button[Any]):
 # =============================================================================
 
 
+_TICKET_NUMBER_MAX_RETRIES = 3
+
+
 async def _create_ticket_channel(
     guild: discord.Guild,
     user: discord.User | discord.Member,
@@ -522,10 +530,16 @@ async def _create_ticket_channel(
     Returns:
         作成されたチャンネル、または失敗時に None
     """
-    ticket_number = await get_next_ticket_number(db_session, str(guild.id))
-
     # パーミッションオーバーライト
-    staff_role = guild.get_role(int(category.staff_role_id))
+    try:
+        staff_role = guild.get_role(int(category.staff_role_id))
+    except (ValueError, TypeError):
+        logger.error(
+            "Invalid staff_role_id: %r for category %d",
+            category.staff_role_id,
+            category.id,
+        )
+        return None
 
     overwrites: dict[discord.Member | discord.Role, discord.PermissionOverwrite] = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
@@ -561,36 +575,71 @@ async def _create_ticket_channel(
     # Discord カテゴリ
     discord_category: discord.CategoryChannel | None = None
     if category.discord_category_id:
-        ch = guild.get_channel(int(category.discord_category_id))
+        try:
+            ch = guild.get_channel(int(category.discord_category_id))
+        except (ValueError, TypeError):
+            logger.warning(
+                "Invalid discord_category_id: %r", category.discord_category_id
+            )
+            ch = None
         if isinstance(ch, discord.CategoryChannel):
             discord_category = ch
 
-    try:
-        channel = await guild.create_text_channel(
-            name=f"{category.channel_prefix}{ticket_number}",
-            category=discord_category,
-            overwrites=overwrites,  # type: ignore[arg-type]
-            reason=f"Ticket #{ticket_number} by {user.name}",
-        )
-    except discord.HTTPException as e:
-        logger.error("Failed to create ticket channel: %s", e)
-        return None
+    # チャンネル作成 + DB 保存 (ticket_number 競合時はリトライ)
+    channel: discord.TextChannel | None = None
+    ticket: Ticket | None = None
 
-    # DB にチケットを保存
-    ticket = await create_ticket(
-        db_session,
-        guild_id=str(guild.id),
-        user_id=str(user.id),
-        username=user.name,
-        category_id=category.id,
-        channel_id=str(channel.id),
-        ticket_number=ticket_number,
-    )
+    for attempt in range(_TICKET_NUMBER_MAX_RETRIES):
+        ticket_number = await get_next_ticket_number(db_session, str(guild.id))
+
+        try:
+            channel = await guild.create_text_channel(
+                name=f"{category.channel_prefix}{ticket_number}",
+                category=discord_category,
+                overwrites=overwrites,  # type: ignore[arg-type]
+                reason=f"Ticket #{ticket_number} by {user.name}",
+            )
+        except discord.HTTPException as e:
+            logger.error("Failed to create ticket channel: %s", e)
+            return None
+
+        try:
+            ticket = await create_ticket(
+                db_session,
+                guild_id=str(guild.id),
+                user_id=str(user.id),
+                username=user.name,
+                category_id=category.id,
+                channel_id=str(channel.id),
+                ticket_number=ticket_number,
+            )
+            break
+        except IntegrityError:
+            logger.warning(
+                "Ticket number %d collision (attempt %d/%d), retrying...",
+                ticket_number,
+                attempt + 1,
+                _TICKET_NUMBER_MAX_RETRIES,
+            )
+            await db_session.rollback()
+            # 孤立チャンネルを削除
+            with contextlib.suppress(discord.HTTPException):
+                await channel.delete(reason="Ticket creation failed (number collision)")
+            channel = None
+
+    if channel is None or ticket is None:
+        logger.error(
+            "Failed to create ticket after %d attempts", _TICKET_NUMBER_MAX_RETRIES
+        )
+        return None
 
     # 開始 Embed + スタッフメンション (スポイラーで非表示) を送信
     embed = create_ticket_opening_embed(ticket, category)
     view = TicketControlView(ticket.id)
     staff_mention = f"||<@&{category.staff_role_id}>||"
-    await channel.send(content=staff_mention, embed=embed, view=view)
+    try:
+        await channel.send(content=staff_mention, embed=embed, view=view)
+    except discord.HTTPException as e:
+        logger.error("Failed to send opening message to ticket channel: %s", e)
 
     return channel

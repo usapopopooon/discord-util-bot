@@ -50,7 +50,11 @@ class TicketCog(commands.Cog):
         try:
             await self._register_all_views()
         except Exception:
-            logger.exception("Failed to register ticket views on cog_load")
+            logger.critical(
+                "Failed to register ticket views on startup. "
+                "Ticket buttons will NOT work until the sync task succeeds.",
+                exc_info=True,
+            )
         self._sync_views_task.start()
 
     async def cog_unload(self) -> None:
@@ -274,6 +278,7 @@ class TicketCog(commands.Cog):
                     ephemeral=True,
                 )
                 return
+            ticket_number = ticket.ticket_number
 
         if isinstance(interaction.channel, discord.TextChannel):
             await interaction.channel.set_permissions(
@@ -282,7 +287,7 @@ class TicketCog(commands.Cog):
                 send_messages=True,
                 attach_files=True,
                 read_message_history=True,
-                reason=f"Added to ticket #{ticket.ticket_number}",
+                reason=f"Added to ticket #{ticket_number}",
             )
             await interaction.response.send_message(
                 f"{user.mention} をこのチケットに追加しました。",
@@ -318,12 +323,13 @@ class TicketCog(commands.Cog):
                     ephemeral=True,
                 )
                 return
+            ticket_number = ticket.ticket_number
 
         if isinstance(interaction.channel, discord.TextChannel):
             await interaction.channel.set_permissions(
                 user,
                 overwrite=None,
-                reason=f"Removed from ticket #{ticket.ticket_number}",
+                reason=f"Removed from ticket #{ticket_number}",
             )
             await interaction.response.send_message(
                 f"{user.mention} をこのチケットから削除しました。",
@@ -340,36 +346,47 @@ class TicketCog(commands.Cog):
     @commands.Cog.listener()
     async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
         """チケットチャンネルが外部削除された場合の DB クリーンアップ。"""
-        async with async_session() as db_session:
-            ticket = await get_ticket_by_channel_id(db_session, str(channel.id))
-            if ticket and ticket.status != "closed":
-                await update_ticket_status(
-                    db_session,
-                    ticket,
-                    status="closed",
-                    closed_at=datetime.now(UTC),
-                    channel_id=None,
-                )
-                logger.info(
-                    "Cleaned up ticket %d after channel %s was deleted",
-                    ticket.id,
-                    channel.id,
-                )
+        try:
+            async with async_session() as db_session:
+                ticket = await get_ticket_by_channel_id(db_session, str(channel.id))
+                if ticket and ticket.status != "closed":
+                    await update_ticket_status(
+                        db_session,
+                        ticket,
+                        status="closed",
+                        closed_at=datetime.now(UTC),
+                        channel_id=None,
+                    )
+                    logger.info(
+                        "Cleaned up ticket %d after channel %s was deleted",
+                        ticket.id,
+                        channel.id,
+                    )
+        except Exception:
+            logger.exception(
+                "Failed to clean up ticket for deleted channel %s", channel.id
+            )
 
     @commands.Cog.listener()
     async def on_raw_message_delete(
         self, payload: discord.RawMessageDeleteEvent
     ) -> None:
         """パネルメッセージが削除された場合の DB クリーンアップ。"""
-        async with async_session() as db_session:
-            deleted = await delete_ticket_panel_by_message_id(
-                db_session, str(payload.message_id)
-            )
-            if deleted:
-                logger.info(
-                    "Cleaned up ticket panel after message %d was deleted",
-                    payload.message_id,
+        try:
+            async with async_session() as db_session:
+                deleted = await delete_ticket_panel_by_message_id(
+                    db_session, str(payload.message_id)
                 )
+                if deleted:
+                    logger.info(
+                        "Cleaned up ticket panel after message %d was deleted",
+                        payload.message_id,
+                    )
+        except Exception:
+            logger.exception(
+                "Failed to clean up ticket panel for deleted message %d",
+                payload.message_id,
+            )
 
 
 async def setup(bot: commands.Bot) -> None:
