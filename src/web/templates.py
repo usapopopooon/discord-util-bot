@@ -3337,7 +3337,7 @@ def ticket_list_page(
                        class="text-blue-400 hover:text-blue-300 text-sm">View</a>
                     <form method="POST" action="/tickets/{ticket.id}/delete"
                           onsubmit="return confirm('Delete this ticket log?');"
-                          class="inline-flex items-center">
+                          class="inline-flex items-center m-0">
                         {_csrf_field(csrf_token)}
                         <button type="submit"
                                 class="text-red-400 hover:text-red-300 text-sm">
