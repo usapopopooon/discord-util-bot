@@ -3330,6 +3330,38 @@ async def ticket_panel_delete(
     return RedirectResponse(url="/tickets/panels", status_code=302)
 
 
+@app.post("/tickets/{ticket_id}/delete", response_model=None)
+async def ticket_delete(
+    request: Request,
+    ticket_id: int,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """チケットログを削除する。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/tickets", status_code=302)
+
+    user_email = user.get("email", "")
+    path = str(request.url.path)
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/tickets", status_code=302)
+
+    async with get_resource_lock(f"ticket:delete:{ticket_id}"):
+        result = await db.execute(select(Ticket).where(Ticket.id == ticket_id))
+        ticket = result.scalar_one_or_none()
+        if ticket:
+            await db.delete(ticket)
+            await db.commit()
+
+        record_form_submit(user_email, path)
+
+    return RedirectResponse(url="/tickets", status_code=302)
+
+
 @app.get("/tickets/{ticket_id}", response_model=None)
 async def ticket_detail(
     ticket_id: int,

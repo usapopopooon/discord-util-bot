@@ -2085,6 +2085,21 @@ class TestTicketListPage:
         result = ticket_list_page([ticket], csrf_token="token", guilds_map={})
         assert "/tickets/42" in result
 
+    def test_delete_button(self) -> None:
+        """チケット一覧に削除ボタンが含まれる。"""
+        ticket = Ticket(
+            id=42,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=1,
+            status="closed",
+            ticket_number=1,
+        )
+        result = ticket_list_page([ticket], csrf_token="token", guilds_map={})
+        assert "/tickets/42/delete" in result
+        assert "Delete" in result
+
 
 class TestTicketDetailPage:
     """ticket_detail_page のテスト。"""
@@ -2267,6 +2282,26 @@ class TestTicketDetailPage:
         )
         assert "Ticket #1" in result
         assert "Form Answers" not in result
+
+    def test_delete_button(self) -> None:
+        """チケット詳細に削除ボタンが含まれる。"""
+        ticket = Ticket(
+            id=42,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=1,
+            status="closed",
+            ticket_number=1,
+        )
+        result = ticket_detail_page(
+            ticket,
+            category_name="General",
+            guild_name="Guild",
+            csrf_token="token",
+        )
+        assert "/tickets/42/delete" in result
+        assert "Delete" in result
 
 
 class TestTicketPanelsListPage:

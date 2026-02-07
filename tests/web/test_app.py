@@ -10336,6 +10336,127 @@ class TestTicketRoutes:
         assert response.status_code == 200
         assert "Ticket #42" in response.text
 
+    async def test_ticket_delete_requires_auth(self, client: AsyncClient) -> None:
+        """チケット削除は認証が必要。"""
+        response = await client.post(
+            "/tickets/1/delete", data={}, follow_redirects=False
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_ticket_delete_success(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """チケットを削除できる。"""
+        cat = TicketCategory(guild_id="123", name="General", staff_role_id="999")
+        db_session.add(cat)
+        await db_session.commit()
+        await db_session.refresh(cat)
+
+        ticket = Ticket(
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+            status="closed",
+        )
+        db_session.add(ticket)
+        await db_session.commit()
+        await db_session.refresh(ticket)
+
+        response = await authenticated_client.post(
+            f"/tickets/{ticket.id}/delete",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/tickets"
+
+        result = await db_session.execute(select(Ticket).where(Ticket.id == ticket.id))
+        assert result.scalar_one_or_none() is None
+
+    async def test_ticket_delete_not_found(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """存在しないチケットの削除はリダイレクトされる。"""
+        response = await authenticated_client.post(
+            "/tickets/99999/delete",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/tickets"
+
+    async def test_ticket_delete_csrf_failure(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """チケット削除の CSRF 失敗はリダイレクトされる。"""
+        from unittest.mock import patch
+
+        cat = TicketCategory(guild_id="123", name="General", staff_role_id="999")
+        db_session.add(cat)
+        await db_session.commit()
+        await db_session.refresh(cat)
+
+        ticket = Ticket(
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+            status="closed",
+        )
+        db_session.add(ticket)
+        await db_session.commit()
+        await db_session.refresh(ticket)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await authenticated_client.post(
+                f"/tickets/{ticket.id}/delete",
+                data={"csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+
+        # チケットはまだ存在する
+        result = await db_session.execute(select(Ticket).where(Ticket.id == ticket.id))
+        assert result.scalar_one_or_none() is not None
+
+    async def test_ticket_delete_cooldown(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """チケット削除のクールタイム中はリダイレクトされる。"""
+        from src.web.app import record_form_submit
+
+        cat = TicketCategory(guild_id="123", name="General", staff_role_id="999")
+        db_session.add(cat)
+        await db_session.commit()
+        await db_session.refresh(cat)
+
+        ticket = Ticket(
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+            status="closed",
+        )
+        db_session.add(ticket)
+        await db_session.commit()
+        await db_session.refresh(ticket)
+
+        record_form_submit("test@example.com", f"/tickets/{ticket.id}/delete")
+        response = await authenticated_client.post(
+            f"/tickets/{ticket.id}/delete",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
 
 class TestTicketPanelRoutes:
     """/tickets/panels ルートのテスト。"""

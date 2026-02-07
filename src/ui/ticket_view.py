@@ -279,11 +279,16 @@ class TicketCategoryButton(discord.ui.Button[Any]):
 
             # チケット作成
             await interaction.response.defer(ephemeral=True)
+            # パネルのチャンネルのカテゴリをフォールバックとして使用
+            panel_category: discord.CategoryChannel | None = None
+            if isinstance(interaction.channel, discord.TextChannel):
+                panel_category = interaction.channel.category
             channel = await _create_ticket_channel(
                 interaction.guild,
                 interaction.user,
                 category,
                 db_session,
+                fallback_category=panel_category,
             )
             if channel:
                 await interaction.followup.send(
@@ -521,6 +526,8 @@ async def _create_ticket_channel(
     user: discord.User | discord.Member,
     category: TicketCategory,
     db_session: Any,
+    *,
+    fallback_category: discord.CategoryChannel | None = None,
 ) -> discord.TextChannel | None:
     """チケットチャンネルを作成する。
 
@@ -529,6 +536,7 @@ async def _create_ticket_channel(
         user: チケット作成ユーザー
         category: チケットカテゴリ
         db_session: DB セッション
+        fallback_category: discord_category_id 未設定時のフォールバックカテゴリ
 
     Returns:
         作成されたチャンネル、または失敗時に None
@@ -575,7 +583,7 @@ async def _create_ticket_channel(
             manage_messages=True,
         )
 
-    # Discord カテゴリ
+    # Discord カテゴリ (明示設定 > パネルのカテゴリ > なし)
     discord_category: discord.CategoryChannel | None = None
     if category.discord_category_id:
         try:
@@ -587,6 +595,8 @@ async def _create_ticket_channel(
             ch = None
         if isinstance(ch, discord.CategoryChannel):
             discord_category = ch
+    if discord_category is None:
+        discord_category = fallback_category
 
     # チャンネル作成 + DB 保存 (ticket_number 競合時はリトライ)
     channel: discord.TextChannel | None = None

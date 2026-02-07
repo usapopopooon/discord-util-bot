@@ -1012,7 +1012,7 @@ def lobbies_list_page(
             <td class="py-3 px-4">{channel_display}</td>
             <td class="py-3 px-4">{lobby.default_user_limit or "無制限"}</td>
             <td class="py-3 px-4">{session_count}</td>
-            <td class="py-3 px-4">
+            <td class="py-3 px-4 align-middle">
                 <form method="POST" action="/lobbies/{lobby.id}/delete"
                       onsubmit="return confirm('Delete this lobby?');">
                     {_csrf_field(csrf_token)}
@@ -1153,7 +1153,7 @@ def sticky_list_page(
                 <span class="inline-block w-4 h-4 rounded" style="background-color: {color_display if sticky.color else "transparent"}"></span>
                 {color_display}
             </td>
-            <td class="py-3 px-4">
+            <td class="py-3 px-4 align-middle">
                 <form method="POST" action="/sticky/{sticky.channel_id}/delete"
                       onsubmit="return confirm('Delete this sticky message?');">
                     {_csrf_field(csrf_token)}
@@ -1275,7 +1275,7 @@ def bump_list_page(
             <td class="py-3 px-4 text-gray-400 text-sm">
                 {format_datetime(config.created_at)}
             </td>
-            <td class="py-3 px-4">
+            <td class="py-3 px-4 align-middle">
                 <form method="POST" action="/bump/config/{config.guild_id}/delete"
                       onsubmit="return confirm('Delete this bump config?');">
                     {_csrf_field(csrf_token)}
@@ -1314,8 +1314,8 @@ def bump_list_page(
             <td class="py-3 px-4">
                 <span class="{status_class}">{status}</span>
             </td>
-            <td class="py-3 px-4">
-                <div class="flex gap-2">
+            <td class="py-3 px-4 align-middle">
+                <div class="flex gap-2 items-center">
                     <form method="POST" action="/bump/reminder/{reminder.id}/toggle">
                         {_csrf_field(csrf_token)}
                         <button type="submit"
@@ -2493,7 +2493,7 @@ def role_panel_detail_page(
             <td class="py-3 px-4">{role_id_display}</td>
             {label_cell}
             {style_cell}
-            <td class="py-3 px-4">
+            <td class="py-3 px-4 align-middle">
                 <form method="POST" action="/rolepanels/{panel.id}/items/{item.id}/delete"
                       onsubmit="return confirm('Delete this role item?');">
                     {_csrf_field(csrf_token)}
@@ -3007,8 +3007,8 @@ def autoban_list_page(
                 <span class="{status_class}">{status}</span>
             </td>
             <td class="py-3 px-4 text-gray-400 text-sm">{created}</td>
-            <td class="py-3 px-4">
-                <div class="flex gap-2">
+            <td class="py-3 px-4 align-middle">
+                <div class="flex gap-2 items-center">
                     <form method="POST" action="/autoban/{rule.id}/toggle">
                         {_csrf_field(csrf_token)}
                         <button type="submit"
@@ -3290,7 +3290,7 @@ def autoban_logs_page(
 
 def ticket_list_page(
     tickets: list["Ticket"],
-    csrf_token: str = "",  # noqa: ARG001
+    csrf_token: str = "",
     guilds_map: dict[str, str] | None = None,
     status_filter: str = "",
 ) -> str:
@@ -3330,9 +3330,20 @@ def ticket_list_page(
             </td>
             <td class="py-3 px-4">{guild_display}</td>
             <td class="py-3 px-4 text-gray-400 text-sm">{created}</td>
-            <td class="py-3 px-4">
-                <a href="/tickets/{ticket.id}"
-                   class="text-blue-400 hover:text-blue-300 text-sm">View</a>
+            <td class="py-3 px-4 align-middle">
+                <div class="flex gap-2 items-center">
+                    <a href="/tickets/{ticket.id}"
+                       class="text-blue-400 hover:text-blue-300 text-sm">View</a>
+                    <form method="POST" action="/tickets/{ticket.id}/delete"
+                          onsubmit="return confirm('Delete this ticket log?');"
+                          class="inline-flex items-center">
+                        {_csrf_field(csrf_token)}
+                        <button type="submit"
+                                class="text-red-400 hover:text-red-300 text-sm">
+                            Delete
+                        </button>
+                    </form>
+                </div>
             </td>
         </tr>
         """
@@ -3403,7 +3414,7 @@ def ticket_detail_page(
     ticket: "Ticket",
     category_name: str = "",
     guild_name: str = "",
-    csrf_token: str = "",  # noqa: ARG001
+    csrf_token: str = "",
 ) -> str:
     """Ticket detail page template."""
     import json as json_mod
@@ -3448,6 +3459,19 @@ def ticket_detail_page(
         </div>
         """
 
+    delete_form = f"""
+        <div class="flex justify-end mb-4">
+            <form method="POST" action="/tickets/{ticket.id}/delete"
+                  onsubmit="return confirm('Delete this ticket log?');">
+                {_csrf_field(csrf_token)}
+                <button type="submit"
+                        class="bg-red-600 hover:bg-red-500 px-4 py-2 rounded text-sm transition-colors">
+                    Delete
+                </button>
+            </form>
+        </div>
+    """
+
     content = f"""
     <div class="p-6">
         {
@@ -3460,6 +3484,7 @@ def ticket_detail_page(
             ],
         )
     }
+        {delete_form}
         <div class="bg-gray-800 rounded-lg p-6">
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                 <div>
@@ -3538,7 +3563,7 @@ def ticket_panels_list_page(
             <td class="py-3 px-4 text-sm">{escape(get_channel_name(panel.guild_id, panel.channel_id))}</td>
             <td class="py-3 px-4 text-sm">{posted}</td>
             <td class="py-3 px-4 text-gray-400 text-sm">{created}</td>
-            <td class="py-3 px-4">
+            <td class="py-3 px-4 align-middle">
                 <form method="POST" action="/tickets/panels/{panel.id}/delete"
                       onsubmit="return confirm('Delete this panel?');">
                     {_csrf_field(csrf_token)}
