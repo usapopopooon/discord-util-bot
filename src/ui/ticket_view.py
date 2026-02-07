@@ -10,6 +10,7 @@ UI の構成:
   - TicketControlView: チケットチャンネル内の操作ボタン (永続 View)
 """
 
+import contextlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -226,6 +227,32 @@ class TicketCategoryButton(discord.ui.Button[Any]):
             )
             return
 
+        try:
+            await self._handle_interaction(interaction)
+        except Exception:
+            logger.exception(
+                "Error in TicketCategoryButton callback (panel=%d, category=%d)",
+                self.panel_id,
+                self.category_id,
+            )
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "エラーが発生しました。しばらくしてからもう一度お試しください。",
+                        ephemeral=True,
+                    )
+                else:
+                    await interaction.followup.send(
+                        "エラーが発生しました。しばらくしてからもう一度お試しください。",
+                        ephemeral=True,
+                    )
+            except discord.HTTPException:
+                pass
+
+    async def _handle_interaction(self, interaction: discord.Interaction) -> None:
+        """ボタンクリックの実処理。"""
+        assert interaction.guild is not None  # noqa: S101
+
         async with async_session() as db_session:
             category = await get_ticket_category(db_session, self.category_id)
             if category is None or not category.is_enabled:
@@ -357,38 +384,46 @@ class TicketFormModal(discord.ui.Modal, title="チケット作成"):
         """フォーム送信時の処理。チケットチャンネルを作成する。"""
         await interaction.response.defer(ephemeral=True)
 
-        # 回答を収集
-        answers: list[tuple[str, str]] = []
-        for i, question in enumerate(self.questions[:5]):
-            child = self.children[i]
-            if isinstance(child, discord.ui.TextInput):
-                answers.append((question, str(child.value or "")))
+        try:
+            # 回答を収集
+            answers: list[tuple[str, str]] = []
+            for i, question in enumerate(self.questions[:5]):
+                child = self.children[i]
+                if isinstance(child, discord.ui.TextInput):
+                    answers.append((question, str(child.value or "")))
 
-        form_answers_json = json.dumps(
-            [{"question": q, "answer": a} for q, a in answers],
-            ensure_ascii=False,
-        )
-
-        async with async_session() as db_session:
-            channel = await _create_ticket_channel(
-                self.guild,
-                self.user,
-                self.category,
-                db_session,
-                form_answers=answers,
-                form_answers_json=form_answers_json,
+            form_answers_json = json.dumps(
+                [{"question": q, "answer": a} for q, a in answers],
+                ensure_ascii=False,
             )
 
-        if channel:
-            await interaction.followup.send(
-                f"チケットを作成しました: {channel.mention}",
-                ephemeral=True,
-            )
-        else:
-            await interaction.followup.send(
-                "チケットの作成に失敗しました。Bot の権限を確認してください。",
-                ephemeral=True,
-            )
+            async with async_session() as db_session:
+                channel = await _create_ticket_channel(
+                    self.guild,
+                    self.user,
+                    self.category,
+                    db_session,
+                    form_answers=answers,
+                    form_answers_json=form_answers_json,
+                )
+
+            if channel:
+                await interaction.followup.send(
+                    f"チケットを作成しました: {channel.mention}",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    "チケットの作成に失敗しました。Bot の権限を確認してください。",
+                    ephemeral=True,
+                )
+        except Exception:
+            logger.exception("Error in TicketFormModal.on_submit")
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.followup.send(
+                    "エラーが発生しました。しばらくしてからもう一度お試しください。",
+                    ephemeral=True,
+                )
 
 
 # =============================================================================
@@ -436,59 +471,70 @@ class TicketCloseButton(discord.ui.Button[Any]):
 
         await interaction.response.defer()
 
-        async with async_session() as db_session:
-            ticket = await get_ticket(db_session, self.ticket_id)
-            if ticket is None or ticket.status == "closed":
-                await interaction.followup.send(
-                    "このチケットは既にクローズされています。", ephemeral=True
-                )
-                return
-
-            category = await get_ticket_category(db_session, ticket.category_id)
-            category_name = category.name if category else "Unknown"
-
-            # トランスクリプト生成
-            transcript_text = ""
-            if isinstance(interaction.channel, discord.TextChannel):
-                transcript_text = await generate_transcript(
-                    interaction.channel,
-                    ticket,
-                    category_name,
-                    interaction.user.name,
-                )
-
-            # チケットステータス更新
-            await update_ticket_status(
-                db_session,
-                ticket,
-                status="closed",
-                closed_by=str(interaction.user.id),
-                transcript=transcript_text,
-                closed_at=datetime.now(UTC),
-                channel_id=None,
-            )
-
-        # ログチャンネルに通知
-        await send_close_log(
-            interaction.guild,
-            ticket,
-            category,
-            interaction.user.name,
-            settings.app_url,
-        )
-
-        # チャンネル削除
         try:
-            if isinstance(interaction.channel, discord.TextChannel):
-                closer = interaction.user.name
-                await interaction.channel.delete(
-                    reason=f"Ticket #{ticket.ticket_number} closed by {closer}"
+            async with async_session() as db_session:
+                ticket = await get_ticket(db_session, self.ticket_id)
+                if ticket is None or ticket.status == "closed":
+                    await interaction.followup.send(
+                        "このチケットは既にクローズされています。", ephemeral=True
+                    )
+                    return
+
+                category = await get_ticket_category(db_session, ticket.category_id)
+                category_name = category.name if category else "Unknown"
+
+                # トランスクリプト生成
+                transcript_text = ""
+                if isinstance(interaction.channel, discord.TextChannel):
+                    transcript_text = await generate_transcript(
+                        interaction.channel,
+                        ticket,
+                        category_name,
+                        interaction.user.name,
+                    )
+
+                # チケットステータス更新
+                await update_ticket_status(
+                    db_session,
+                    ticket,
+                    status="closed",
+                    closed_by=str(interaction.user.id),
+                    transcript=transcript_text,
+                    closed_at=datetime.now(UTC),
+                    channel_id=None,
                 )
-        except discord.HTTPException as e:
-            logger.error("Failed to delete ticket channel: %s", e)
-            await interaction.followup.send(
-                "チケットをクローズしましたが、チャンネルの削除に失敗しました。",
+
+            # ログチャンネルに通知
+            await send_close_log(
+                interaction.guild,
+                ticket,
+                category,
+                interaction.user.name,
+                settings.app_url,
             )
+
+            # チャンネル削除
+            try:
+                if isinstance(interaction.channel, discord.TextChannel):
+                    closer = interaction.user.name
+                    await interaction.channel.delete(
+                        reason=f"Ticket #{ticket.ticket_number} closed by {closer}"
+                    )
+            except discord.HTTPException as e:
+                logger.error("Failed to delete ticket channel: %s", e)
+                await interaction.followup.send(
+                    "チケットをクローズしましたが、チャンネルの削除に失敗しました。",
+                )
+        except Exception:
+            logger.exception(
+                "Error in TicketCloseButton callback (ticket_id=%d)",
+                self.ticket_id,
+            )
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.followup.send(
+                    "エラーが発生しました。しばらくしてからもう一度お試しください。",
+                    ephemeral=True,
+                )
 
 
 class TicketClaimButton(discord.ui.Button[Any]):
@@ -511,37 +557,56 @@ class TicketClaimButton(discord.ui.Button[Any]):
         if interaction.guild is None:
             return
 
-        async with async_session() as db_session:
-            ticket = await get_ticket(db_session, self.ticket_id)
-            if ticket is None:
-                await interaction.response.send_message(
-                    "チケットが見つかりません。", ephemeral=True
-                )
-                return
+        try:
+            async with async_session() as db_session:
+                ticket = await get_ticket(db_session, self.ticket_id)
+                if ticket is None:
+                    await interaction.response.send_message(
+                        "チケットが見つかりません。", ephemeral=True
+                    )
+                    return
 
-            if ticket.status == "closed":
-                await interaction.response.send_message(
-                    "このチケットは既にクローズされています。", ephemeral=True
-                )
-                return
+                if ticket.status == "closed":
+                    await interaction.response.send_message(
+                        "このチケットは既にクローズされています。", ephemeral=True
+                    )
+                    return
 
-            if ticket.claimed_by:
-                await interaction.response.send_message(
-                    f"このチケットは既に <@{ticket.claimed_by}> が担当しています。",
-                    ephemeral=True,
-                )
-                return
+                if ticket.claimed_by:
+                    await interaction.response.send_message(
+                        f"このチケットは既に <@{ticket.claimed_by}> が担当しています。",
+                        ephemeral=True,
+                    )
+                    return
 
-            await update_ticket_status(
-                db_session,
-                ticket,
-                status="claimed",
-                claimed_by=str(interaction.user.id),
+                await update_ticket_status(
+                    db_session,
+                    ticket,
+                    status="claimed",
+                    claimed_by=str(interaction.user.id),
+                )
+
+            await interaction.response.send_message(
+                f"{interaction.user.mention} がこのチケットを担当します。",
             )
-
-        await interaction.response.send_message(
-            f"{interaction.user.mention} がこのチケットを担当します。",
-        )
+        except Exception:
+            logger.exception(
+                "Error in TicketClaimButton callback (ticket_id=%d)",
+                self.ticket_id,
+            )
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "エラーが発生しました。しばらくしてからもう一度お試しください。",
+                        ephemeral=True,
+                    )
+                else:
+                    await interaction.followup.send(
+                        "エラーが発生しました。しばらくしてからもう一度お試しください。",
+                        ephemeral=True,
+                    )
+            except discord.HTTPException:
+                pass
 
 
 # =============================================================================

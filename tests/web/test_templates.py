@@ -2113,6 +2113,26 @@ class TestTicketDetailPage:
         assert "testuser" in result
         assert "General" in result
 
+    def test_does_not_show_raw_user_id(self) -> None:
+        """ユーザーIDが直接表示されない。"""
+        ticket = Ticket(
+            id=1,
+            guild_id="123",
+            user_id="456789012345678",
+            username="testuser",
+            category_id=1,
+            status="open",
+            ticket_number=1,
+        )
+        result = ticket_detail_page(
+            ticket,
+            category_name="General",
+            guild_name="Guild",
+            csrf_token="token",
+        )
+        assert "testuser" in result
+        assert "456789012345678" not in result
+
     def test_with_transcript(self) -> None:
         """トランスクリプトが表示される。"""
         ticket = Ticket(
@@ -2317,6 +2337,40 @@ class TestTicketCategoriesListPage:
         result = ticket_categories_list_page([cat], csrf_token="token", guilds_map={})
         assert "3" in result
 
+    def test_shows_role_name_instead_of_id(self) -> None:
+        """ロールIDではなくロール名が表示される。"""
+        cat = TicketCategory(
+            id=1,
+            guild_id="123",
+            name="General",
+            staff_role_id="999",
+            channel_prefix="ticket-",
+        )
+        result = ticket_categories_list_page(
+            [cat],
+            csrf_token="token",
+            guilds_map={"123": "Test Guild"},
+            roles_map={"123": [("999", "Moderator")]},
+        )
+        assert "Moderator" in result
+
+    def test_shows_role_id_as_fallback(self) -> None:
+        """ロール名が見つからない場合はIDがフォールバック表示される。"""
+        cat = TicketCategory(
+            id=1,
+            guild_id="123",
+            name="General",
+            staff_role_id="999",
+            channel_prefix="ticket-",
+        )
+        result = ticket_categories_list_page(
+            [cat],
+            csrf_token="token",
+            guilds_map={"123": "Test Guild"},
+            roles_map={},
+        )
+        assert "999" in result
+
 
 class TestTicketCategoryCreatePage:
     """ticket_category_create_page のテスト。"""
@@ -2434,6 +2488,38 @@ class TestTicketPanelsListPage:
         result = ticket_panels_list_page([panel], csrf_token="token", guilds_map={})
         assert "&lt;script&gt;" in result
         assert "<script>bad" not in result
+
+    def test_shows_channel_name_instead_of_id(self) -> None:
+        """チャンネルIDではなくチャンネル名が表示される。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="Support",
+        )
+        result = ticket_panels_list_page(
+            [panel],
+            csrf_token="token",
+            guilds_map={"123": "Test Guild"},
+            channels_map={"123": [("456", "support-tickets")]},
+        )
+        assert "#support-tickets" in result
+
+    def test_shows_channel_id_as_fallback(self) -> None:
+        """チャンネル名が見つからない場合はIDがフォールバック表示される。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="Support",
+        )
+        result = ticket_panels_list_page(
+            [panel],
+            csrf_token="token",
+            guilds_map={"123": "Test Guild"},
+            channels_map={},
+        )
+        assert "456" in result
 
 
 class TestTicketPanelCreatePage:

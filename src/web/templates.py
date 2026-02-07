@@ -3485,7 +3485,7 @@ def ticket_detail_page(
                 </div>
                 <div>
                     <div class="text-sm text-gray-400">User</div>
-                    <div>{escape(ticket.username)} ({escape(ticket.user_id)})</div>
+                    <div>{escape(ticket.username)}</div>
                 </div>
                 <div>
                     <div class="text-sm text-gray-400">Category</div>
@@ -3525,10 +3525,20 @@ def ticket_categories_list_page(
     categories: list["TicketCategory"],
     csrf_token: str = "",
     guilds_map: dict[str, str] | None = None,
+    roles_map: dict[str, list[tuple[str, str]]] | None = None,
 ) -> str:
     """Ticket categories list page template."""
     if guilds_map is None:
         guilds_map = {}
+    if roles_map is None:
+        roles_map = {}
+
+    def get_role_name(guild_id: str, role_id: str) -> str:
+        """ロール名を取得する。"""
+        for rid, name in roles_map.get(guild_id, []):
+            if rid == role_id:
+                return name
+        return role_id
 
     rows = ""
     for cat in categories:
@@ -3551,7 +3561,7 @@ def ticket_categories_list_page(
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4">{escape(cat.name)}</td>
             <td class="py-3 px-4 text-sm">{escape(guild_name)}</td>
-            <td class="py-3 px-4 font-mono text-sm">{escape(cat.staff_role_id)}</td>
+            <td class="py-3 px-4 text-sm">{escape(get_role_name(cat.guild_id, cat.staff_role_id))}</td>
             <td class="py-3 px-4 text-sm">{escape(cat.channel_prefix)}</td>
             <td class="py-3 px-4 text-sm">{questions_count}</td>
             <td class="py-3 px-4">
@@ -3811,10 +3821,20 @@ def ticket_panels_list_page(
     panels: list["TicketPanel"],
     csrf_token: str = "",
     guilds_map: dict[str, str] | None = None,
+    channels_map: dict[str, list[tuple[str, str]]] | None = None,
 ) -> str:
     """Ticket panels list page template."""
     if guilds_map is None:
         guilds_map = {}
+    if channels_map is None:
+        channels_map = {}
+
+    def get_channel_name(guild_id: str, channel_id: str) -> str:
+        """チャンネル名を取得する。"""
+        for cid, name in channels_map.get(guild_id, []):
+            if cid == channel_id:
+                return f"#{name}"
+        return channel_id
 
     rows = ""
     for panel in panels:
@@ -3828,7 +3848,7 @@ def ticket_panels_list_page(
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4">{escape(panel.title)}</td>
             <td class="py-3 px-4 text-sm">{escape(guild_name)}</td>
-            <td class="py-3 px-4 font-mono text-sm">{escape(panel.channel_id)}</td>
+            <td class="py-3 px-4 text-sm">{escape(get_channel_name(panel.guild_id, panel.channel_id))}</td>
             <td class="py-3 px-4 text-sm">{posted}</td>
             <td class="py-3 px-4 text-gray-400 text-sm">{created}</td>
             <td class="py-3 px-4">

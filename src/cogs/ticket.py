@@ -47,7 +47,10 @@ class TicketCog(commands.Cog):
 
     async def cog_load(self) -> None:
         """Cog 読み込み時に永続 View を登録し、定期同期タスクを開始する。"""
-        await self._register_all_views()
+        try:
+            await self._register_all_views()
+        except Exception:
+            logger.exception("Failed to register ticket views on cog_load")
         self._sync_views_task.start()
 
     async def cog_unload(self) -> None:
@@ -61,26 +64,38 @@ class TicketCog(commands.Cog):
             panels = await get_all_ticket_panels(db_session)
             panel_count = 0
             for panel in panels:
-                associations = await get_ticket_panel_categories(db_session, panel.id)
-                if associations:
-                    # カテゴリ名を取得
-                    category_names: dict[int, str] = {}
-                    for assoc in associations:
-                        cat = await get_ticket_category(db_session, assoc.category_id)
-                        if cat:
-                            category_names[cat.id] = cat.name
-                    view = TicketPanelView(panel.id, associations, category_names)
-                    self.bot.add_view(view)
-                    panel_count += 1
+                try:
+                    associations = await get_ticket_panel_categories(
+                        db_session, panel.id
+                    )
+                    if associations:
+                        # カテゴリ名を取得
+                        category_names: dict[int, str] = {}
+                        for assoc in associations:
+                            cat = await get_ticket_category(
+                                db_session, assoc.category_id
+                            )
+                            if cat:
+                                category_names[cat.id] = cat.name
+                        view = TicketPanelView(panel.id, associations, category_names)
+                        self.bot.add_view(view)
+                        panel_count += 1
+                except Exception:
+                    logger.exception("Failed to register view for panel %d", panel.id)
 
             # open/claimed チケットの ControlView を登録
             tickets = await get_all_tickets(db_session, limit=500)
             ticket_count = 0
             for ticket in tickets:
                 if ticket.status in ("open", "claimed") and ticket.channel_id:
-                    ctrl_view = TicketControlView(ticket.id)
-                    self.bot.add_view(ctrl_view)
-                    ticket_count += 1
+                    try:
+                        ctrl_view = TicketControlView(ticket.id)
+                        self.bot.add_view(ctrl_view)
+                        ticket_count += 1
+                    except Exception:
+                        logger.exception(
+                            "Failed to register control view for ticket %d", ticket.id
+                        )
 
         logger.info(
             "Registered %d ticket panel views and %d ticket control views",

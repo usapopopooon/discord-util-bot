@@ -3183,12 +3183,17 @@ async def ticket_categories_list(
     )
     categories = list(result.scalars().all())
     guilds_map, _ = await _get_discord_guilds_and_channels(db)
+    discord_roles = await _get_discord_roles_by_guild(db)
+    roles_map: dict[str, list[tuple[str, str]]] = {}
+    for gid, role_list in discord_roles.items():
+        roles_map[gid] = [(rid, name) for rid, name, _ in role_list]
 
     return HTMLResponse(
         content=ticket_categories_list_page(
             categories,
             csrf_token=generate_csrf_token(),
             guilds_map=guilds_map,
+            roles_map=roles_map,
         )
     )
 
@@ -3339,13 +3344,14 @@ async def ticket_panels_list(
         select(TicketPanel).order_by(TicketPanel.created_at.desc())
     )
     panels = list(result.scalars().all())
-    guilds_map, _ = await _get_discord_guilds_and_channels(db)
+    guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
 
     return HTMLResponse(
         content=ticket_panels_list_page(
             panels,
             csrf_token=generate_csrf_token(),
             guilds_map=guilds_map,
+            channels_map=channels_map,
         )
     )
 
