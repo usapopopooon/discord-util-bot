@@ -3,6 +3,8 @@
 from html import escape
 from typing import TYPE_CHECKING
 
+from src.utils import format_datetime
+
 if TYPE_CHECKING:
     from src.database.models import (
         AutoBanLog,
@@ -1271,7 +1273,7 @@ def bump_list_page(
             <td class="py-3 px-4">{guild_display}</td>
             <td class="py-3 px-4">{channel_display}</td>
             <td class="py-3 px-4 text-gray-400 text-sm">
-                {config.created_at.strftime("%Y-%m-%d %H:%M") if config.created_at else "-"}
+                {format_datetime(config.created_at)}
             </td>
             <td class="py-3 px-4">
                 <form method="POST" action="/bump/config/{config.guild_id}/delete"
@@ -1299,9 +1301,7 @@ def bump_list_page(
     for reminder in reminders:
         status = "Enabled" if reminder.is_enabled else "Disabled"
         status_class = "text-green-400" if reminder.is_enabled else "text-gray-500"
-        remind_at = (
-            reminder.remind_at.strftime("%Y-%m-%d %H:%M") if reminder.remind_at else "-"
-        )
+        remind_at = format_datetime(reminder.remind_at)
         guild_display = format_guild_display(reminder.guild_id)
         channel_display = format_channel_display(reminder.guild_id, reminder.channel_id)
         reminder_rows += f"""
@@ -1446,9 +1446,7 @@ def role_panels_list_page(
 
         items = items_by_panel.get(panel.id, [])
 
-        created_at = (
-            panel.created_at.strftime("%Y-%m-%d %H:%M") if panel.created_at else "-"
-        )
+        created_at = format_datetime(panel.created_at)
 
         guild_name = guilds_map.get(panel.guild_id)
         channel_name = get_channel_name(panel.guild_id, panel.channel_id)
@@ -2997,7 +2995,7 @@ def autoban_list_page(
 
         status = "Enabled" if rule.is_enabled else "Disabled"
         status_class = "text-green-400" if rule.is_enabled else "text-gray-500"
-        created = rule.created_at.strftime("%Y-%m-%d %H:%M") if rule.created_at else "-"
+        created = format_datetime(rule.created_at)
 
         rows += f"""
         <tr class="border-b border-gray-700">
@@ -3225,7 +3223,7 @@ def autoban_logs_page(
         action_class = (
             "text-red-400" if log.action_taken == "banned" else "text-yellow-400"
         )
-        created = log.created_at.strftime("%Y-%m-%d %H:%M") if log.created_at else "-"
+        created = format_datetime(log.created_at)
 
         rows += f"""
         <tr class="border-b border-gray-700">
@@ -3321,9 +3319,7 @@ def ticket_list_page(
             "closed": "text-gray-500",
         }
         status_class = status_colors.get(ticket.status, "text-gray-400")
-        created = (
-            ticket.created_at.strftime("%Y-%m-%d %H:%M") if ticket.created_at else "-"
-        )
+        created = format_datetime(ticket.created_at)
 
         rows += f"""
         <tr class="border-b border-gray-700">
@@ -3419,14 +3415,8 @@ def ticket_detail_page(
     }
     status_class = status_colors.get(ticket.status, "text-gray-400")
 
-    created = (
-        ticket.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
-        if ticket.created_at
-        else "-"
-    )
-    closed = (
-        ticket.closed_at.strftime("%Y-%m-%d %H:%M:%S UTC") if ticket.closed_at else "-"
-    )
+    created = format_datetime(ticket.created_at, "%Y-%m-%d %H:%M:%S")
+    closed = format_datetime(ticket.closed_at, "%Y-%m-%d %H:%M:%S")
 
     # フォーム回答を表示
     form_answers_html = ""
@@ -3538,9 +3528,7 @@ def ticket_panels_list_page(
     rows = ""
     for panel in panels:
         guild_name = guilds_map.get(panel.guild_id, panel.guild_id)
-        created = (
-            panel.created_at.strftime("%Y-%m-%d %H:%M") if panel.created_at else "-"
-        )
+        created = format_datetime(panel.created_at)
         posted = "Yes" if panel.message_id else "No"
 
         rows += f"""

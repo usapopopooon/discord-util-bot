@@ -163,6 +163,9 @@ class Settings(BaseSettings):
     # アプリの URL (パスワードリセットリンク用)
     app_url: str = "http://localhost:8000"
 
+    # タイムゾーンオフセット (UTC からの時差。例: 9 = JST, -5 = EST)
+    timezone_offset: int = 0
+
     @property
     def smtp_enabled(self) -> bool:
         """SMTP が設定されているかどうかを判定する。

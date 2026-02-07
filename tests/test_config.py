@@ -133,3 +133,35 @@ class TestSettingsValidation:
         assert s.discord_token == "tok"
         assert s.database_url == "postgresql+asyncpg://u@h/d"
         assert s.health_channel_id == 42
+
+
+class TestTimezoneOffset:
+    """timezone_offset フィールドのテスト。"""
+
+    def test_default_is_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """デフォルトは 0。"""
+        monkeypatch.delenv("TIMEZONE_OFFSET", raising=False)
+        s = Settings(
+            discord_token="test",
+            database_url="postgresql+asyncpg://x@y/z",
+            _env_file=None,  # type: ignore[call-arg]
+        )
+        assert s.timezone_offset == 0
+
+    def test_custom_positive_offset(self) -> None:
+        """正のオフセット (JST) を設定できる。"""
+        s = Settings(
+            discord_token="test",
+            database_url="postgresql+asyncpg://x@y/z",
+            timezone_offset=9,
+        )
+        assert s.timezone_offset == 9
+
+    def test_custom_negative_offset(self) -> None:
+        """負のオフセット (EST) を設定できる。"""
+        s = Settings(
+            discord_token="test",
+            database_url="postgresql+asyncpg://x@y/z",
+            timezone_offset=-5,
+        )
+        assert s.timezone_offset == -5

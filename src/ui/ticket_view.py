@@ -27,6 +27,7 @@ from src.services.db_service import (
     get_ticket_category,
     update_ticket_status,
 )
+from src.utils import format_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,9 @@ async def generate_transcript(
     lines: list[str] = []
     lines.append(f"=== Ticket #{ticket.ticket_number} - {category_name} ===")
     lines.append(f"Created by: {ticket.username} ({ticket.user_id})")
-    lines.append(f"Created at: {ticket.created_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    lines.append(
+        f"Created at: {format_datetime(ticket.created_at, '%Y-%m-%d %H:%M:%S')}"
+    )
     lines.append("")
 
     try:
@@ -110,7 +113,7 @@ async def generate_transcript(
             if message.author.bot and message.embeds:
                 # Bot の Embed メッセージはスキップ (開始 Embed など)
                 continue
-            timestamp = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            timestamp = format_datetime(message.created_at, "%Y-%m-%d %H:%M:%S")
             content = message.content or ""
             if message.attachments:
                 attachment_urls = ", ".join(a.url for a in message.attachments)
@@ -121,7 +124,7 @@ async def generate_transcript(
         logger.warning("Failed to fetch messages for transcript: %s", e)
         lines.append("[Failed to fetch message history]")
 
-    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+    now = format_datetime(datetime.now(UTC), "%Y-%m-%d %H:%M:%S")
     lines.append("")
     lines.append(f"=== Closed by: {closed_by_name} at {now} ===")
 
@@ -394,7 +397,7 @@ class TicketCloseButton(discord.ui.Button[Any]):
                     db_session,
                     ticket,
                     status="closed",
-                    closed_by=str(interaction.user.id),
+                    closed_by=interaction.user.name,
                     transcript=transcript_text,
                     closed_at=datetime.now(UTC),
                     channel_id=None,
@@ -470,7 +473,7 @@ class TicketClaimButton(discord.ui.Button[Any]):
 
                 if ticket.claimed_by:
                     await interaction.response.send_message(
-                        f"このチケットは既に <@{ticket.claimed_by}> が担当しています。",
+                        f"このチケットは既に {ticket.claimed_by} が担当しています。",
                         ephemeral=True,
                     )
                     return
@@ -479,7 +482,7 @@ class TicketClaimButton(discord.ui.Button[Any]):
                     db_session,
                     ticket,
                     status="claimed",
-                    claimed_by=str(interaction.user.id),
+                    claimed_by=interaction.user.name,
                 )
 
             await interaction.response.send_message(

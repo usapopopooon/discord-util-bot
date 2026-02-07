@@ -176,7 +176,7 @@ class TicketCog(commands.Cog):
                 db_session,
                 ticket,
                 status="closed",
-                closed_by=str(interaction.user.id),
+                closed_by=interaction.user.name,
                 close_reason=reason,
                 transcript=transcript_text,
                 closed_at=datetime.now(UTC),
@@ -236,7 +236,7 @@ class TicketCog(commands.Cog):
 
             if ticket.claimed_by:
                 await interaction.response.send_message(
-                    f"このチケットは既に <@{ticket.claimed_by}> が担当しています。",
+                    f"このチケットは既に {ticket.claimed_by} が担当しています。",
                     ephemeral=True,
                 )
                 return
@@ -245,7 +245,7 @@ class TicketCog(commands.Cog):
                 db_session,
                 ticket,
                 status="claimed",
-                claimed_by=str(interaction.user.id),
+                claimed_by=interaction.user.name,
             )
 
         await interaction.response.send_message(

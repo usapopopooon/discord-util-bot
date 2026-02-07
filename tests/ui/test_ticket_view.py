@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
+import pytest
 
 from src.database.models import Ticket, TicketCategory, TicketPanel, TicketPanelCategory
 from src.ui.ticket_view import (
@@ -1085,6 +1086,42 @@ class TestGenerateTranscriptEdgeCases:
         result = await generate_transcript(channel, ticket, "General", "staff")
 
         assert "Bot message" in result
+
+    async def test_transcript_respects_timezone_offset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """タイムゾーンオフセットがトランスクリプトに反映される。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", 9)
+
+        ticket = _make_ticket(
+            ticket_number=1,
+            username="user1",
+            user_id="1",
+            created_at=datetime(2026, 2, 7, 10, 0, 0, tzinfo=UTC),
+        )
+        channel = MagicMock(spec=discord.TextChannel)
+
+        msg = MagicMock()
+        msg.author = MagicMock()
+        msg.author.bot = False
+        msg.author.name = "user1"
+        msg.embeds = []
+        msg.content = "Hello"
+        msg.attachments = []
+        msg.created_at = datetime(2026, 2, 7, 10, 0, 5, tzinfo=UTC)
+
+        async def message_history(*_args: object, **_kwargs: object):
+            yield msg
+
+        channel.history = MagicMock(return_value=message_history())
+
+        result = await generate_transcript(channel, ticket, "General", "staff")
+
+        # UTC 10:00 + 9h = 19:00 JST
+        assert "Created at: 2026-02-07 19:00:00" in result
+        assert "[2026-02-07 19:00:05] user1: Hello" in result
 
 
 # =============================================================================

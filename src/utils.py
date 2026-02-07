@@ -6,8 +6,11 @@ import asyncio
 import re
 import time
 import unicodedata
+from datetime import datetime, timedelta, timezone
 
 import emoji
+
+from src.config import settings
 
 # =============================================================================
 # リソースロック管理 (並行処理の競合防止)
@@ -190,3 +193,37 @@ def normalize_emoji(text: str) -> str:
     if stripped and emoji.is_emoji(stripped):
         return stripped
     return normalized
+
+
+# =============================================================================
+# 日時フォーマット (タイムゾーンオフセット対応)
+# =============================================================================
+
+
+def _get_timezone() -> timezone:
+    """設定されたタイムゾーンオフセットから timezone オブジェクトを返す."""
+    offset = settings.timezone_offset
+    return timezone(timedelta(hours=offset))
+
+
+def format_datetime(
+    dt: datetime | None,
+    fmt: str = "%Y-%m-%d %H:%M",
+    *,
+    fallback: str = "-",
+) -> str:
+    """datetime を設定されたタイムゾーンでフォーマットする.
+
+    Args:
+        dt: フォーマット対象の datetime (None 可)
+        fmt: strftime フォーマット文字列
+        fallback: dt が None の場合の代替文字列
+
+    Returns:
+        フォーマット済み文字列
+    """
+    if dt is None:
+        return fallback
+    tz = _get_timezone()
+    local_dt = dt.astimezone(tz)
+    return local_dt.strftime(fmt)

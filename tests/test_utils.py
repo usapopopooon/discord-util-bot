@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import UTC, datetime
 
 import pytest
 
@@ -12,6 +13,7 @@ from src.utils import (
     _has_lone_surrogate,
     _resource_locks,
     clear_resource_locks,
+    format_datetime,
     get_resource_lock,
     get_resource_lock_count,
     is_valid_emoji,
@@ -669,3 +671,69 @@ class TestIsValidEmojiNormalization:
         result = is_valid_emoji(heart_with_vs)
         # 結果は True または False のどちらか (ライブラリ依存)
         assert isinstance(result, bool)
+
+
+# =============================================================================
+# format_datetime テスト
+# =============================================================================
+
+
+class TestFormatDatetime:
+    """format_datetime 関数のテスト。"""
+
+    def test_none_returns_fallback(self) -> None:
+        """None の場合はフォールバック値を返す。"""
+        assert format_datetime(None) == "-"
+
+    def test_none_custom_fallback(self) -> None:
+        """カスタムフォールバック値を返す。"""
+        assert format_datetime(None, fallback="N/A") == "N/A"
+
+    def test_utc_with_offset_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """オフセット 0 の場合は UTC のまま。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", 0)
+        dt = datetime(2026, 2, 7, 10, 30, 0, tzinfo=UTC)
+        assert format_datetime(dt) == "2026-02-07 10:30"
+
+    def test_positive_offset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """正のオフセット (例: JST +9)。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", 9)
+        dt = datetime(2026, 2, 7, 10, 30, 0, tzinfo=UTC)
+        assert format_datetime(dt) == "2026-02-07 19:30"
+
+    def test_negative_offset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """負のオフセット (例: EST -5)。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", -5)
+        dt = datetime(2026, 2, 7, 10, 30, 0, tzinfo=UTC)
+        assert format_datetime(dt) == "2026-02-07 05:30"
+
+    def test_offset_crosses_midnight(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """オフセットで日付がまたがるケース。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", 9)
+        dt = datetime(2026, 2, 7, 20, 0, 0, tzinfo=UTC)
+        assert format_datetime(dt) == "2026-02-08 05:00"
+
+    def test_custom_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """カスタムフォーマット文字列。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", 0)
+        dt = datetime(2026, 2, 7, 10, 30, 45, tzinfo=UTC)
+        assert format_datetime(dt, "%Y-%m-%d %H:%M:%S") == "2026-02-07 10:30:45"
+
+    def test_default_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """デフォルトフォーマットは %Y-%m-%d %H:%M。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", 0)
+        dt = datetime(2026, 2, 7, 10, 30, 45, tzinfo=UTC)
+        # デフォルトは秒なし
+        assert format_datetime(dt) == "2026-02-07 10:30"
