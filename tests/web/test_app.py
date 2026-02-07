@@ -10337,188 +10337,6 @@ class TestTicketRoutes:
         assert "Ticket #42" in response.text
 
 
-class TestTicketCategoryRoutes:
-    """/tickets/categories ルートのテスト。"""
-
-    async def test_categories_requires_auth(self, client: AsyncClient) -> None:
-        """認証なしでは /login にリダイレクトされる。"""
-        response = await client.get("/tickets/categories", follow_redirects=False)
-        assert response.status_code == 302
-        assert response.headers["location"] == "/login"
-
-    async def test_categories_list_empty(
-        self, authenticated_client: AsyncClient
-    ) -> None:
-        """カテゴリがない場合は空メッセージが表示される。"""
-        response = await authenticated_client.get("/tickets/categories")
-        assert response.status_code == 200
-        assert "No ticket categories" in response.text
-
-    async def test_categories_list_with_data(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """カテゴリがある場合は一覧が表示される。"""
-        cat = TicketCategory(
-            guild_id="123", name="General Support", staff_role_id="999"
-        )
-        db_session.add(cat)
-        await db_session.commit()
-
-        response = await authenticated_client.get("/tickets/categories")
-        assert response.status_code == 200
-        assert "General Support" in response.text
-
-    async def test_category_create_page(
-        self, authenticated_client: AsyncClient
-    ) -> None:
-        """作成フォームが表示される。"""
-        response = await authenticated_client.get("/tickets/categories/new")
-        assert response.status_code == 200
-        assert "Create" in response.text
-        assert "discordCategorySelect" in response.text
-        assert "categoriesData" in response.text
-
-    async def test_category_create_page_requires_auth(
-        self, client: AsyncClient
-    ) -> None:
-        """作成フォームは認証が必要。"""
-        response = await client.get("/tickets/categories/new", follow_redirects=False)
-        assert response.status_code == 302
-        assert response.headers["location"] == "/login"
-
-    async def test_category_create(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """カテゴリを作成できる。"""
-        response = await authenticated_client.post(
-            "/tickets/categories/new",
-            data={
-                "guild_id": "123456789012345678",
-                "name": "Bug Report",
-                "staff_role_id": "999888777",
-                "channel_prefix": "bug-",
-                "form_questions": "お名前\n内容",
-            },
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert response.headers["location"] == "/tickets/categories"
-
-        result = await db_session.execute(select(TicketCategory))
-        cats = list(result.scalars().all())
-        assert len(cats) == 1
-        assert cats[0].name == "Bug Report"
-
-    async def test_category_create_with_log_channel(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """log_channel_id 付きでカテゴリを作成できる。"""
-        response = await authenticated_client.post(
-            "/tickets/categories/new",
-            data={
-                "guild_id": "123456789012345678",
-                "name": "Support",
-                "staff_role_id": "999888777",
-                "log_channel_id": "555666777",
-            },
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-
-        result = await db_session.execute(select(TicketCategory))
-        cats = list(result.scalars().all())
-        assert len(cats) == 1
-        assert cats[0].log_channel_id == "555666777"
-
-    async def test_category_create_with_discord_category(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """discord_category_id 付きでカテゴリを作成できる。"""
-        response = await authenticated_client.post(
-            "/tickets/categories/new",
-            data={
-                "guild_id": "123456789012345678",
-                "name": "Support",
-                "staff_role_id": "999888777",
-                "discord_category_id": "444555666",
-            },
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-
-        result = await db_session.execute(select(TicketCategory))
-        cats = list(result.scalars().all())
-        assert len(cats) == 1
-        assert cats[0].discord_category_id == "444555666"
-
-    async def test_category_create_without_log_channel(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """log_channel_id なしではNullが保存される。"""
-        response = await authenticated_client.post(
-            "/tickets/categories/new",
-            data={
-                "guild_id": "123456789012345678",
-                "name": "Support",
-                "staff_role_id": "999888777",
-                "log_channel_id": "",
-            },
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-
-        result = await db_session.execute(select(TicketCategory))
-        cats = list(result.scalars().all())
-        assert len(cats) == 1
-        assert cats[0].log_channel_id is None
-
-    async def test_category_create_missing_fields(
-        self, authenticated_client: AsyncClient
-    ) -> None:
-        """必須フィールドが欠けている場合は 400 を返す。"""
-        response = await authenticated_client.post(
-            "/tickets/categories/new",
-            data={
-                "guild_id": "",
-                "name": "",
-                "staff_role_id": "",
-            },
-        )
-        assert response.status_code == 400
-
-    async def test_category_delete(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """カテゴリを削除できる。"""
-        cat = TicketCategory(guild_id="123", name="ToDelete", staff_role_id="999")
-        db_session.add(cat)
-        await db_session.commit()
-        await db_session.refresh(cat)
-
-        response = await authenticated_client.post(
-            f"/tickets/categories/{cat.id}/delete",
-            data={},
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert response.headers["location"] == "/tickets/categories"
-
-        result = await db_session.execute(
-            select(TicketCategory).where(TicketCategory.id == cat.id)
-        )
-        assert result.scalar_one_or_none() is None
-
-    async def test_category_delete_requires_auth(self, client: AsyncClient) -> None:
-        """カテゴリ削除は認証が必要。"""
-        response = await client.post(
-            "/tickets/categories/1/delete",
-            data={},
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert response.headers["location"] == "/login"
-
-
 class TestTicketPanelRoutes:
     """/tickets/panels ルートのテスト。"""
 
@@ -10580,6 +10398,7 @@ class TestTicketPanelRoutes:
                     "channel_id": "999888777",
                     "title": "New Panel",
                     "description": "Click to create ticket",
+                    "staff_role_id": "111222333",
                 },
                 follow_redirects=False,
             )
@@ -10592,6 +10411,12 @@ class TestTicketPanelRoutes:
         assert len(panels) == 1
         assert panels[0].title == "New Panel"
 
+        # カテゴリも自動作成される
+        result = await db_session.execute(select(TicketCategory))
+        cats = list(result.scalars().all())
+        assert len(cats) == 1
+        assert cats[0].staff_role_id == "111222333"
+
     async def test_panel_create_missing_fields(
         self, authenticated_client: AsyncClient
     ) -> None:
@@ -10602,6 +10427,7 @@ class TestTicketPanelRoutes:
                 "guild_id": "",
                 "channel_id": "",
                 "title": "",
+                "staff_role_id": "",
             },
             follow_redirects=False,
         )
@@ -10679,11 +10505,6 @@ class TestTicketPanelRoutes:
         """Discord API 投稿失敗時もパネルは作成される (message_id は None)。"""
         from unittest.mock import AsyncMock, patch
 
-        cat = TicketCategory(guild_id="123", name="General", staff_role_id="999")
-        db_session.add(cat)
-        await db_session.commit()
-        await db_session.refresh(cat)
-
         with patch(
             "src.web.app.post_ticket_panel_to_discord",
             new_callable=AsyncMock,
@@ -10695,7 +10516,7 @@ class TestTicketPanelRoutes:
                     "guild_id": "123",
                     "channel_id": "456",
                     "title": "Failed Panel",
-                    "category_ids": str(cat.id),
+                    "staff_role_id": "999",
                 },
                 follow_redirects=False,
             )
@@ -10718,28 +10539,11 @@ class TestTicketPanelRoutes:
         assert response.status_code == 302
         assert response.headers["location"] == "/tickets/panels"
 
-    async def test_category_delete_not_found(
-        self, authenticated_client: AsyncClient
-    ) -> None:
-        """存在しないカテゴリの削除は 302 リダイレクト。"""
-        response = await authenticated_client.post(
-            "/tickets/categories/99999/delete",
-            data={},
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert response.headers["location"] == "/tickets/categories"
-
-    async def test_panel_create_with_categories(
+    async def test_panel_create_with_category_fields(
         self, authenticated_client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        """カテゴリ付きでパネルを作成できる。"""
+        """カテゴリフィールド付きでパネルを作成できる。"""
         from unittest.mock import AsyncMock, patch
-
-        cat = TicketCategory(guild_id="123", name="Bug Report", staff_role_id="999")
-        db_session.add(cat)
-        await db_session.commit()
-        await db_session.refresh(cat)
 
         with patch(
             "src.web.app.post_ticket_panel_to_discord",
@@ -10751,8 +10555,11 @@ class TestTicketPanelRoutes:
                 data={
                     "guild_id": "123",
                     "channel_id": "456",
-                    "title": "Panel with cats",
-                    "category_ids": str(cat.id),
+                    "title": "Panel with settings",
+                    "staff_role_id": "999",
+                    "discord_category_id": "888",
+                    "channel_prefix": "help-",
+                    "log_channel_id": "777",
                 },
                 follow_redirects=False,
             )
@@ -10764,10 +10571,18 @@ class TestTicketPanelRoutes:
         assert len(panels) == 1
         assert panels[0].message_id == "msg456"
 
+        result = await db_session.execute(select(TicketCategory))
+        cats = list(result.scalars().all())
+        assert len(cats) == 1
+        assert cats[0].staff_role_id == "999"
+        assert cats[0].discord_category_id == "888"
+        assert cats[0].channel_prefix == "help-"
+        assert cats[0].log_channel_id == "777"
+
         result = await db_session.execute(select(TicketPanelCategory))
         associations = list(result.scalars().all())
         assert len(associations) == 1
-        assert associations[0].category_id == cat.id
+        assert associations[0].category_id == cats[0].id
 
     async def test_panel_create_cooldown(
         self, authenticated_client: AsyncClient
@@ -10854,142 +10669,6 @@ class TestTicketPanelRoutes:
             select(TicketPanel).where(TicketPanel.id == panel.id)
         )
         assert result.scalar_one_or_none() is None
-
-
-class TestTicketCategoryRoutesExtra:
-    """/tickets/categories の追加テスト (CSRF, cooldown)。"""
-
-    async def test_category_create_csrf_failure(
-        self, authenticated_client: AsyncClient
-    ) -> None:
-        """カテゴリ作成の CSRF 失敗はリダイレクトされる。"""
-        from unittest.mock import patch
-
-        with patch("src.web.app.validate_csrf_token", return_value=False):
-            response = await authenticated_client.post(
-                "/tickets/categories/new",
-                data={
-                    "guild_id": "123",
-                    "name": "Test",
-                    "staff_role_id": "999",
-                    "csrf_token": "bad",
-                },
-                follow_redirects=False,
-            )
-        assert response.status_code == 302
-        assert "/tickets/categories/new" in response.headers["location"]
-
-    async def test_category_create_cooldown(
-        self, authenticated_client: AsyncClient
-    ) -> None:
-        """カテゴリ作成のクールタイム中はリダイレクトされる。"""
-        from src.web.app import record_form_submit
-
-        record_form_submit("test@example.com", "/tickets/categories/new")
-        response = await authenticated_client.post(
-            "/tickets/categories/new",
-            data={
-                "guild_id": "123",
-                "name": "Test",
-                "staff_role_id": "999",
-            },
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert "/tickets/categories/new" in response.headers["location"]
-
-    async def test_category_delete_csrf_failure(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """カテゴリ削除の CSRF 失敗はリダイレクトされる。"""
-        from unittest.mock import patch
-
-        cat = TicketCategory(guild_id="123", name="Test", staff_role_id="999")
-        db_session.add(cat)
-        await db_session.commit()
-        await db_session.refresh(cat)
-
-        with patch("src.web.app.validate_csrf_token", return_value=False):
-            response = await authenticated_client.post(
-                f"/tickets/categories/{cat.id}/delete",
-                data={"csrf_token": "bad"},
-                follow_redirects=False,
-            )
-        assert response.status_code == 302
-        assert "/tickets/categories" in response.headers["location"]
-
-        # カテゴリはまだ存在する
-        result = await db_session.execute(
-            select(TicketCategory).where(TicketCategory.id == cat.id)
-        )
-        assert result.scalar_one_or_none() is not None
-
-    async def test_category_delete_cooldown(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """カテゴリ削除のクールタイム中はリダイレクトされる。"""
-        from src.web.app import record_form_submit
-
-        cat = TicketCategory(guild_id="123", name="Test", staff_role_id="999")
-        db_session.add(cat)
-        await db_session.commit()
-        await db_session.refresh(cat)
-
-        record_form_submit("test@example.com", f"/tickets/categories/{cat.id}/delete")
-        response = await authenticated_client.post(
-            f"/tickets/categories/{cat.id}/delete",
-            data={},
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-
-    async def test_category_create_with_form_questions(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """フォーム質問付きでカテゴリを作成できる。"""
-        response = await authenticated_client.post(
-            "/tickets/categories/new",
-            data={
-                "guild_id": "123456789012345678",
-                "name": "Bug Report",
-                "staff_role_id": "999888777",
-                "form_questions": "お名前\n内容\n再現手順\n優先度\n備考",
-            },
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-
-        result = await db_session.execute(select(TicketCategory))
-        cats = list(result.scalars().all())
-        assert len(cats) == 1
-        import json
-
-        questions = json.loads(cats[0].form_questions)
-        assert len(questions) == 5
-
-    async def test_category_create_form_questions_limit(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """フォーム質問は最大5問に制限される。"""
-        response = await authenticated_client.post(
-            "/tickets/categories/new",
-            data={
-                "guild_id": "123456789012345678",
-                "name": "Many Questions",
-                "staff_role_id": "999888777",
-                "form_questions": "Q1\nQ2\nQ3\nQ4\nQ5\nQ6\nQ7",
-            },
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-
-        result = await db_session.execute(select(TicketCategory))
-        cats = list(result.scalars().all())
-        assert len(cats) == 1
-        import json
-
-        questions = json.loads(cats[0].form_questions)
-        assert len(questions) == 5
 
 
 class TestTicketDetailExtra:

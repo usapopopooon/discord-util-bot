@@ -13,7 +13,6 @@ from src.ui.ticket_view import (
     TicketClaimButton,
     TicketCloseButton,
     TicketControlView,
-    TicketFormModal,
     TicketPanelView,
     _create_ticket_channel,
     create_ticket_opening_embed,
@@ -99,38 +98,14 @@ class TestCreateTicketOpeningEmbed:
         assert f"<@{ticket.user_id}>" in (embed.description or "")
         assert embed.color == discord.Color.blue()
 
-    def test_embed_with_form_answers(self) -> None:
-        """フォーム回答付きの Embed にフィールドが追加される。"""
-        ticket = _make_ticket()
-        category = _make_category()
-        answers = [("お名前", "太郎"), ("内容", "テスト")]
-
-        embed = create_ticket_opening_embed(ticket, category, form_answers=answers)
-
-        assert len(embed.fields) == 2
-        assert embed.fields[0].name == "お名前"
-        assert embed.fields[0].value == "太郎"
-        assert embed.fields[1].name == "内容"
-        assert embed.fields[1].value == "テスト"
-
-    def test_embed_without_form_answers(self) -> None:
-        """フォーム回答なしの Embed にはフィールドがない。"""
+    def test_embed_no_fields(self) -> None:
+        """Embed にフィールドがない。"""
         ticket = _make_ticket()
         category = _make_category()
 
         embed = create_ticket_opening_embed(ticket, category)
 
         assert len(embed.fields) == 0
-
-    def test_embed_with_empty_answer(self) -> None:
-        """空の回答は「(未回答)」と表示される。"""
-        ticket = _make_ticket()
-        category = _make_category()
-        answers = [("お名前", "")]
-
-        embed = create_ticket_opening_embed(ticket, category, form_answers=answers)
-
-        assert embed.fields[0].value == "(未回答)"
 
     def test_embed_footer(self) -> None:
         """フッターにチケット ID が含まれる。"""
@@ -441,45 +416,6 @@ class TestTicketClaimButton:
 
 
 # =============================================================================
-# TicketFormModal テスト
-# =============================================================================
-
-
-class TestTicketFormModal:
-    """TicketFormModal のテスト。"""
-
-    async def test_creates_text_inputs_from_questions(self) -> None:
-        """質問数分の TextInput が作成される。"""
-        guild = MagicMock(spec=discord.Guild)
-        user = MagicMock(spec=discord.Member)
-        category = _make_category()
-
-        modal = TicketFormModal(
-            guild=guild,
-            user=user,
-            category=category,
-            questions=["お名前", "内容"],
-        )
-
-        assert len(modal.children) == 2
-
-    async def test_max_5_text_inputs(self) -> None:
-        """最大 5 つの TextInput まで。"""
-        guild = MagicMock(spec=discord.Guild)
-        user = MagicMock(spec=discord.Member)
-        category = _make_category()
-
-        modal = TicketFormModal(
-            guild=guild,
-            user=user,
-            category=category,
-            questions=["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7"],
-        )
-
-        assert len(modal.children) == 5
-
-
-# =============================================================================
 # _create_ticket_channel テスト
 # =============================================================================
 
@@ -664,13 +600,13 @@ class TestCreateTicketChannel:
         # default_role + guild.me のみ (ユーザーは含まれない)
         assert user not in overwrites
 
-    async def test_with_form_answers(self) -> None:
-        """フォーム回答付きでチャンネルを作成。"""
+    async def test_sends_spoiler_staff_mention(self) -> None:
+        """チャンネルにスポイラー付きスタッフメンションが送信される。"""
         guild = MagicMock(spec=discord.Guild)
         guild.id = 100
         guild.default_role = MagicMock(spec=discord.Role)
         guild.me = MagicMock(spec=discord.Member)
-        guild.get_role = MagicMock(return_value=None)
+        guild.get_role = MagicMock(return_value=MagicMock(spec=discord.Role))
         guild.get_channel = MagicMock(return_value=None)
 
         mock_channel = MagicMock(spec=discord.TextChannel)
@@ -695,25 +631,16 @@ class TestCreateTicketChannel:
                 "src.ui.ticket_view.create_ticket",
                 new_callable=AsyncMock,
                 return_value=mock_ticket,
-            ) as mock_create,
+            ),
             patch(
                 "src.ui.ticket_view.TicketControlView",
                 return_value=MagicMock(),
             ),
         ):
-            result = await _create_ticket_channel(
-                guild,
-                user,
-                category,
-                db_session,
-                form_answers=[("Q1", "A1")],
-                form_answers_json='[{"question":"Q1","answer":"A1"}]',
-            )
+            await _create_ticket_channel(guild, user, category, db_session)
 
-        assert result == mock_channel
-        assert mock_create.call_args[1]["form_answers"] == (
-            '[{"question":"Q1","answer":"A1"}]'
-        )
+        call_kwargs = mock_channel.send.call_args[1]
+        assert call_kwargs["content"] == "||<@&999>||"
 
 
 # =============================================================================
@@ -1209,53 +1136,6 @@ class TestTicketCategoryButtonCallbackExtra:
         msg = interaction.response.send_message.call_args[0][0]
         assert "既にオープン中" in msg
 
-    async def test_callback_invalid_form_questions_json(self) -> None:
-        """form_questions の JSON が不正な場合は直接チケット作成にフォールバック。"""
-        assoc = _make_association(category_id=1)
-        button = TicketCategoryButton(
-            panel_id=1, association=assoc, category_name="Test"
-        )
-
-        interaction = MagicMock(spec=discord.Interaction)
-        interaction.guild = MagicMock(spec=discord.Guild)
-        interaction.guild.id = 100
-        interaction.user = MagicMock(spec=discord.Member)
-        interaction.user.id = 1
-        interaction.response = AsyncMock()
-        interaction.followup = AsyncMock()
-
-        category = _make_category(is_enabled=True, form_questions="INVALID JSON{")
-
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.first.return_value = None
-
-        _, mock_session = _mock_async_session()
-        mock_session.execute = AsyncMock(return_value=mock_result)
-
-        mock_channel = MagicMock(spec=discord.TextChannel)
-        mock_channel.mention = "<#999>"
-
-        with (
-            patch("src.ui.ticket_view.async_session") as mock_factory,
-            patch(
-                "src.ui.ticket_view.get_ticket_category",
-                new_callable=AsyncMock,
-                return_value=category,
-            ),
-            patch(
-                "src.ui.ticket_view._create_ticket_channel",
-                new_callable=AsyncMock,
-                return_value=mock_channel,
-            ),
-        ):
-            mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
-            await button.callback(interaction)
-
-        interaction.response.defer.assert_awaited_once()
-        msg = interaction.followup.send.call_args[0][0]
-        assert "チケットを作成しました" in msg
-
     async def test_callback_direct_creation_success(self) -> None:
         """フォームなしで直接チケット作成に成功。"""
         assoc = _make_association(category_id=1)
@@ -1345,103 +1225,6 @@ class TestTicketCategoryButtonCallbackExtra:
         msg = interaction.followup.send.call_args[0][0]
         assert "失敗" in msg
 
-    async def test_callback_with_valid_form_questions(self) -> None:
-        """有効な form_questions で Modal が表示される。"""
-        assoc = _make_association(category_id=1)
-        button = TicketCategoryButton(
-            panel_id=1, association=assoc, category_name="Test"
-        )
-
-        interaction = MagicMock(spec=discord.Interaction)
-        interaction.guild = MagicMock(spec=discord.Guild)
-        interaction.guild.id = 100
-        interaction.user = MagicMock(spec=discord.Member)
-        interaction.user.id = 1
-        interaction.response = AsyncMock()
-
-        category = _make_category(is_enabled=True, form_questions='["Q1", "Q2"]')
-
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.first.return_value = None
-
-        _, mock_session = _mock_async_session()
-        mock_session.execute = AsyncMock(return_value=mock_result)
-
-        with (
-            patch("src.ui.ticket_view.async_session") as mock_factory,
-            patch(
-                "src.ui.ticket_view.get_ticket_category",
-                new_callable=AsyncMock,
-                return_value=category,
-            ),
-        ):
-            mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
-            await button.callback(interaction)
-
-        interaction.response.send_modal.assert_awaited_once()
-
-
-# =============================================================================
-# TicketFormModal.on_submit テスト
-# =============================================================================
-
-
-class TestTicketFormModalOnSubmit:
-    """TicketFormModal.on_submit のテスト。"""
-
-    async def test_on_submit_success(self) -> None:
-        """フォーム送信成功時にチケットチャンネルが作成される。"""
-        guild = MagicMock(spec=discord.Guild)
-        user = MagicMock(spec=discord.Member)
-        category = _make_category()
-
-        modal = TicketFormModal(
-            guild=guild, user=user, category=category, questions=["Q1"]
-        )
-
-        interaction = MagicMock(spec=discord.Interaction)
-        interaction.response = AsyncMock()
-        interaction.followup = AsyncMock()
-
-        mock_channel = MagicMock(spec=discord.TextChannel)
-        mock_channel.mention = "<#999>"
-
-        with patch(
-            "src.ui.ticket_view._create_ticket_channel",
-            new_callable=AsyncMock,
-            return_value=mock_channel,
-        ):
-            await modal.on_submit(interaction)
-
-        interaction.response.defer.assert_awaited_once()
-        msg = interaction.followup.send.call_args[0][0]
-        assert "チケットを作成しました" in msg
-
-    async def test_on_submit_failure(self) -> None:
-        """チャンネル作成失敗時はエラーメッセージ。"""
-        guild = MagicMock(spec=discord.Guild)
-        user = MagicMock(spec=discord.Member)
-        category = _make_category()
-
-        modal = TicketFormModal(
-            guild=guild, user=user, category=category, questions=["Q1"]
-        )
-
-        interaction = MagicMock(spec=discord.Interaction)
-        interaction.response = AsyncMock()
-        interaction.followup = AsyncMock()
-
-        with patch(
-            "src.ui.ticket_view._create_ticket_channel",
-            new_callable=AsyncMock,
-            return_value=None,
-        ):
-            await modal.on_submit(interaction)
-
-        msg = interaction.followup.send.call_args[0][0]
-        assert "失敗" in msg
-
 
 # =============================================================================
 # TicketCloseButton channel delete failure テスト
@@ -1504,29 +1287,6 @@ class TestTicketCloseButtonChannelDeleteFailure:
 
         msg = interaction.followup.send.call_args[0][0]
         assert "チャンネルの削除に失敗" in msg
-
-
-# =============================================================================
-# TicketFormModal label 切り詰めテスト
-# =============================================================================
-
-
-class TestTicketFormModalTruncation:
-    """TicketFormModal の label 切り詰めテスト。"""
-
-    async def test_long_question_label_truncated(self) -> None:
-        """45文字を超える質問は切り詰められる。"""
-        guild = MagicMock(spec=discord.Guild)
-        user = MagicMock(spec=discord.Member)
-        category = _make_category()
-
-        long_question = "A" * 60
-        modal = TicketFormModal(
-            guild=guild, user=user, category=category, questions=[long_question]
-        )
-
-        text_input = modal.children[0]
-        assert len(text_input.label) == 45
 
 
 # =============================================================================

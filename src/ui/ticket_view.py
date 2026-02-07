@@ -1,17 +1,15 @@
 """Ticket system UI components.
 
 チケットシステム用の UI コンポーネント。
-パネルのボタン、フォーム Modal、チケット操作ボタンを提供する。
+パネルのボタン、チケット操作ボタンを提供する。
 
 UI の構成:
   - TicketPanelView: パネルのカテゴリボタン群 (永続 View)
   - TicketCategoryButton: カテゴリ選択ボタン
-  - TicketFormModal: チケット作成前のフォーム入力
   - TicketControlView: チケットチャンネル内の操作ボタン (永続 View)
 """
 
 import contextlib
-import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -40,14 +38,12 @@ logger = logging.getLogger(__name__)
 def create_ticket_opening_embed(
     ticket: Ticket,
     category: TicketCategory,
-    form_answers: list[tuple[str, str]] | None = None,
 ) -> discord.Embed:
     """チケット開始時の Embed を作成する。
 
     Args:
         ticket: チケットオブジェクト
         category: チケットカテゴリ
-        form_answers: フォーム回答のリスト [(質問, 回答), ...]
 
     Returns:
         チケット開始 Embed
@@ -58,14 +54,6 @@ def create_ticket_opening_embed(
         color=discord.Color.blue(),
         timestamp=ticket.created_at,
     )
-
-    if form_answers:
-        for question, answer in form_answers:
-            embed.add_field(
-                name=question,
-                value=answer or "(未回答)",
-                inline=False,
-            )
 
     embed.set_footer(text=f"Ticket ID: {ticket.id}")
     return embed
@@ -281,25 +269,7 @@ class TicketCategoryButton(discord.ui.Button[Any]):
                 )
                 return
 
-            # フォーム質問がある場合は Modal を表示
-            if category.form_questions:
-                try:
-                    questions = json.loads(category.form_questions)
-                    if questions and isinstance(questions, list):
-                        modal = TicketFormModal(
-                            guild=interaction.guild,
-                            user=interaction.user,
-                            category=category,
-                            questions=questions[:5],
-                        )
-                        await interaction.response.send_modal(modal)
-                        return
-                except (json.JSONDecodeError, TypeError):
-                    logger.warning(
-                        "Invalid form_questions for category %d", category.id
-                    )
-
-            # フォームなし → 直接チケット作成
+            # チケット作成
             await interaction.response.defer(ephemeral=True)
             channel = await _create_ticket_channel(
                 interaction.guild,
@@ -345,85 +315,6 @@ class TicketPanelView(discord.ui.View):
 # =============================================================================
 # TicketFormModal
 # =============================================================================
-
-
-class TicketFormModal(discord.ui.Modal, title="チケット作成"):
-    """チケット作成前のフォーム入力 Modal。
-
-    カテゴリの form_questions から最大5つの TextInput を動的生成する。
-    """
-
-    def __init__(
-        self,
-        guild: discord.Guild,
-        user: discord.User | discord.Member,
-        category: TicketCategory,
-        questions: list[str],
-    ) -> None:
-        super().__init__()
-        self.guild = guild
-        self.user = user
-        self.category = category
-        self.questions = questions
-
-        # 動的に TextInput を追加 (最大 5)
-        for i, question in enumerate(questions[:5]):
-            text_input: discord.ui.TextInput[TicketFormModal] = discord.ui.TextInput(
-                label=question[:45],  # Discord の制限: label 最大 45 文字
-                placeholder=f"{question}を入力してください",
-                style=discord.TextStyle.paragraph
-                if i == len(questions) - 1
-                else discord.TextStyle.short,
-                required=True,
-                max_length=1024,
-                custom_id=f"ticket_form_q{i}",
-            )
-            self.add_item(text_input)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        """フォーム送信時の処理。チケットチャンネルを作成する。"""
-        await interaction.response.defer(ephemeral=True)
-
-        try:
-            # 回答を収集
-            answers: list[tuple[str, str]] = []
-            for i, question in enumerate(self.questions[:5]):
-                child = self.children[i]
-                if isinstance(child, discord.ui.TextInput):
-                    answers.append((question, str(child.value or "")))
-
-            form_answers_json = json.dumps(
-                [{"question": q, "answer": a} for q, a in answers],
-                ensure_ascii=False,
-            )
-
-            async with async_session() as db_session:
-                channel = await _create_ticket_channel(
-                    self.guild,
-                    self.user,
-                    self.category,
-                    db_session,
-                    form_answers=answers,
-                    form_answers_json=form_answers_json,
-                )
-
-            if channel:
-                await interaction.followup.send(
-                    f"チケットを作成しました: {channel.mention}",
-                    ephemeral=True,
-                )
-            else:
-                await interaction.followup.send(
-                    "チケットの作成に失敗しました。Bot の権限を確認してください。",
-                    ephemeral=True,
-                )
-        except Exception:
-            logger.exception("Error in TicketFormModal.on_submit")
-            with contextlib.suppress(discord.HTTPException):
-                await interaction.followup.send(
-                    "エラーが発生しました。しばらくしてからもう一度お試しください。",
-                    ephemeral=True,
-                )
 
 
 # =============================================================================
@@ -619,8 +510,6 @@ async def _create_ticket_channel(
     user: discord.User | discord.Member,
     category: TicketCategory,
     db_session: Any,
-    form_answers: list[tuple[str, str]] | None = None,
-    form_answers_json: str | None = None,
 ) -> discord.TextChannel | None:
     """チケットチャンネルを作成する。
 
@@ -629,8 +518,6 @@ async def _create_ticket_channel(
         user: チケット作成ユーザー
         category: チケットカテゴリ
         db_session: DB セッション
-        form_answers: フォーム回答 [(質問, 回答), ...]
-        form_answers_json: フォーム回答の JSON 文字列
 
     Returns:
         作成されたチャンネル、または失敗時に None
@@ -698,12 +585,12 @@ async def _create_ticket_channel(
         category_id=category.id,
         channel_id=str(channel.id),
         ticket_number=ticket_number,
-        form_answers=form_answers_json,
     )
 
-    # 開始 Embed を送信
-    embed = create_ticket_opening_embed(ticket, category, form_answers)
+    # 開始 Embed + スタッフメンション (スポイラーで非表示) を送信
+    embed = create_ticket_opening_embed(ticket, category)
     view = TicketControlView(ticket.id)
-    await channel.send(embed=embed, view=view)
+    staff_mention = f"||<@&{category.staff_role_id}>||"
+    await channel.send(content=staff_mention, embed=embed, view=view)
 
     return channel

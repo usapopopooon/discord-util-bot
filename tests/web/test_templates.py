@@ -14,7 +14,6 @@ from src.database.models import (
     RolePanelItem,
     StickyMessage,
     Ticket,
-    TicketCategory,
     TicketPanel,
 )
 from src.web.templates import (
@@ -34,8 +33,6 @@ from src.web.templates import (
     role_panels_list_page,
     settings_page,
     sticky_list_page,
-    ticket_categories_list_page,
-    ticket_category_create_page,
     ticket_detail_page,
     ticket_list_page,
     ticket_panel_create_page,
@@ -2272,174 +2269,6 @@ class TestTicketDetailPage:
         assert "Form Answers" not in result
 
 
-class TestTicketCategoriesListPage:
-    """ticket_categories_list_page のテスト。"""
-
-    def test_empty_list(self) -> None:
-        """カテゴリがない場合は空メッセージが表示される。"""
-        result = ticket_categories_list_page([], csrf_token="token", guilds_map={})
-        assert "No ticket categories" in result
-
-    def test_with_categories(self) -> None:
-        """カテゴリがある場合は一覧が表示される。"""
-        cat = TicketCategory(
-            id=1,
-            guild_id="123",
-            name="General Support",
-            staff_role_id="999",
-            channel_prefix="ticket-",
-        )
-        result = ticket_categories_list_page(
-            [cat], csrf_token="token", guilds_map={"123": "Test Guild"}
-        )
-        assert "General Support" in result
-
-    def test_create_link(self) -> None:
-        """作成リンクが表示される。"""
-        result = ticket_categories_list_page([], csrf_token="token", guilds_map={})
-        assert "/tickets/categories/new" in result
-
-    def test_delete_form(self) -> None:
-        """削除フォームが表示される。"""
-        cat = TicketCategory(
-            id=1,
-            guild_id="123",
-            name="General",
-            staff_role_id="999",
-            channel_prefix="ticket-",
-        )
-        result = ticket_categories_list_page([cat], csrf_token="token", guilds_map={})
-        assert "/tickets/categories/1/delete" in result
-
-    def test_xss_escape_category_name(self) -> None:
-        """カテゴリ名がエスケープされる。"""
-        cat = TicketCategory(
-            id=1,
-            guild_id="123",
-            name="<img src=x onerror=alert(1)>",
-            staff_role_id="999",
-            channel_prefix="ticket-",
-        )
-        result = ticket_categories_list_page([cat], csrf_token="token", guilds_map={})
-        assert "&lt;img" in result
-        assert "<img src=x" not in result
-
-    def test_shows_form_questions_count(self) -> None:
-        """フォーム質問数が表示される。"""
-        cat = TicketCategory(
-            id=1,
-            guild_id="123",
-            name="Bug",
-            staff_role_id="999",
-            channel_prefix="bug-",
-            form_questions='["Q1","Q2","Q3"]',
-        )
-        result = ticket_categories_list_page([cat], csrf_token="token", guilds_map={})
-        assert "3" in result
-
-    def test_shows_role_name_instead_of_id(self) -> None:
-        """ロールIDではなくロール名が表示される。"""
-        cat = TicketCategory(
-            id=1,
-            guild_id="123",
-            name="General",
-            staff_role_id="999",
-            channel_prefix="ticket-",
-        )
-        result = ticket_categories_list_page(
-            [cat],
-            csrf_token="token",
-            guilds_map={"123": "Test Guild"},
-            roles_map={"123": [("999", "Moderator")]},
-        )
-        assert "Moderator" in result
-
-    def test_shows_role_id_as_fallback(self) -> None:
-        """ロール名が見つからない場合はIDがフォールバック表示される。"""
-        cat = TicketCategory(
-            id=1,
-            guild_id="123",
-            name="General",
-            staff_role_id="999",
-            channel_prefix="ticket-",
-        )
-        result = ticket_categories_list_page(
-            [cat],
-            csrf_token="token",
-            guilds_map={"123": "Test Guild"},
-            roles_map={},
-        )
-        assert "999" in result
-
-
-class TestTicketCategoryCreatePage:
-    """ticket_category_create_page のテスト。"""
-
-    def test_form_fields(self) -> None:
-        """フォームフィールドが表示される。"""
-        result = ticket_category_create_page(
-            guilds_map={"123": "Test Guild"},
-            roles_map={},
-            csrf_token="token",
-        )
-        assert "name" in result.lower()
-        assert "csrf_token" in result
-
-    def test_with_error(self) -> None:
-        """エラーメッセージが表示される。"""
-        result = ticket_category_create_page(
-            guilds_map={},
-            roles_map={},
-            csrf_token="token",
-            error="Required field missing",
-        )
-        assert "Required field missing" in result
-
-    def test_log_channel_field(self) -> None:
-        """ログチャンネル選択フィールドが表示される。"""
-        result = ticket_category_create_page(
-            guilds_map={"123": "Test Guild"},
-            roles_map={},
-            channels_map={"123": [("456", "general")]},
-            csrf_token="token",
-        )
-        assert "log_channel_id" in result
-        assert "Log Channel" in result
-
-    def test_channels_data_in_script(self) -> None:
-        """チャンネルデータが JavaScript に埋め込まれる。"""
-        result = ticket_category_create_page(
-            guilds_map={"123": "Test Guild"},
-            roles_map={},
-            channels_map={"123": [("456", "general")]},
-            csrf_token="token",
-        )
-        assert "channelsData" in result
-        assert "456" in result
-
-    def test_discord_category_select(self) -> None:
-        """Discord カテゴリのドロップダウンが表示される。"""
-        result = ticket_category_create_page(
-            guilds_map={"123": "Test Guild"},
-            roles_map={},
-            categories_map={"123": [("789", "Support")]},
-            csrf_token="token",
-        )
-        assert "discordCategorySelect" in result
-        assert "Discord Category" in result
-
-    def test_categories_data_in_script(self) -> None:
-        """カテゴリデータが JavaScript に埋め込まれる。"""
-        result = ticket_category_create_page(
-            guilds_map={"123": "Test Guild"},
-            roles_map={},
-            categories_map={"123": [("789", "Support")]},
-            csrf_token="token",
-        )
-        assert "categoriesData" in result
-        assert "789" in result
-
-
 class TestTicketPanelsListPage:
     """ticket_panels_list_page のテスト。"""
 
@@ -2530,29 +2359,55 @@ class TestTicketPanelCreatePage:
         result = ticket_panel_create_page(
             guilds_map={"123": "Test Guild"},
             channels_map={"123": [("456", "general")]},
-            categories_map={"123": [(1, "General")]},
+            roles_map={"123": [("999", "Moderator")]},
             csrf_token="token",
         )
         assert "title" in result.lower()
         assert "csrf_token" in result
+        assert "staff_role_id" in result
+        assert "channel_prefix" in result
 
     def test_with_error(self) -> None:
         """エラーメッセージが表示される。"""
         result = ticket_panel_create_page(
             guilds_map={},
             channels_map={},
-            categories_map={},
+            roles_map={},
             csrf_token="token",
             error="Title is required",
         )
         assert "Title is required" in result
 
-    def test_categories_in_data(self) -> None:
-        """カテゴリデータが JSON として埋め込まれる。"""
+    def test_roles_data_in_script(self) -> None:
+        """ロールデータが JavaScript に埋め込まれる。"""
         result = ticket_panel_create_page(
             guilds_map={"123": "Guild"},
             channels_map={"123": [("456", "general")]},
-            categories_map={"123": [(1, "Bug Report")]},
+            roles_map={"123": [("999", "Moderator")]},
             csrf_token="token",
         )
-        assert "Bug Report" in result
+        assert "rolesData" in result
+        assert "Moderator" in result
+
+    def test_discord_categories_in_script(self) -> None:
+        """Discord カテゴリデータが JavaScript に埋め込まれる。"""
+        result = ticket_panel_create_page(
+            guilds_map={"123": "Guild"},
+            channels_map={},
+            roles_map={},
+            discord_categories_map={"123": [("789", "Support")]},
+            csrf_token="token",
+        )
+        assert "discordCatsData" in result
+        assert "Support" in result
+
+    def test_log_channel_field(self) -> None:
+        """ログチャンネル選択フィールドが表示される。"""
+        result = ticket_panel_create_page(
+            guilds_map={"123": "Guild"},
+            channels_map={"123": [("456", "general")]},
+            roles_map={},
+            csrf_token="token",
+        )
+        assert "log_channel_id" in result
+        assert "Log Channel" in result

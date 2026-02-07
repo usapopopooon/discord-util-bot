@@ -14,7 +14,6 @@ if TYPE_CHECKING:
         RolePanelItem,
         StickyMessage,
         Ticket,
-        TicketCategory,
         TicketPanel,
     )
 
@@ -3370,10 +3369,6 @@ def ticket_list_page(
         )
     }
         <div class="flex gap-3 mb-4 items-center">
-            <a href="/tickets/categories"
-               class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition-colors">
-                Categories
-            </a>
             <a href="/tickets/panels"
                class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition-colors">
                 Panels
@@ -3521,302 +3516,6 @@ def ticket_detail_page(
     return _base(f"Ticket #{ticket.ticket_number}", content)
 
 
-def ticket_categories_list_page(
-    categories: list["TicketCategory"],
-    csrf_token: str = "",
-    guilds_map: dict[str, str] | None = None,
-    roles_map: dict[str, list[tuple[str, str]]] | None = None,
-) -> str:
-    """Ticket categories list page template."""
-    if guilds_map is None:
-        guilds_map = {}
-    if roles_map is None:
-        roles_map = {}
-
-    def get_role_name(guild_id: str, role_id: str) -> str:
-        """ロール名を取得する。"""
-        for rid, name in roles_map.get(guild_id, []):
-            if rid == role_id:
-                return name
-        return role_id
-
-    rows = ""
-    for cat in categories:
-        guild_name = guilds_map.get(cat.guild_id, cat.guild_id)
-
-        import json as json_mod
-
-        questions_count = 0
-        if cat.form_questions:
-            try:
-                qs = json_mod.loads(cat.form_questions)
-                questions_count = len(qs) if isinstance(qs, list) else 0
-            except (json_mod.JSONDecodeError, TypeError):
-                pass
-
-        status = "Enabled" if cat.is_enabled else "Disabled"
-        status_class = "text-green-400" if cat.is_enabled else "text-gray-500"
-
-        rows += f"""
-        <tr class="border-b border-gray-700">
-            <td class="py-3 px-4">{escape(cat.name)}</td>
-            <td class="py-3 px-4 text-sm">{escape(guild_name)}</td>
-            <td class="py-3 px-4 text-sm">{escape(get_role_name(cat.guild_id, cat.staff_role_id))}</td>
-            <td class="py-3 px-4 text-sm">{escape(cat.channel_prefix)}</td>
-            <td class="py-3 px-4 text-sm">{questions_count}</td>
-            <td class="py-3 px-4">
-                <span class="{status_class}">{status}</span>
-            </td>
-            <td class="py-3 px-4">
-                <form method="POST" action="/tickets/categories/{cat.id}/delete"
-                      onsubmit="return confirm('Delete this category?');">
-                    {_csrf_field(csrf_token)}
-                    <button type="submit"
-                            class="text-red-400 hover:text-red-300 text-sm">
-                        Delete
-                    </button>
-                </form>
-            </td>
-        </tr>
-        """
-
-    if not categories:
-        rows = """
-        <tr>
-            <td colspan="7" class="py-8 text-center text-gray-500">
-                No ticket categories configured
-            </td>
-        </tr>
-        """
-
-    content = f"""
-    <div class="p-6">
-        {
-        _nav(
-            "Ticket Categories",
-            breadcrumbs=[
-                ("Dashboard", "/dashboard"),
-                ("Tickets", "/tickets"),
-                ("Categories", None),
-            ],
-        )
-    }
-        <div class="flex gap-3 mb-4">
-            <a href="/tickets/categories/new"
-               class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm transition-colors">
-                + Create Category
-            </a>
-        </div>
-        <div class="bg-gray-800 rounded-lg overflow-hidden overflow-x-auto">
-            <table class="w-full">
-                <thead class="bg-gray-700">
-                    <tr>
-                        <th class="py-3 px-4 text-left">Name</th>
-                        <th class="py-3 px-4 text-left">Server</th>
-                        <th class="py-3 px-4 text-left">Staff Role</th>
-                        <th class="py-3 px-4 text-left">Prefix</th>
-                        <th class="py-3 px-4 text-left">Questions</th>
-                        <th class="py-3 px-4 text-left">Status</th>
-                        <th class="py-3 px-4 text-left">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    """
-    return _base("Ticket Categories", content)
-
-
-def ticket_category_create_page(
-    guilds_map: dict[str, str] | None = None,
-    roles_map: dict[str, list[tuple[str, str]]] | None = None,
-    channels_map: dict[str, list[tuple[str, str]]] | None = None,
-    categories_map: dict[str, list[tuple[str, str]]] | None = None,
-    csrf_token: str = "",
-    error: str | None = None,
-) -> str:
-    """Ticket category create page template."""
-    if guilds_map is None:
-        guilds_map = {}
-    if roles_map is None:
-        roles_map = {}
-    if channels_map is None:
-        channels_map = {}
-    if categories_map is None:
-        categories_map = {}
-
-    guild_options = ""
-    for gid, gname in sorted(guilds_map.items(), key=lambda x: x[1]):
-        guild_options += (
-            f'<option value="{escape(gid)}">{escape(gname)} ({escape(gid)})</option>'
-        )
-
-    error_html = ""
-    if error:
-        error_html = f"""
-        <div class="bg-red-500/20 border border-red-500 text-red-300 px-4 py-3 rounded mb-6">
-            {escape(error)}
-        </div>
-        """
-
-    # Build roles data for JavaScript
-    import json as json_mod
-
-    roles_data: dict[str, list[dict[str, str]]] = {}
-    for gid, role_list in roles_map.items():
-        roles_data[gid] = [{"id": rid, "name": name} for rid, name in role_list]
-    roles_json = json_mod.dumps(roles_data)
-
-    channels_data: dict[str, list[dict[str, str]]] = {}
-    for gid, ch_list in channels_map.items():
-        channels_data[gid] = [{"id": cid, "name": name} for cid, name in ch_list]
-    channels_json = json_mod.dumps(channels_data)
-
-    cat_data: dict[str, list[dict[str, str]]] = {}
-    for gid, cat_list in categories_map.items():
-        cat_data[gid] = [{"id": cid, "name": name} for cid, name in cat_list]
-    categories_json = json_mod.dumps(cat_data)
-
-    content = f"""
-    <div class="p-6">
-        {
-        _nav(
-            "Create Ticket Category",
-            breadcrumbs=[
-                ("Dashboard", "/dashboard"),
-                ("Tickets", "/tickets"),
-                ("Categories", "/tickets/categories"),
-                ("Create", None),
-            ],
-        )
-    }
-        {error_html}
-        <div class="max-w-2xl">
-            <form method="POST" action="/tickets/categories/new" class="space-y-6">
-                {_csrf_field(csrf_token)}
-
-                <div>
-                    <label class="block text-sm font-medium mb-1">Server</label>
-                    <select name="guild_id" required id="guildSelect"
-                            onchange="updateRoles()"
-                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
-                        <option value="">Select server...</option>
-                        {guild_options}
-                    </select>
-                </div>
-
-                <div>
-                    <label class="block text-sm font-medium mb-1">Category Name</label>
-                    <input type="text" name="name" required
-                           placeholder="e.g. General Support"
-                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
-                </div>
-
-                <div>
-                    <label class="block text-sm font-medium mb-1">Staff Role</label>
-                    <select name="staff_role_id" required id="staffRoleSelect"
-                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
-                        <option value="">Select role...</option>
-                    </select>
-                </div>
-
-                <div>
-                    <label class="block text-sm font-medium mb-1">
-                        Discord Category
-                        <span class="text-gray-400 font-normal">(optional)</span>
-                    </label>
-                    <select name="discord_category_id" id="discordCategorySelect"
-                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
-                        <option value="">None</option>
-                    </select>
-                    <p class="text-xs text-gray-500 mt-1">
-                        Ticket channels will be created under this Discord category.
-                    </p>
-                </div>
-
-                <div>
-                    <label class="block text-sm font-medium mb-1">Channel Prefix</label>
-                    <input type="text" name="channel_prefix" value="ticket-"
-                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
-                </div>
-
-                <div>
-                    <label class="block text-sm font-medium mb-1">
-                        Form Questions
-                        <span class="text-gray-400 font-normal">(optional, one per line, max 5)</span>
-                    </label>
-                    <textarea name="form_questions" rows="5"
-                              placeholder="What is the issue?&#10;Your Discord username&#10;Priority (Low/Medium/High)"
-                              class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100"></textarea>
-                </div>
-
-                <div>
-                    <label class="block text-sm font-medium mb-1">
-                        Log Channel
-                        <span class="text-gray-400 font-normal">(optional)</span>
-                    </label>
-                    <select name="log_channel_id" id="logChannelSelect"
-                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
-                        <option value="">None</option>
-                    </select>
-                    <p class="text-xs text-gray-500 mt-1">
-                        Close notifications will be sent to this channel.
-                    </p>
-                </div>
-
-                <button type="submit"
-                        class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded transition-colors">
-                    Create Category
-                </button>
-            </form>
-        </div>
-    </div>
-
-    <script>
-    const rolesData = {roles_json};
-    const channelsData = {channels_json};
-    const categoriesData = {categories_json};
-    function updateRoles() {{
-        const guildId = document.getElementById('guildSelect').value;
-        const roleSelect = document.getElementById('staffRoleSelect');
-        roleSelect.innerHTML = '<option value="">Select role...</option>';
-        if (rolesData[guildId]) {{
-            rolesData[guildId].forEach(role => {{
-                const opt = document.createElement('option');
-                opt.value = role.id;
-                opt.textContent = role.name;
-                roleSelect.appendChild(opt);
-            }});
-        }}
-        const catSelect = document.getElementById('discordCategorySelect');
-        catSelect.innerHTML = '<option value="">None</option>';
-        if (categoriesData[guildId]) {{
-            categoriesData[guildId].forEach(cat => {{
-                const opt = document.createElement('option');
-                opt.value = cat.id;
-                opt.textContent = cat.name;
-                catSelect.appendChild(opt);
-            }});
-        }}
-        const chSelect = document.getElementById('logChannelSelect');
-        chSelect.innerHTML = '<option value="">None</option>';
-        if (channelsData[guildId]) {{
-            channelsData[guildId].forEach(ch => {{
-                const opt = document.createElement('option');
-                opt.value = ch.id;
-                opt.textContent = '#' + ch.name;
-                chSelect.appendChild(opt);
-            }});
-        }}
-    }}
-    </script>
-    """
-    return _base("Create Ticket Category", content)
-
-
 def ticket_panels_list_page(
     panels: list["TicketPanel"],
     csrf_token: str = "",
@@ -3916,7 +3615,8 @@ def ticket_panels_list_page(
 def ticket_panel_create_page(
     guilds_map: dict[str, str] | None = None,
     channels_map: dict[str, list[tuple[str, str]]] | None = None,
-    categories_map: dict[str, list[tuple[int, str]]] | None = None,
+    roles_map: dict[str, list[tuple[str, str]]] | None = None,
+    discord_categories_map: dict[str, list[tuple[str, str]]] | None = None,
     csrf_token: str = "",
     error: str | None = None,
 ) -> str:
@@ -3925,8 +3625,10 @@ def ticket_panel_create_page(
         guilds_map = {}
     if channels_map is None:
         channels_map = {}
-    if categories_map is None:
-        categories_map = {}
+    if roles_map is None:
+        roles_map = {}
+    if discord_categories_map is None:
+        discord_categories_map = {}
 
     guild_options = ""
     for gid, gname in sorted(guilds_map.items(), key=lambda x: x[1]):
@@ -3949,10 +3651,15 @@ def ticket_panel_create_page(
         channels_data[gid] = [{"id": cid, "name": cname} for cid, cname in ch_list]
     channels_json = json_mod.dumps(channels_data)
 
-    cats_data: dict[str, list[dict[str, str | int]]] = {}
-    for gid, cat_list in categories_map.items():
-        cats_data[gid] = [{"id": cid, "name": cname} for cid, cname in cat_list]
-    cats_json = json_mod.dumps(cats_data)
+    roles_data: dict[str, list[dict[str, str]]] = {}
+    for gid, role_list in roles_map.items():
+        roles_data[gid] = [{"id": rid, "name": name} for rid, name in role_list]
+    roles_json = json_mod.dumps(roles_data)
+
+    cat_data: dict[str, list[dict[str, str]]] = {}
+    for gid, cat_list in discord_categories_map.items():
+        cat_data[gid] = [{"id": cid, "name": cname} for cid, cname in cat_list]
+    discord_cats_json = json_mod.dumps(cat_data)
 
     content = f"""
     <div class="p-6">
@@ -3975,7 +3682,7 @@ def ticket_panel_create_page(
                 <div>
                     <label class="block text-sm font-medium mb-1">Server</label>
                     <select name="guild_id" required id="guildSelect"
-                            onchange="updateChannelsAndCategories()"
+                            onchange="updateSelects()"
                             class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                         <option value="">Select server...</option>
                         {guild_options}
@@ -3988,6 +3695,9 @@ def ticket_panel_create_page(
                             class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                         <option value="">Select channel...</option>
                     </select>
+                    <p class="text-xs text-gray-500 mt-1">
+                        The channel where the ticket panel will be posted.
+                    </p>
                 </div>
 
                 <div>
@@ -4008,10 +3718,48 @@ def ticket_panel_create_page(
                 </div>
 
                 <div>
-                    <label class="block text-sm font-medium mb-2">Categories</label>
-                    <div id="categoriesContainer" class="space-y-2">
-                        <p class="text-gray-500 text-sm">Select a server first</p>
-                    </div>
+                    <label class="block text-sm font-medium mb-1">Staff Role</label>
+                    <select name="staff_role_id" required id="staffRoleSelect"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">Select role...</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">
+                        Staff with this role can view and manage tickets.
+                    </p>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Discord Category
+                        <span class="text-gray-400 font-normal">(optional)</span>
+                    </label>
+                    <select name="discord_category_id" id="discordCategorySelect"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">None</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">
+                        Ticket channels will be created under this Discord category.
+                    </p>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Channel Prefix</label>
+                    <input type="text" name="channel_prefix" value="ticket-"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Log Channel
+                        <span class="text-gray-400 font-normal">(optional)</span>
+                    </label>
+                    <select name="log_channel_id" id="logChannelSelect"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">None</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">
+                        Close notifications will be sent to this channel.
+                    </p>
                 </div>
 
                 <button type="submit"
@@ -4024,11 +3772,11 @@ def ticket_panel_create_page(
 
     <script>
     const channelsData = {channels_json};
-    const catsData = {cats_json};
-    function updateChannelsAndCategories() {{
+    const rolesData = {roles_json};
+    const discordCatsData = {discord_cats_json};
+    function updateSelects() {{
         const guildId = document.getElementById('guildSelect').value;
 
-        // Update channels
         const chSelect = document.getElementById('channelSelect');
         chSelect.innerHTML = '<option value="">Select channel...</option>';
         if (channelsData[guildId]) {{
@@ -4040,20 +3788,37 @@ def ticket_panel_create_page(
             }});
         }}
 
-        // Update categories
-        const container = document.getElementById('categoriesContainer');
-        container.innerHTML = '';
-        if (catsData[guildId] && catsData[guildId].length > 0) {{
-            catsData[guildId].forEach(cat => {{
-                const label = document.createElement('label');
-                label.className = 'flex items-center gap-2 cursor-pointer';
-                label.innerHTML = '<input type="checkbox" name="category_ids" value="' + cat.id + '"' +
-                    ' class="rounded bg-gray-700 border-gray-600">' +
-                    '<span>' + cat.name + '</span>';
-                container.appendChild(label);
+        const roleSelect = document.getElementById('staffRoleSelect');
+        roleSelect.innerHTML = '<option value="">Select role...</option>';
+        if (rolesData[guildId]) {{
+            rolesData[guildId].forEach(role => {{
+                const opt = document.createElement('option');
+                opt.value = role.id;
+                opt.textContent = role.name;
+                roleSelect.appendChild(opt);
             }});
-        }} else {{
-            container.innerHTML = '<p class="text-gray-500 text-sm">No categories for this server</p>';
+        }}
+
+        const catSelect = document.getElementById('discordCategorySelect');
+        catSelect.innerHTML = '<option value="">None</option>';
+        if (discordCatsData[guildId]) {{
+            discordCatsData[guildId].forEach(cat => {{
+                const opt = document.createElement('option');
+                opt.value = cat.id;
+                opt.textContent = cat.name;
+                catSelect.appendChild(opt);
+            }});
+        }}
+
+        const logSelect = document.getElementById('logChannelSelect');
+        logSelect.innerHTML = '<option value="">None</option>';
+        if (channelsData[guildId]) {{
+            channelsData[guildId].forEach(ch => {{
+                const opt = document.createElement('option');
+                opt.value = ch.id;
+                opt.textContent = '#' + ch.name;
+                logSelect.appendChild(opt);
+            }});
         }}
     }}
     </script>

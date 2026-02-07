@@ -85,8 +85,6 @@ from src.web.templates import (
     role_panels_list_page,
     settings_page,
     sticky_list_page,
-    ticket_categories_list_page,
-    ticket_category_create_page,
     ticket_detail_page,
     ticket_list_page,
     ticket_panel_create_page,
@@ -3169,168 +3167,6 @@ async def tickets_list(
     )
 
 
-@app.get("/tickets/categories", response_model=None)
-async def ticket_categories_list(
-    user: dict[str, Any] | None = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> Response:
-    """チケットカテゴリ一覧ページ。"""
-    if not user:
-        return RedirectResponse(url="/login", status_code=302)
-
-    result = await db.execute(
-        select(TicketCategory).order_by(TicketCategory.guild_id, TicketCategory.name)
-    )
-    categories = list(result.scalars().all())
-    guilds_map, _ = await _get_discord_guilds_and_channels(db)
-    discord_roles = await _get_discord_roles_by_guild(db)
-    roles_map: dict[str, list[tuple[str, str]]] = {}
-    for gid, role_list in discord_roles.items():
-        roles_map[gid] = [(rid, name) for rid, name, _ in role_list]
-
-    return HTMLResponse(
-        content=ticket_categories_list_page(
-            categories,
-            csrf_token=generate_csrf_token(),
-            guilds_map=guilds_map,
-            roles_map=roles_map,
-        )
-    )
-
-
-@app.get("/tickets/categories/new", response_model=None)
-async def ticket_category_create_get(
-    user: dict[str, Any] | None = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> Response:
-    """チケットカテゴリ作成フォーム。"""
-    if not user:
-        return RedirectResponse(url="/login", status_code=302)
-
-    guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
-    discord_roles = await _get_discord_roles_by_guild(db)
-    categories_map = await _get_discord_categories(db)
-
-    # Convert roles to simple (id, name) format
-    roles_map: dict[str, list[tuple[str, str]]] = {}
-    for gid, role_list in discord_roles.items():
-        roles_map[gid] = [(rid, name) for rid, name, _ in role_list]
-
-    return HTMLResponse(
-        content=ticket_category_create_page(
-            guilds_map=guilds_map,
-            roles_map=roles_map,
-            channels_map=channels_map,
-            categories_map=categories_map,
-            csrf_token=generate_csrf_token(),
-        )
-    )
-
-
-@app.post("/tickets/categories/new", response_model=None)
-async def ticket_category_create_post(
-    request: Request,
-    guild_id: Annotated[str, Form()] = "",
-    name: Annotated[str, Form()] = "",
-    staff_role_id: Annotated[str, Form()] = "",
-    discord_category_id: Annotated[str, Form()] = "",
-    channel_prefix: Annotated[str, Form()] = "ticket-",
-    form_questions: Annotated[str, Form()] = "",
-    log_channel_id: Annotated[str, Form()] = "",
-    user: dict[str, Any] | None = Depends(get_current_user),
-    csrf_token: Annotated[str, Form()] = "",
-    db: AsyncSession = Depends(get_db),
-) -> Response:
-    """チケットカテゴリを作成する。"""
-    if not user:
-        return RedirectResponse(url="/login", status_code=302)
-
-    if not validate_csrf_token(csrf_token):
-        return RedirectResponse(url="/tickets/categories/new", status_code=302)
-
-    user_email = user.get("email", "")
-    path = str(request.url.path)
-    if is_form_cooldown_active(user_email, path):
-        return RedirectResponse(url="/tickets/categories/new", status_code=302)
-    record_form_submit(user_email, path)
-
-    if not guild_id or not name or not staff_role_id:
-        guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
-        discord_roles = await _get_discord_roles_by_guild(db)
-        categories_map = await _get_discord_categories(db)
-        roles_map: dict[str, list[tuple[str, str]]] = {}
-        for gid, role_list in discord_roles.items():
-            roles_map[gid] = [(rid, name) for rid, name, _ in role_list]
-        return HTMLResponse(
-            content=ticket_category_create_page(
-                guilds_map=guilds_map,
-                roles_map=roles_map,
-                channels_map=channels_map,
-                categories_map=categories_map,
-                csrf_token=generate_csrf_token(),
-                error="Server, name, and staff role are required.",
-            ),
-            status_code=400,
-        )
-
-    # フォーム質問を JSON に変換
-    import json
-
-    form_questions_json = None
-    if form_questions.strip():
-        questions = [
-            q.strip() for q in form_questions.strip().split("\n") if q.strip()
-        ][:5]
-        if questions:
-            form_questions_json = json.dumps(questions, ensure_ascii=False)
-
-    category = TicketCategory(
-        guild_id=guild_id,
-        name=name.strip(),
-        staff_role_id=staff_role_id,
-        discord_category_id=discord_category_id.strip() or None,
-        channel_prefix=channel_prefix.strip() or "ticket-",
-        form_questions=form_questions_json,
-        log_channel_id=log_channel_id.strip() or None,
-    )
-    db.add(category)
-    await db.commit()
-
-    return RedirectResponse(url="/tickets/categories", status_code=302)
-
-
-@app.post("/tickets/categories/{category_id}/delete", response_model=None)
-async def ticket_category_delete(
-    request: Request,
-    category_id: int,
-    user: dict[str, Any] | None = Depends(get_current_user),
-    csrf_token: Annotated[str, Form()] = "",
-    db: AsyncSession = Depends(get_db),
-) -> Response:
-    """チケットカテゴリを削除する。"""
-    if not user:
-        return RedirectResponse(url="/login", status_code=302)
-
-    if not validate_csrf_token(csrf_token):
-        return RedirectResponse(url="/tickets/categories", status_code=302)
-
-    user_email = user.get("email", "")
-    path = str(request.url.path)
-    if is_form_cooldown_active(user_email, path):
-        return RedirectResponse(url="/tickets/categories", status_code=302)
-    record_form_submit(user_email, path)
-
-    result = await db.execute(
-        select(TicketCategory).where(TicketCategory.id == category_id)
-    )
-    category = result.scalar_one_or_none()
-    if category:
-        await db.delete(category)
-        await db.commit()
-
-    return RedirectResponse(url="/tickets/categories", status_code=302)
-
-
 @app.get("/tickets/panels", response_model=None)
 async def ticket_panels_list(
     user: dict[str, Any] | None = Depends(get_current_user),
@@ -3366,25 +3202,19 @@ async def ticket_panel_create_get(
         return RedirectResponse(url="/login", status_code=302)
 
     guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
+    discord_roles = await _get_discord_roles_by_guild(db)
+    discord_categories = await _get_discord_categories(db)
 
-    # カテゴリ情報を取得
-    cat_result = await db.execute(
-        select(TicketCategory)
-        .where(TicketCategory.is_enabled.is_(True))
-        .order_by(TicketCategory.guild_id, TicketCategory.name)
-    )
-    categories = list(cat_result.scalars().all())
-    categories_map: dict[str, list[tuple[int, str]]] = {}
-    for cat in categories:
-        if cat.guild_id not in categories_map:
-            categories_map[cat.guild_id] = []
-        categories_map[cat.guild_id].append((cat.id, cat.name))
+    roles_map: dict[str, list[tuple[str, str]]] = {}
+    for gid, role_list in discord_roles.items():
+        roles_map[gid] = [(rid, name) for rid, name, _ in role_list]
 
     return HTMLResponse(
         content=ticket_panel_create_page(
             guilds_map=guilds_map,
             channels_map=channels_map,
-            categories_map=categories_map,
+            roles_map=roles_map,
+            discord_categories_map=discord_categories,
             csrf_token=generate_csrf_token(),
         )
     )
@@ -3397,6 +3227,10 @@ async def ticket_panel_create_post(
     channel_id: Annotated[str, Form()] = "",
     title: Annotated[str, Form()] = "",
     description: Annotated[str, Form()] = "",
+    staff_role_id: Annotated[str, Form()] = "",
+    discord_category_id: Annotated[str, Form()] = "",
+    channel_prefix: Annotated[str, Form()] = "ticket-",
+    log_channel_id: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(get_current_user),
     csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
@@ -3414,12 +3248,21 @@ async def ticket_panel_create_post(
         return RedirectResponse(url="/tickets/panels/new", status_code=302)
     record_form_submit(user_email, path)
 
-    if not guild_id or not channel_id or not title.strip():
+    if not guild_id or not channel_id or not title.strip() or not staff_role_id:
         return RedirectResponse(url="/tickets/panels/new", status_code=302)
 
-    # フォームからカテゴリ ID を取得
-    form_data = await request.form()
-    category_ids = form_data.getlist("category_ids")
+    # カテゴリを自動作成
+    category = TicketCategory(
+        guild_id=guild_id,
+        name=title.strip(),
+        staff_role_id=staff_role_id,
+        discord_category_id=discord_category_id.strip() or None,
+        channel_prefix=channel_prefix.strip() or "ticket-",
+        log_channel_id=log_channel_id.strip() or None,
+    )
+    db.add(category)
+    await db.commit()
+    await db.refresh(category)
 
     # パネルを作成
     panel = TicketPanel(
@@ -3433,40 +3276,23 @@ async def ticket_panel_create_post(
     await db.refresh(panel)
 
     # カテゴリを関連付け
-    category_names: dict[int, str] = {}
-    associations: list[TicketPanelCategory] = []
-    for i, cat_id_str in enumerate(category_ids):
-        try:
-            cat_id = int(str(cat_id_str))
-        except (ValueError, TypeError):
-            continue
-        # カテゴリ名を取得
-        cat_result = await db.execute(
-            select(TicketCategory).where(TicketCategory.id == cat_id)
-        )
-        cat = cat_result.scalar_one_or_none()
-        if cat:
-            category_names[cat.id] = cat.name
-            assoc = TicketPanelCategory(
-                panel_id=panel.id,
-                category_id=cat_id,
-                position=i,
-            )
-            db.add(assoc)
-            associations.append(assoc)
-
+    assoc = TicketPanelCategory(
+        panel_id=panel.id,
+        category_id=category.id,
+        position=0,
+    )
+    db.add(assoc)
     await db.commit()
-    for assoc in associations:
-        await db.refresh(assoc)
+    await db.refresh(assoc)
 
     # Discord に投稿
-    if associations:
-        success, message_id, error_msg = await post_ticket_panel_to_discord(
-            panel, associations, category_names
-        )
-        if success and message_id:
-            panel.message_id = message_id
-            await db.commit()
+    category_names: dict[int, str] = {category.id: category.name}
+    success, message_id, error_msg = await post_ticket_panel_to_discord(
+        panel, [assoc], category_names
+    )
+    if success and message_id:
+        panel.message_id = message_id
+        await db.commit()
 
     return RedirectResponse(url="/tickets/panels", status_code=302)
 
