@@ -17,6 +17,7 @@ from typing import Any
 
 import discord
 
+from src.config import settings
 from src.database.engine import async_session
 from src.database.models import Ticket, TicketCategory, TicketPanel, TicketPanelCategory
 from src.services.db_service import (
@@ -135,6 +136,50 @@ async def generate_transcript(
     lines.append(f"=== Closed by: {closed_by_name} at {now} ===")
 
     return "\n".join(lines)
+
+
+async def send_close_log(
+    guild: discord.Guild,
+    ticket: Ticket,
+    category: TicketCategory | None,
+    closed_by_name: str,
+    app_url: str,
+) -> None:
+    """クローズログをログチャンネルに送信する。
+
+    Args:
+        guild: Discord ギルド
+        ticket: クローズされたチケット
+        category: チケットカテゴリ (None の場合はスキップ)
+        closed_by_name: クローズしたユーザー名
+        app_url: Web 管理画面のベース URL
+    """
+    if category is None or not category.log_channel_id:
+        return
+
+    channel = guild.get_channel(int(category.log_channel_id))
+    if not isinstance(channel, discord.TextChannel):
+        return
+
+    category_name = category.name
+    web_url = f"{app_url.rstrip('/')}/tickets/{ticket.id}"
+
+    embed = discord.Embed(
+        title=f"Ticket #{ticket.ticket_number} Closed",
+        color=discord.Color.red(),
+        timestamp=datetime.now(UTC),
+    )
+    embed.add_field(name="Category", value=category_name, inline=True)
+    embed.add_field(name="Created by", value=ticket.username, inline=True)
+    embed.add_field(name="Closed by", value=closed_by_name, inline=True)
+    if ticket.close_reason:
+        embed.add_field(name="Reason", value=ticket.close_reason, inline=False)
+    embed.add_field(name="Transcript", value=f"[View on Web]({web_url})", inline=False)
+
+    try:
+        await channel.send(embed=embed)
+    except discord.HTTPException as e:
+        logger.warning("Failed to send close log to channel %s: %s", channel.id, e)
 
 
 # =============================================================================
@@ -422,6 +467,15 @@ class TicketCloseButton(discord.ui.Button[Any]):
                 closed_at=datetime.now(UTC),
                 channel_id=None,
             )
+
+        # ログチャンネルに通知
+        await send_close_log(
+            interaction.guild,
+            ticket,
+            category,
+            interaction.user.name,
+            settings.app_url,
+        )
 
         # チャンネル削除
         try:

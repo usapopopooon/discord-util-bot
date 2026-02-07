@@ -18,6 +18,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from src.config import settings
 from src.database.engine import async_session
 from src.services.db_service import (
     delete_ticket_panel_by_message_id,
@@ -32,6 +33,7 @@ from src.ui.ticket_view import (
     TicketControlView,
     TicketPanelView,
     generate_transcript,
+    send_close_log,
 )
 
 logger = logging.getLogger(__name__)
@@ -161,6 +163,15 @@ class TicketCog(commands.Cog):
                 closed_at=datetime.now(UTC),
                 channel_id=None,
             )
+
+        # ログチャンネルに通知
+        await send_close_log(
+            interaction.guild,
+            ticket,
+            category,
+            interaction.user.name,
+            settings.app_url,
+        )
 
         # チャンネル削除
         try:

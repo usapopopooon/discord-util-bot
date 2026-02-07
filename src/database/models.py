@@ -1136,6 +1136,7 @@ class TicketCategory(Base):
         discord_category_id (str | None): チケット配置先カテゴリ ID。
         channel_prefix (str): チケットチャンネル名の接頭辞 (default "ticket-")。
         form_questions (str | None): フォーム質問の JSON 配列 (最大5問)。
+        log_channel_id (str | None): クローズログ送信先チャンネル ID。
         is_enabled (bool): カテゴリが有効かどうか (default True)。
         created_at (datetime): 作成日時 (UTC)。
 
@@ -1156,6 +1157,7 @@ class TicketCategory(Base):
         String, nullable=False, default="ticket-"
     )
     form_questions: Mapped[str | None] = mapped_column(String, nullable=True)
+    log_channel_id: Mapped[str | None] = mapped_column(String, nullable=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False

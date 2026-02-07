@@ -319,11 +319,16 @@ class TestTicketCloseCommand:
                 "src.cogs.ticket.update_ticket_status",
                 new_callable=AsyncMock,
             ) as mock_update,
+            patch(
+                "src.cogs.ticket.send_close_log",
+                new_callable=AsyncMock,
+            ) as mock_log,
         ):
             await cog.ticket_close.callback(cog, interaction, reason="done")
 
         interaction.response.defer.assert_awaited_once()
         mock_update.assert_awaited_once()
+        mock_log.assert_awaited_once()
         interaction.channel.delete.assert_awaited_once()
 
 
@@ -807,6 +812,10 @@ class TestTicketCloseChannelDeleteFailure:
                 "src.cogs.ticket.update_ticket_status",
                 new_callable=AsyncMock,
             ),
+            patch(
+                "src.cogs.ticket.send_close_log",
+                new_callable=AsyncMock,
+            ),
         ):
             await cog.ticket_close.callback(cog, interaction, reason=None)
 
@@ -944,11 +953,17 @@ class TestTicketCloseNoCategoryCommand:
                 "src.cogs.ticket.update_ticket_status",
                 new_callable=AsyncMock,
             ),
+            patch(
+                "src.cogs.ticket.send_close_log",
+                new_callable=AsyncMock,
+            ) as mock_log,
         ):
             await cog.ticket_close.callback(cog, interaction, reason=None)
 
         # generate_transcript に "Unknown" が渡されることを確認
         assert mock_transcript.call_args[0][2] == "Unknown"
+        # send_close_log には category=None が渡される
+        assert mock_log.call_args[0][2] is None
 
 
 # =============================================================================

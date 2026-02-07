@@ -19,6 +19,7 @@ from src.ui.ticket_view import (
     create_ticket_opening_embed,
     create_ticket_panel_embed,
     generate_transcript,
+    send_close_log,
 )
 
 # =============================================================================
@@ -40,6 +41,7 @@ def _make_ticket(**kwargs: object) -> MagicMock:
     ticket.category_id = kwargs.get("category_id", 1)
     ticket.channel_id = kwargs.get("channel_id", "200")
     ticket.claimed_by = kwargs.get("claimed_by")
+    ticket.close_reason = kwargs.get("close_reason")
     return ticket
 
 
@@ -52,6 +54,7 @@ def _make_category(**kwargs: object) -> MagicMock:
     category.discord_category_id = kwargs.get("discord_category_id")
     category.channel_prefix = kwargs.get("channel_prefix", "ticket-")
     category.form_questions = kwargs.get("form_questions")
+    category.log_channel_id = kwargs.get("log_channel_id")
     category.is_enabled = kwargs.get("is_enabled", True)
     return category
 
@@ -829,12 +832,17 @@ class TestTicketCloseButtonCallback:
                 "src.ui.ticket_view.update_ticket_status",
                 new_callable=AsyncMock,
             ) as mock_update,
+            patch(
+                "src.ui.ticket_view.send_close_log",
+                new_callable=AsyncMock,
+            ) as mock_log,
         ):
             mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
             await button.callback(interaction)
 
         mock_update.assert_awaited_once()
+        mock_log.assert_awaited_once()
         interaction.channel.delete.assert_awaited_once()
 
 
@@ -1485,6 +1493,10 @@ class TestTicketCloseButtonChannelDeleteFailure:
                 "src.ui.ticket_view.update_ticket_status",
                 new_callable=AsyncMock,
             ),
+            patch(
+                "src.ui.ticket_view.send_close_log",
+                new_callable=AsyncMock,
+            ),
         ):
             mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
             mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -1515,3 +1527,125 @@ class TestTicketFormModalTruncation:
 
         text_input = modal.children[0]
         assert len(text_input.label) == 45
+
+
+# =============================================================================
+# send_close_log テスト
+# =============================================================================
+
+
+class TestSendCloseLog:
+    """send_close_log のテスト。"""
+
+    async def test_sends_embed_to_log_channel(self) -> None:
+        """ログチャンネルにEmbedを送信する。"""
+        guild = MagicMock(spec=discord.Guild)
+        log_channel = MagicMock(spec=discord.TextChannel)
+        log_channel.send = AsyncMock()
+        guild.get_channel.return_value = log_channel
+
+        ticket = _make_ticket(ticket_number=42, close_reason="resolved")
+        category = _make_category(log_channel_id="888")
+
+        await send_close_log(guild, ticket, category, "closer", "http://localhost:8000")
+
+        guild.get_channel.assert_called_once_with(888)
+        log_channel.send.assert_awaited_once()
+        embed = log_channel.send.call_args[1]["embed"]
+        assert "Ticket #42" in embed.title
+        assert "Closed" in embed.title
+
+    async def test_skips_when_no_log_channel_id(self) -> None:
+        """log_channel_id が None の場合はスキップ。"""
+        guild = MagicMock(spec=discord.Guild)
+        ticket = _make_ticket()
+        category = _make_category(log_channel_id=None)
+
+        await send_close_log(guild, ticket, category, "closer", "http://localhost:8000")
+
+        guild.get_channel.assert_not_called()
+
+    async def test_skips_when_category_is_none(self) -> None:
+        """カテゴリが None の場合はスキップ。"""
+        guild = MagicMock(spec=discord.Guild)
+        ticket = _make_ticket()
+
+        await send_close_log(guild, ticket, None, "closer", "http://localhost:8000")
+
+        guild.get_channel.assert_not_called()
+
+    async def test_skips_when_channel_not_text(self) -> None:
+        """ログチャンネルが TextChannel でない場合はスキップ。"""
+        guild = MagicMock(spec=discord.Guild)
+        guild.get_channel.return_value = MagicMock(spec=discord.VoiceChannel)
+
+        ticket = _make_ticket()
+        category = _make_category(log_channel_id="888")
+
+        await send_close_log(guild, ticket, category, "closer", "http://localhost:8000")
+
+        guild.get_channel.assert_called_once_with(888)
+
+    async def test_handles_http_exception(self) -> None:
+        """送信失敗時はログのみで例外を投げない。"""
+        guild = MagicMock(spec=discord.Guild)
+        log_channel = MagicMock(spec=discord.TextChannel)
+        log_channel.send = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "error")
+        )
+        guild.get_channel.return_value = log_channel
+
+        ticket = _make_ticket()
+        category = _make_category(log_channel_id="888")
+
+        # Should not raise
+        await send_close_log(guild, ticket, category, "closer", "http://localhost:8000")
+
+    async def test_embed_contains_web_link(self) -> None:
+        """Embed にWeb管理画面へのリンクが含まれる。"""
+        guild = MagicMock(spec=discord.Guild)
+        log_channel = MagicMock(spec=discord.TextChannel)
+        log_channel.send = AsyncMock()
+        guild.get_channel.return_value = log_channel
+
+        ticket = _make_ticket(id=42)
+        category = _make_category(log_channel_id="888")
+
+        await send_close_log(guild, ticket, category, "closer", "http://localhost:8000")
+
+        embed = log_channel.send.call_args[1]["embed"]
+        # Find the Transcript field
+        transcript_field = next(f for f in embed.fields if f.name == "Transcript")
+        assert "http://localhost:8000/tickets/42" in transcript_field.value
+
+    async def test_embed_includes_close_reason(self) -> None:
+        """close_reason がある場合はEmbedに含まれる。"""
+        guild = MagicMock(spec=discord.Guild)
+        log_channel = MagicMock(spec=discord.TextChannel)
+        log_channel.send = AsyncMock()
+        guild.get_channel.return_value = log_channel
+
+        ticket = _make_ticket(close_reason="spam")
+        category = _make_category(log_channel_id="888")
+
+        await send_close_log(guild, ticket, category, "closer", "http://localhost:8000")
+
+        embed = log_channel.send.call_args[1]["embed"]
+        reason_field = next(f for f in embed.fields if f.name == "Reason")
+        assert reason_field.value == "spam"
+
+    async def test_embed_no_reason_field_when_none(self) -> None:
+        """close_reason が None の場合は Reason フィールドなし。"""
+        guild = MagicMock(spec=discord.Guild)
+        log_channel = MagicMock(spec=discord.TextChannel)
+        log_channel.send = AsyncMock()
+        guild.get_channel.return_value = log_channel
+
+        ticket = _make_ticket(close_reason=None)
+        category = _make_category(log_channel_id="888")
+
+        await send_close_log(guild, ticket, category, "closer", "http://localhost:8000")
+
+        embed = log_channel.send.call_args[1]["embed"]
+        field_names = [f.name for f in embed.fields]
+        assert "Reason" not in field_names

@@ -2002,6 +2002,7 @@ async def create_ticket_category(
     discord_category_id: str | None = None,
     channel_prefix: str = "ticket-",
     form_questions: str | None = None,
+    log_channel_id: str | None = None,
 ) -> TicketCategory:
     """チケットカテゴリを作成する。"""
     category = TicketCategory(
@@ -2011,6 +2012,7 @@ async def create_ticket_category(
         discord_category_id=discord_category_id,
         channel_prefix=channel_prefix,
         form_questions=form_questions,
+        log_channel_id=log_channel_id,
     )
     session.add(category)
     await session.commit()

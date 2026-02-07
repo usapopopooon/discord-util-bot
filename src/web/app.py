@@ -3179,7 +3179,7 @@ async def ticket_category_create_get(
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    guilds_map, _ = await _get_discord_guilds_and_channels(db)
+    guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
     discord_roles = await _get_discord_roles_by_guild(db)
 
     # Convert roles to simple (id, name) format
@@ -3191,6 +3191,7 @@ async def ticket_category_create_get(
         content=ticket_category_create_page(
             guilds_map=guilds_map,
             roles_map=roles_map,
+            channels_map=channels_map,
             csrf_token=generate_csrf_token(),
         )
     )
@@ -3205,6 +3206,7 @@ async def ticket_category_create_post(
     discord_category_id: Annotated[str, Form()] = "",
     channel_prefix: Annotated[str, Form()] = "ticket-",
     form_questions: Annotated[str, Form()] = "",
+    log_channel_id: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(get_current_user),
     csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
@@ -3223,7 +3225,7 @@ async def ticket_category_create_post(
     record_form_submit(user_email, path)
 
     if not guild_id or not name or not staff_role_id:
-        guilds_map, _ = await _get_discord_guilds_and_channels(db)
+        guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
         discord_roles = await _get_discord_roles_by_guild(db)
         roles_map: dict[str, list[tuple[str, str]]] = {}
         for gid, role_list in discord_roles.items():
@@ -3232,6 +3234,7 @@ async def ticket_category_create_post(
             content=ticket_category_create_page(
                 guilds_map=guilds_map,
                 roles_map=roles_map,
+                channels_map=channels_map,
                 csrf_token=generate_csrf_token(),
                 error="Server, name, and staff role are required.",
             ),
@@ -3256,6 +3259,7 @@ async def ticket_category_create_post(
         discord_category_id=discord_category_id.strip() or None,
         channel_prefix=channel_prefix.strip() or "ticket-",
         form_questions=form_questions_json,
+        log_channel_id=log_channel_id.strip() or None,
     )
     db.add(category)
     await db.commit()

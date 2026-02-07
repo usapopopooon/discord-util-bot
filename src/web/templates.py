@@ -3623,6 +3623,7 @@ def ticket_categories_list_page(
 def ticket_category_create_page(
     guilds_map: dict[str, str] | None = None,
     roles_map: dict[str, list[tuple[str, str]]] | None = None,
+    channels_map: dict[str, list[tuple[str, str]]] | None = None,
     csrf_token: str = "",
     error: str | None = None,
 ) -> str:
@@ -3631,6 +3632,8 @@ def ticket_category_create_page(
         guilds_map = {}
     if roles_map is None:
         roles_map = {}
+    if channels_map is None:
+        channels_map = {}
 
     guild_options = ""
     for gid, gname in sorted(guilds_map.items(), key=lambda x: x[1]):
@@ -3653,6 +3656,11 @@ def ticket_category_create_page(
     for gid, role_list in roles_map.items():
         roles_data[gid] = [{"id": rid, "name": name} for rid, name in role_list]
     roles_json = json_mod.dumps(roles_data)
+
+    channels_data: dict[str, list[dict[str, str]]] = {}
+    for gid, ch_list in channels_map.items():
+        channels_data[gid] = [{"id": cid, "name": name} for cid, name in ch_list]
+    channels_json = json_mod.dumps(channels_data)
 
     content = f"""
     <div class="p-6">
@@ -3726,6 +3734,20 @@ def ticket_category_create_page(
                               class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100"></textarea>
                 </div>
 
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Log Channel
+                        <span class="text-gray-400 font-normal">(optional)</span>
+                    </label>
+                    <select name="log_channel_id" id="logChannelSelect"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">None</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">
+                        Close notifications will be sent to this channel.
+                    </p>
+                </div>
+
                 <button type="submit"
                         class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded transition-colors">
                     Create Category
@@ -3736,16 +3758,27 @@ def ticket_category_create_page(
 
     <script>
     const rolesData = {roles_json};
+    const channelsData = {channels_json};
     function updateRoles() {{
         const guildId = document.getElementById('guildSelect').value;
-        const select = document.getElementById('staffRoleSelect');
-        select.innerHTML = '<option value="">Select role...</option>';
+        const roleSelect = document.getElementById('staffRoleSelect');
+        roleSelect.innerHTML = '<option value="">Select role...</option>';
         if (rolesData[guildId]) {{
             rolesData[guildId].forEach(role => {{
                 const opt = document.createElement('option');
                 opt.value = role.id;
                 opt.textContent = role.name;
-                select.appendChild(opt);
+                roleSelect.appendChild(opt);
+            }});
+        }}
+        const chSelect = document.getElementById('logChannelSelect');
+        chSelect.innerHTML = '<option value="">None</option>';
+        if (channelsData[guildId]) {{
+            channelsData[guildId].forEach(ch => {{
+                const opt = document.createElement('option');
+                opt.value = ch.id;
+                opt.textContent = '#' + ch.name;
+                chSelect.appendChild(opt);
             }});
         }}
     }}

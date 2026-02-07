@@ -10290,6 +10290,48 @@ class TestTicketCategoryRoutes:
         assert len(cats) == 1
         assert cats[0].name == "Bug Report"
 
+    async def test_category_create_with_log_channel(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """log_channel_id 付きでカテゴリを作成できる。"""
+        response = await authenticated_client.post(
+            "/tickets/categories/new",
+            data={
+                "guild_id": "123456789012345678",
+                "name": "Support",
+                "staff_role_id": "999888777",
+                "log_channel_id": "555666777",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(TicketCategory))
+        cats = list(result.scalars().all())
+        assert len(cats) == 1
+        assert cats[0].log_channel_id == "555666777"
+
+    async def test_category_create_without_log_channel(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """log_channel_id なしではNullが保存される。"""
+        response = await authenticated_client.post(
+            "/tickets/categories/new",
+            data={
+                "guild_id": "123456789012345678",
+                "name": "Support",
+                "staff_role_id": "999888777",
+                "log_channel_id": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(TicketCategory))
+        cats = list(result.scalars().all())
+        assert len(cats) == 1
+        assert cats[0].log_channel_id is None
+
     async def test_category_create_missing_fields(
         self, authenticated_client: AsyncClient
     ) -> None:

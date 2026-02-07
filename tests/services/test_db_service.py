@@ -3159,6 +3159,21 @@ class TestTicketCategoryOperations:
         assert category.channel_prefix == "bug-"
         assert category.form_questions == '["お名前","内容"]'
 
+    async def test_create_ticket_category_with_log_channel(
+        self, db_session: AsyncSession
+    ) -> None:
+        """log_channel_id 付きでチケットカテゴリを作成できる。"""
+        from src.services.db_service import create_ticket_category
+
+        category = await create_ticket_category(
+            db_session,
+            guild_id="123",
+            name="Support",
+            staff_role_id="999",
+            log_channel_id="888",
+        )
+        assert category.log_channel_id == "888"
+
     async def test_get_ticket_category(self, db_session: AsyncSession) -> None:
         """チケットカテゴリを ID で取得できる。"""
         from src.services.db_service import create_ticket_category, get_ticket_category

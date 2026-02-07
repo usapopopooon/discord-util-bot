@@ -2341,6 +2341,28 @@ class TestTicketCategoryCreatePage:
         )
         assert "Required field missing" in result
 
+    def test_log_channel_field(self) -> None:
+        """ログチャンネル選択フィールドが表示される。"""
+        result = ticket_category_create_page(
+            guilds_map={"123": "Test Guild"},
+            roles_map={},
+            channels_map={"123": [("456", "general")]},
+            csrf_token="token",
+        )
+        assert "log_channel_id" in result
+        assert "Log Channel" in result
+
+    def test_channels_data_in_script(self) -> None:
+        """チャンネルデータが JavaScript に埋め込まれる。"""
+        result = ticket_category_create_page(
+            guilds_map={"123": "Test Guild"},
+            roles_map={},
+            channels_map={"123": [("456", "general")]},
+            csrf_token="token",
+        )
+        assert "channelsData" in result
+        assert "456" in result
+
 
 class TestTicketPanelsListPage:
     """ticket_panels_list_page のテスト。"""
