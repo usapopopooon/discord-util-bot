@@ -88,7 +88,8 @@
     "gooduser",
     "totalspammer",
     "badword",
-    "onchange"
+    "onchange",
+    "testuser"
   ],
   "ignorePaths": [
     ".venv",

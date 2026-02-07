@@ -40,7 +40,15 @@ See Also:
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -1111,4 +1119,223 @@ class AutoBanLog(Base):
         return (
             f"<AutoBanLog(id={self.id}, guild_id={self.guild_id}, "
             f"user_id={self.user_id}, action={self.action_taken})>"
+        )
+
+
+class TicketCategory(Base):
+    """チケットカテゴリ設定テーブル。
+
+    チケットの種類 (例: General Support, Bug Report) を定義する。
+    各カテゴリにスタッフロール、チャンネル接頭辞、フォーム質問を設定可能。
+
+    Attributes:
+        id (int): 自動採番の主キー。
+        guild_id (str): Discord サーバーの ID。インデックス付き。
+        name (str): カテゴリ名。
+        staff_role_id (str): チケットを閲覧できるスタッフロールの ID。
+        discord_category_id (str | None): チケット配置先カテゴリ ID。
+        channel_prefix (str): チケットチャンネル名の接頭辞 (default "ticket-")。
+        form_questions (str | None): フォーム質問の JSON 配列 (最大5問)。
+        is_enabled (bool): カテゴリが有効かどうか (default True)。
+        created_at (datetime): 作成日時 (UTC)。
+
+    Notes:
+        - テーブル名: ``ticket_categories``
+        - form_questions は JSON 文字列 (例: '["お名前","内容"]')
+        - Discord Modal の制限により最大5問
+    """
+
+    __tablename__ = "ticket_categories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    staff_role_id: Mapped[str] = mapped_column(String, nullable=False)
+    discord_category_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    channel_prefix: Mapped[str] = mapped_column(
+        String, nullable=False, default="ticket-"
+    )
+    form_questions: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    panel_associations: Mapped[list["TicketPanelCategory"]] = relationship(
+        "TicketPanelCategory", back_populates="category", cascade="all, delete-orphan"
+    )
+    tickets: Mapped[list["Ticket"]] = relationship(
+        "Ticket", back_populates="category", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return (
+            f"<TicketCategory(id={self.id}, guild_id={self.guild_id}, "
+            f"name={self.name})>"
+        )
+
+
+class TicketPanel(Base):
+    """チケットパネル設定テーブル。
+
+    Discord チャンネルに送信されるパネルメッセージの設定。
+    ユーザーがボタンをクリックしてチケットを作成する。
+
+    Attributes:
+        id (int): 自動採番の主キー。
+        guild_id (str): Discord サーバーの ID。インデックス付き。
+        channel_id (str): パネル送信先チャンネルの ID。
+        message_id (str | None): Discord メッセージの ID (送信後に設定)。
+        title (str): パネルのタイトル。
+        description (str | None): パネルの説明文。
+        created_at (datetime): 作成日時 (UTC)。
+
+    Notes:
+        - テーブル名: ``ticket_panels``
+        - category_associations でカテゴリと多対多の関係
+    """
+
+    __tablename__ = "ticket_panels"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    channel_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    message_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    category_associations: Mapped[list["TicketPanelCategory"]] = relationship(
+        "TicketPanelCategory", back_populates="panel", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return (
+            f"<TicketPanel(id={self.id}, guild_id={self.guild_id}, title={self.title})>"
+        )
+
+
+class TicketPanelCategory(Base):
+    """チケットパネルとカテゴリの結合テーブル。
+
+    パネルに表示するカテゴリボタンの設定を保持する。
+
+    Attributes:
+        id (int): 自動採番の主キー。
+        panel_id (int): パネルへの外部キー。
+        category_id (int): カテゴリへの外部キー。
+        button_label (str | None): ボタンラベルの上書き。
+        button_style (str): ボタンスタイル (default "primary")。
+        button_emoji (str | None): ボタンの絵文字。
+        position (int): 表示順序 (default 0)。
+
+    Notes:
+        - テーブル名: ``ticket_panel_categories``
+        - (panel_id, category_id) でユニーク制約
+    """
+
+    __tablename__ = "ticket_panel_categories"
+    __table_args__ = (
+        UniqueConstraint("panel_id", "category_id", name="uq_ticket_panel_category"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    panel_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("ticket_panels.id", ondelete="CASCADE"), nullable=False
+    )
+    category_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("ticket_categories.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    button_label: Mapped[str | None] = mapped_column(String, nullable=True)
+    button_style: Mapped[str] = mapped_column(String, nullable=False, default="primary")
+    button_emoji: Mapped[str | None] = mapped_column(String, nullable=True)
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    panel: Mapped["TicketPanel"] = relationship(
+        "TicketPanel", back_populates="category_associations"
+    )
+    category: Mapped["TicketCategory"] = relationship(
+        "TicketCategory", back_populates="panel_associations"
+    )
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return (
+            f"<TicketPanelCategory(id={self.id}, panel_id={self.panel_id}, "
+            f"category_id={self.category_id})>"
+        )
+
+
+class Ticket(Base):
+    """チケットテーブル。
+
+    ユーザーが作成したチケットの情報を保存する。
+
+    Attributes:
+        id (int): 自動採番の主キー。
+        guild_id (str): Discord サーバーの ID。インデックス付き。
+        channel_id (str | None): チケットチャンネルの ID (クローズ後 None)。
+        user_id (str): チケット作成者の Discord ユーザー ID。
+        username (str): 作成時のユーザー名。
+        category_id (int): カテゴリへの外部キー。
+        status (str): チケットの状態 ("open" | "claimed" | "closed")。
+        claimed_by (str | None): 担当スタッフの ID。
+        closed_by (str | None): クローズしたユーザーの ID。
+        close_reason (str | None): クローズ理由。
+        transcript (str | None): トランスクリプト全文。
+        ticket_number (int): ギルド内連番。
+        form_answers (str | None): フォーム回答の JSON 文字列。
+        created_at (datetime): 作成日時 (UTC)。
+        closed_at (datetime | None): クローズ日時 (UTC)。
+
+    Notes:
+        - テーブル名: ``tickets``
+        - (guild_id, ticket_number) でユニーク制約
+        - channel_id はクローズ後に None に設定
+    """
+
+    __tablename__ = "tickets"
+    __table_args__ = (
+        UniqueConstraint("guild_id", "ticket_number", name="uq_guild_ticket_number"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    channel_id: Mapped[str | None] = mapped_column(
+        String, nullable=True, unique=True, index=True
+    )
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    username: Mapped[str] = mapped_column(String, nullable=False)
+    category_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("ticket_categories.id"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String, nullable=False, default="open")
+    claimed_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    closed_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    close_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ticket_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    form_answers: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    category: Mapped["TicketCategory"] = relationship(
+        "TicketCategory", back_populates="tickets"
+    )
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return (
+            f"<Ticket(id={self.id}, guild_id={self.guild_id}, "
+            f"number={self.ticket_number}, status={self.status})>"
         )

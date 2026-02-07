@@ -13,6 +13,9 @@ from src.database.models import (
     RolePanel,
     RolePanelItem,
     StickyMessage,
+    Ticket,
+    TicketCategory,
+    TicketPanel,
 )
 from src.web.templates import (
     _base,
@@ -31,6 +34,12 @@ from src.web.templates import (
     role_panels_list_page,
     settings_page,
     sticky_list_page,
+    ticket_categories_list_page,
+    ticket_category_create_page,
+    ticket_detail_page,
+    ticket_list_page,
+    ticket_panel_create_page,
+    ticket_panels_list_page,
 )
 
 # ===========================================================================
@@ -1970,3 +1979,450 @@ class TestDashboardAutobanCard:
         result = dashboard_page()
         assert "/autoban" in result
         assert "Autoban" in result
+
+
+class TestDashboardTicketsCard:
+    """ダッシュボードの Tickets カードのテスト。"""
+
+    def test_tickets_card_exists(self) -> None:
+        """ダッシュボードに Tickets カードが存在する。"""
+        result = dashboard_page()
+        assert "/tickets" in result
+        assert "Ticket" in result
+
+
+# ===========================================================================
+# チケットテンプレート
+# ===========================================================================
+
+
+class TestTicketListPage:
+    """ticket_list_page のテスト。"""
+
+    def test_empty_list(self) -> None:
+        """チケットがない場合は空メッセージが表示される。"""
+        result = ticket_list_page([], csrf_token="token", guilds_map={})
+        assert "No tickets" in result
+
+    def test_with_tickets(self) -> None:
+        """チケットがある場合は一覧が表示される。"""
+        ticket = Ticket(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=1,
+            status="open",
+            ticket_number=1,
+        )
+        result = ticket_list_page(
+            [ticket], csrf_token="token", guilds_map={"123": "Test Guild"}
+        )
+        assert "testuser" in result
+        assert "#1" in result
+
+    def test_xss_escape_username(self) -> None:
+        """ユーザー名がエスケープされる。"""
+        ticket = Ticket(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="<script>alert('xss')</script>",
+            category_id=1,
+            status="open",
+            ticket_number=1,
+        )
+        result = ticket_list_page([ticket], csrf_token="token", guilds_map={})
+        assert "&lt;script&gt;" in result
+        assert "<script>alert" not in result
+
+    def test_status_filter(self) -> None:
+        """ステータスフィルタが表示される。"""
+        result = ticket_list_page(
+            [], csrf_token="token", guilds_map={}, status_filter="open"
+        )
+        assert "open" in result
+
+    def test_guild_name_displayed(self) -> None:
+        """ギルド名が表示される。"""
+        ticket = Ticket(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=1,
+            status="open",
+            ticket_number=1,
+        )
+        result = ticket_list_page(
+            [ticket], csrf_token="token", guilds_map={"123": "My Guild"}
+        )
+        assert "My Guild" in result
+
+    def test_status_badge_colors(self) -> None:
+        """ステータスバッジの色が正しい。"""
+        for status in ["open", "claimed", "closed"]:
+            ticket = Ticket(
+                id=1,
+                guild_id="123",
+                user_id="456",
+                username="user",
+                category_id=1,
+                status=status,
+                ticket_number=1,
+            )
+            result = ticket_list_page([ticket], csrf_token="token", guilds_map={})
+            assert status in result
+
+    def test_detail_link(self) -> None:
+        """チケット詳細へのリンクが含まれる。"""
+        ticket = Ticket(
+            id=42,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=1,
+            status="open",
+            ticket_number=1,
+        )
+        result = ticket_list_page([ticket], csrf_token="token", guilds_map={})
+        assert "/tickets/42" in result
+
+
+class TestTicketDetailPage:
+    """ticket_detail_page のテスト。"""
+
+    def test_basic_detail(self) -> None:
+        """基本的な詳細情報が表示される。"""
+        ticket = Ticket(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=1,
+            status="open",
+            ticket_number=42,
+        )
+        result = ticket_detail_page(
+            ticket,
+            category_name="General",
+            guild_name="Test Guild",
+            csrf_token="token",
+        )
+        assert "Ticket #42" in result
+        assert "testuser" in result
+        assert "General" in result
+
+    def test_with_transcript(self) -> None:
+        """トランスクリプトが表示される。"""
+        ticket = Ticket(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=1,
+            status="closed",
+            ticket_number=1,
+            transcript="=== Transcript ===\nLine 1\nLine 2",
+        )
+        result = ticket_detail_page(
+            ticket,
+            category_name="General",
+            guild_name="Guild",
+            csrf_token="token",
+        )
+        assert "Transcript" in result
+
+    def test_with_form_answers(self) -> None:
+        """フォーム回答が表示される。"""
+        ticket = Ticket(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=1,
+            status="open",
+            ticket_number=1,
+            form_answers=(
+                '[{"question":"お名前","answer":"Taro"},'
+                '{"question":"内容","answer":"Bug"}]'
+            ),
+        )
+        result = ticket_detail_page(
+            ticket,
+            category_name="General",
+            guild_name="Guild",
+            csrf_token="token",
+        )
+        assert "Form Answers" in result
+        assert "Taro" in result
+        assert "Bug" in result
+
+    def test_closed_ticket_fields(self) -> None:
+        """クローズ済みチケットの claimed_by, closed_by が表示される。"""
+        from datetime import UTC, datetime
+
+        ticket = Ticket(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=1,
+            status="closed",
+            ticket_number=1,
+            claimed_by="staff1",
+            closed_by="staff2",
+            close_reason="resolved",
+            closed_at=datetime(2026, 2, 7, 10, 0, tzinfo=UTC),
+        )
+        result = ticket_detail_page(
+            ticket,
+            category_name="General",
+            guild_name="Guild",
+            csrf_token="token",
+        )
+        assert "staff1" in result
+        assert "staff2" in result
+        assert "2026-02-07" in result
+
+    def test_status_color_classes(self) -> None:
+        """ステータスごとに色クラスが適用される。"""
+        for status, color_class in [
+            ("open", "text-green-400"),
+            ("claimed", "text-blue-400"),
+            ("closed", "text-gray-500"),
+        ]:
+            ticket = Ticket(
+                id=1,
+                guild_id="123",
+                user_id="456",
+                username="testuser",
+                category_id=1,
+                status=status,
+                ticket_number=1,
+            )
+            result = ticket_detail_page(
+                ticket,
+                category_name="General",
+                guild_name="Guild",
+                csrf_token="token",
+            )
+            assert color_class in result
+
+    def test_xss_escape_transcript(self) -> None:
+        """トランスクリプトがエスケープされる。"""
+        ticket = Ticket(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=1,
+            status="closed",
+            ticket_number=1,
+            transcript="<script>alert('xss')</script>",
+        )
+        result = ticket_detail_page(
+            ticket,
+            category_name="General",
+            guild_name="Guild",
+            csrf_token="token",
+        )
+        assert "&lt;script&gt;" in result
+        assert "<script>alert" not in result
+
+    def test_invalid_form_answers_json(self) -> None:
+        """不正な JSON の form_answers はエラーなく無視される。"""
+        ticket = Ticket(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            category_id=1,
+            status="open",
+            ticket_number=1,
+            form_answers="not valid json{{{",
+        )
+        result = ticket_detail_page(
+            ticket,
+            category_name="General",
+            guild_name="Guild",
+            csrf_token="token",
+        )
+        assert "Ticket #1" in result
+        assert "Form Answers" not in result
+
+
+class TestTicketCategoriesListPage:
+    """ticket_categories_list_page のテスト。"""
+
+    def test_empty_list(self) -> None:
+        """カテゴリがない場合は空メッセージが表示される。"""
+        result = ticket_categories_list_page([], csrf_token="token", guilds_map={})
+        assert "No ticket categories" in result
+
+    def test_with_categories(self) -> None:
+        """カテゴリがある場合は一覧が表示される。"""
+        cat = TicketCategory(
+            id=1,
+            guild_id="123",
+            name="General Support",
+            staff_role_id="999",
+            channel_prefix="ticket-",
+        )
+        result = ticket_categories_list_page(
+            [cat], csrf_token="token", guilds_map={"123": "Test Guild"}
+        )
+        assert "General Support" in result
+
+    def test_create_link(self) -> None:
+        """作成リンクが表示される。"""
+        result = ticket_categories_list_page([], csrf_token="token", guilds_map={})
+        assert "/tickets/categories/new" in result
+
+    def test_delete_form(self) -> None:
+        """削除フォームが表示される。"""
+        cat = TicketCategory(
+            id=1,
+            guild_id="123",
+            name="General",
+            staff_role_id="999",
+            channel_prefix="ticket-",
+        )
+        result = ticket_categories_list_page([cat], csrf_token="token", guilds_map={})
+        assert "/tickets/categories/1/delete" in result
+
+    def test_xss_escape_category_name(self) -> None:
+        """カテゴリ名がエスケープされる。"""
+        cat = TicketCategory(
+            id=1,
+            guild_id="123",
+            name="<img src=x onerror=alert(1)>",
+            staff_role_id="999",
+            channel_prefix="ticket-",
+        )
+        result = ticket_categories_list_page([cat], csrf_token="token", guilds_map={})
+        assert "&lt;img" in result
+        assert "<img src=x" not in result
+
+    def test_shows_form_questions_count(self) -> None:
+        """フォーム質問数が表示される。"""
+        cat = TicketCategory(
+            id=1,
+            guild_id="123",
+            name="Bug",
+            staff_role_id="999",
+            channel_prefix="bug-",
+            form_questions='["Q1","Q2","Q3"]',
+        )
+        result = ticket_categories_list_page([cat], csrf_token="token", guilds_map={})
+        assert "3" in result
+
+
+class TestTicketCategoryCreatePage:
+    """ticket_category_create_page のテスト。"""
+
+    def test_form_fields(self) -> None:
+        """フォームフィールドが表示される。"""
+        result = ticket_category_create_page(
+            guilds_map={"123": "Test Guild"},
+            roles_map={},
+            csrf_token="token",
+        )
+        assert "name" in result.lower()
+        assert "csrf_token" in result
+
+    def test_with_error(self) -> None:
+        """エラーメッセージが表示される。"""
+        result = ticket_category_create_page(
+            guilds_map={},
+            roles_map={},
+            csrf_token="token",
+            error="Required field missing",
+        )
+        assert "Required field missing" in result
+
+
+class TestTicketPanelsListPage:
+    """ticket_panels_list_page のテスト。"""
+
+    def test_empty_list(self) -> None:
+        """パネルがない場合は空メッセージが表示される。"""
+        result = ticket_panels_list_page([], csrf_token="token", guilds_map={})
+        assert "No ticket panels" in result
+
+    def test_with_panels(self) -> None:
+        """パネルがある場合は一覧が表示される。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="Support Panel",
+        )
+        result = ticket_panels_list_page(
+            [panel], csrf_token="token", guilds_map={"123": "Test Guild"}
+        )
+        assert "Support Panel" in result
+
+    def test_delete_form(self) -> None:
+        """削除フォームが表示される。"""
+        panel = TicketPanel(
+            id=5,
+            guild_id="123",
+            channel_id="456",
+            title="Panel",
+        )
+        result = ticket_panels_list_page([panel], csrf_token="token", guilds_map={})
+        assert "/tickets/panels/5/delete" in result
+
+    def test_create_link(self) -> None:
+        """作成リンクが表示される。"""
+        result = ticket_panels_list_page([], csrf_token="token", guilds_map={})
+        assert "/tickets/panels/new" in result
+
+    def test_xss_escape_panel_title(self) -> None:
+        """パネルタイトルがエスケープされる。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            title="<script>bad</script>",
+        )
+        result = ticket_panels_list_page([panel], csrf_token="token", guilds_map={})
+        assert "&lt;script&gt;" in result
+        assert "<script>bad" not in result
+
+
+class TestTicketPanelCreatePage:
+    """ticket_panel_create_page のテスト。"""
+
+    def test_form_fields(self) -> None:
+        """フォームフィールドが表示される。"""
+        result = ticket_panel_create_page(
+            guilds_map={"123": "Test Guild"},
+            channels_map={"123": [("456", "general")]},
+            categories_map={"123": [(1, "General")]},
+            csrf_token="token",
+        )
+        assert "title" in result.lower()
+        assert "csrf_token" in result
+
+    def test_with_error(self) -> None:
+        """エラーメッセージが表示される。"""
+        result = ticket_panel_create_page(
+            guilds_map={},
+            channels_map={},
+            categories_map={},
+            csrf_token="token",
+            error="Title is required",
+        )
+        assert "Title is required" in result
+
+    def test_categories_in_data(self) -> None:
+        """カテゴリデータが JSON として埋め込まれる。"""
+        result = ticket_panel_create_page(
+            guilds_map={"123": "Guild"},
+            channels_map={"123": [("456", "general")]},
+            categories_map={"123": [(1, "Bug Report")]},
+            csrf_token="token",
+        )
+        assert "Bug Report" in result

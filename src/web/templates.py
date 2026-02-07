@@ -13,6 +13,9 @@ if TYPE_CHECKING:
         RolePanel,
         RolePanelItem,
         StickyMessage,
+        Ticket,
+        TicketCategory,
+        TicketPanel,
     )
 
 
@@ -355,6 +358,10 @@ def dashboard_page(email: str = "Admin") -> str:
             <a href="/autoban" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
                 <h2 class="text-lg font-semibold mb-2">Autoban</h2>
                 <p class="text-gray-400 text-sm">Manage autoban rules and logs</p>
+            </a>
+            <a href="/tickets" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
+                <h2 class="text-lg font-semibold mb-2">Tickets</h2>
+                <p class="text-gray-400 text-sm">Manage support ticket system</p>
             </a>
             <a href="/settings/maintenance" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
                 <h2 class="text-lg font-semibold mb-2">Database Maintenance</h2>
@@ -3277,3 +3284,705 @@ def autoban_logs_page(
     </div>
     """
     return _base("Autoban Logs", content)
+
+
+# =============================================================================
+# Ticket Templates
+# =============================================================================
+
+
+def ticket_list_page(
+    tickets: list["Ticket"],
+    csrf_token: str = "",  # noqa: ARG001
+    guilds_map: dict[str, str] | None = None,
+    status_filter: str = "",
+) -> str:
+    """Ticket list page template."""
+    if guilds_map is None:
+        guilds_map = {}
+
+    rows = ""
+    for ticket in tickets:
+        guild_name = guilds_map.get(ticket.guild_id)
+        if guild_name:
+            guild_display = (
+                f'<span class="font-medium">{escape(guild_name)}</span>'
+                f'<br><span class="font-mono text-xs text-gray-500">'
+                f"{escape(ticket.guild_id)}</span>"
+            )
+        else:
+            guild_display = (
+                f'<span class="font-mono text-yellow-400">'
+                f"{escape(ticket.guild_id)}</span>"
+            )
+
+        status_colors = {
+            "open": "text-green-400",
+            "claimed": "text-blue-400",
+            "closed": "text-gray-500",
+        }
+        status_class = status_colors.get(ticket.status, "text-gray-400")
+        created = (
+            ticket.created_at.strftime("%Y-%m-%d %H:%M") if ticket.created_at else "-"
+        )
+
+        rows += f"""
+        <tr class="border-b border-gray-700">
+            <td class="py-3 px-4 font-mono">#{ticket.ticket_number}</td>
+            <td class="py-3 px-4">{escape(ticket.username)}</td>
+            <td class="py-3 px-4">
+                <span class="{status_class}">{escape(ticket.status)}</span>
+            </td>
+            <td class="py-3 px-4">{guild_display}</td>
+            <td class="py-3 px-4 text-gray-400 text-sm">{created}</td>
+            <td class="py-3 px-4">
+                <a href="/tickets/{ticket.id}"
+                   class="text-blue-400 hover:text-blue-300 text-sm">View</a>
+            </td>
+        </tr>
+        """
+
+    if not tickets:
+        rows = """
+        <tr>
+            <td colspan="6" class="py-8 text-center text-gray-500">
+                No tickets found
+            </td>
+        </tr>
+        """
+
+    # Status filter options
+    filter_options = ""
+    for s in ["", "open", "claimed", "closed"]:
+        selected = "selected" if s == status_filter else ""
+        label = "All" if s == "" else s.capitalize()
+        filter_options += f'<option value="{s}" {selected}>{label}</option>'
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            "Tickets",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Tickets", None),
+            ],
+        )
+    }
+        <div class="flex gap-3 mb-4 items-center">
+            <a href="/tickets/categories"
+               class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition-colors">
+                Categories
+            </a>
+            <a href="/tickets/panels"
+               class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition-colors">
+                Panels
+            </a>
+            <form method="GET" action="/tickets" class="ml-auto flex items-center gap-2">
+                <label class="text-sm text-gray-400">Status:</label>
+                <select name="status" onchange="this.form.submit()"
+                        class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-gray-100">
+                    {filter_options}
+                </select>
+            </form>
+        </div>
+        <div class="bg-gray-800 rounded-lg overflow-hidden overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-gray-700">
+                    <tr>
+                        <th class="py-3 px-4 text-left">#</th>
+                        <th class="py-3 px-4 text-left">User</th>
+                        <th class="py-3 px-4 text-left">Status</th>
+                        <th class="py-3 px-4 text-left">Server</th>
+                        <th class="py-3 px-4 text-left">Created</th>
+                        <th class="py-3 px-4 text-left">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    """
+    return _base("Tickets", content)
+
+
+def ticket_detail_page(
+    ticket: "Ticket",
+    category_name: str = "",
+    guild_name: str = "",
+    csrf_token: str = "",  # noqa: ARG001
+) -> str:
+    """Ticket detail page template."""
+    import json as json_mod
+
+    status_colors = {
+        "open": "text-green-400",
+        "claimed": "text-blue-400",
+        "closed": "text-gray-500",
+    }
+    status_class = status_colors.get(ticket.status, "text-gray-400")
+
+    created = (
+        ticket.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+        if ticket.created_at
+        else "-"
+    )
+    closed = (
+        ticket.closed_at.strftime("%Y-%m-%d %H:%M:%S UTC") if ticket.closed_at else "-"
+    )
+
+    # フォーム回答を表示
+    form_answers_html = ""
+    if ticket.form_answers:
+        try:
+            answers = json_mod.loads(ticket.form_answers)
+            if isinstance(answers, list):
+                form_answers_html = '<div class="mt-4"><h3 class="text-lg font-semibold mb-2">Form Answers</h3>'
+                for qa in answers:
+                    q = escape(str(qa.get("question", "")))
+                    a = escape(str(qa.get("answer", "")))
+                    form_answers_html += f"""
+                    <div class="bg-gray-700 rounded p-3 mb-2">
+                        <div class="text-sm text-gray-400">{q}</div>
+                        <div>{a}</div>
+                    </div>
+                    """
+                form_answers_html += "</div>"
+        except (json_mod.JSONDecodeError, TypeError):
+            pass
+
+    # トランスクリプト
+    transcript_html = ""
+    if ticket.transcript:
+        transcript_html = f"""
+        <div class="mt-6">
+            <h3 class="text-lg font-semibold mb-2">Transcript</h3>
+            <pre class="bg-gray-700 rounded p-4 overflow-x-auto text-sm text-gray-300 whitespace-pre-wrap">{escape(ticket.transcript)}</pre>
+        </div>
+        """
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            f"Ticket #{ticket.ticket_number}",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Tickets", "/tickets"),
+                (f"Ticket #{ticket.ticket_number}", None),
+            ],
+        )
+    }
+        <div class="bg-gray-800 rounded-lg p-6">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div>
+                    <div class="text-sm text-gray-400">Status</div>
+                    <div class="{status_class} font-medium">{
+        escape(ticket.status)
+    }</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-400">User</div>
+                    <div>{escape(ticket.username)} ({escape(ticket.user_id)})</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-400">Category</div>
+                    <div>{escape(category_name)}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-400">Server</div>
+                    <div>{escape(guild_name or ticket.guild_id)}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-400">Created</div>
+                    <div class="text-sm">{created}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-400">Closed</div>
+                    <div class="text-sm">{closed}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-400">Claimed By</div>
+                    <div class="text-sm">{escape(ticket.claimed_by or "-")}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-gray-400">Closed By</div>
+                    <div class="text-sm">{escape(ticket.closed_by or "-")}</div>
+                </div>
+            </div>
+
+            {form_answers_html}
+            {transcript_html}
+        </div>
+    </div>
+    """
+    return _base(f"Ticket #{ticket.ticket_number}", content)
+
+
+def ticket_categories_list_page(
+    categories: list["TicketCategory"],
+    csrf_token: str = "",
+    guilds_map: dict[str, str] | None = None,
+) -> str:
+    """Ticket categories list page template."""
+    if guilds_map is None:
+        guilds_map = {}
+
+    rows = ""
+    for cat in categories:
+        guild_name = guilds_map.get(cat.guild_id, cat.guild_id)
+
+        import json as json_mod
+
+        questions_count = 0
+        if cat.form_questions:
+            try:
+                qs = json_mod.loads(cat.form_questions)
+                questions_count = len(qs) if isinstance(qs, list) else 0
+            except (json_mod.JSONDecodeError, TypeError):
+                pass
+
+        status = "Enabled" if cat.is_enabled else "Disabled"
+        status_class = "text-green-400" if cat.is_enabled else "text-gray-500"
+
+        rows += f"""
+        <tr class="border-b border-gray-700">
+            <td class="py-3 px-4">{escape(cat.name)}</td>
+            <td class="py-3 px-4 text-sm">{escape(guild_name)}</td>
+            <td class="py-3 px-4 font-mono text-sm">{escape(cat.staff_role_id)}</td>
+            <td class="py-3 px-4 text-sm">{escape(cat.channel_prefix)}</td>
+            <td class="py-3 px-4 text-sm">{questions_count}</td>
+            <td class="py-3 px-4">
+                <span class="{status_class}">{status}</span>
+            </td>
+            <td class="py-3 px-4">
+                <form method="POST" action="/tickets/categories/{cat.id}/delete"
+                      onsubmit="return confirm('Delete this category?');">
+                    {_csrf_field(csrf_token)}
+                    <button type="submit"
+                            class="text-red-400 hover:text-red-300 text-sm">
+                        Delete
+                    </button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    if not categories:
+        rows = """
+        <tr>
+            <td colspan="7" class="py-8 text-center text-gray-500">
+                No ticket categories configured
+            </td>
+        </tr>
+        """
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            "Ticket Categories",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Tickets", "/tickets"),
+                ("Categories", None),
+            ],
+        )
+    }
+        <div class="flex gap-3 mb-4">
+            <a href="/tickets/categories/new"
+               class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm transition-colors">
+                + Create Category
+            </a>
+        </div>
+        <div class="bg-gray-800 rounded-lg overflow-hidden overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-gray-700">
+                    <tr>
+                        <th class="py-3 px-4 text-left">Name</th>
+                        <th class="py-3 px-4 text-left">Server</th>
+                        <th class="py-3 px-4 text-left">Staff Role</th>
+                        <th class="py-3 px-4 text-left">Prefix</th>
+                        <th class="py-3 px-4 text-left">Questions</th>
+                        <th class="py-3 px-4 text-left">Status</th>
+                        <th class="py-3 px-4 text-left">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    """
+    return _base("Ticket Categories", content)
+
+
+def ticket_category_create_page(
+    guilds_map: dict[str, str] | None = None,
+    roles_map: dict[str, list[tuple[str, str]]] | None = None,
+    csrf_token: str = "",
+    error: str | None = None,
+) -> str:
+    """Ticket category create page template."""
+    if guilds_map is None:
+        guilds_map = {}
+    if roles_map is None:
+        roles_map = {}
+
+    guild_options = ""
+    for gid, gname in sorted(guilds_map.items(), key=lambda x: x[1]):
+        guild_options += (
+            f'<option value="{escape(gid)}">{escape(gname)} ({escape(gid)})</option>'
+        )
+
+    error_html = ""
+    if error:
+        error_html = f"""
+        <div class="bg-red-500/20 border border-red-500 text-red-300 px-4 py-3 rounded mb-6">
+            {escape(error)}
+        </div>
+        """
+
+    # Build roles data for JavaScript
+    import json as json_mod
+
+    roles_data: dict[str, list[dict[str, str]]] = {}
+    for gid, role_list in roles_map.items():
+        roles_data[gid] = [{"id": rid, "name": name} for rid, name in role_list]
+    roles_json = json_mod.dumps(roles_data)
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            "Create Ticket Category",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Tickets", "/tickets"),
+                ("Categories", "/tickets/categories"),
+                ("Create", None),
+            ],
+        )
+    }
+        {error_html}
+        <div class="max-w-2xl">
+            <form method="POST" action="/tickets/categories/new" class="space-y-6">
+                {_csrf_field(csrf_token)}
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Server</label>
+                    <select name="guild_id" required id="guildSelect"
+                            onchange="updateRoles()"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">Select server...</option>
+                        {guild_options}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Category Name</label>
+                    <input type="text" name="name" required
+                           placeholder="e.g. General Support"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Staff Role</label>
+                    <select name="staff_role_id" required id="staffRoleSelect"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">Select role...</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Discord Category ID
+                        <span class="text-gray-400 font-normal">(optional)</span>
+                    </label>
+                    <input type="text" name="discord_category_id"
+                           placeholder="e.g. 123456789"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                    <p class="text-xs text-gray-500 mt-1">
+                        Ticket channels will be created under this Discord category.
+                    </p>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Channel Prefix</label>
+                    <input type="text" name="channel_prefix" value="ticket-"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Form Questions
+                        <span class="text-gray-400 font-normal">(optional, one per line, max 5)</span>
+                    </label>
+                    <textarea name="form_questions" rows="5"
+                              placeholder="What is the issue?&#10;Your Discord username&#10;Priority (Low/Medium/High)"
+                              class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100"></textarea>
+                </div>
+
+                <button type="submit"
+                        class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded transition-colors">
+                    Create Category
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+    const rolesData = {roles_json};
+    function updateRoles() {{
+        const guildId = document.getElementById('guildSelect').value;
+        const select = document.getElementById('staffRoleSelect');
+        select.innerHTML = '<option value="">Select role...</option>';
+        if (rolesData[guildId]) {{
+            rolesData[guildId].forEach(role => {{
+                const opt = document.createElement('option');
+                opt.value = role.id;
+                opt.textContent = role.name;
+                select.appendChild(opt);
+            }});
+        }}
+    }}
+    </script>
+    """
+    return _base("Create Ticket Category", content)
+
+
+def ticket_panels_list_page(
+    panels: list["TicketPanel"],
+    csrf_token: str = "",
+    guilds_map: dict[str, str] | None = None,
+) -> str:
+    """Ticket panels list page template."""
+    if guilds_map is None:
+        guilds_map = {}
+
+    rows = ""
+    for panel in panels:
+        guild_name = guilds_map.get(panel.guild_id, panel.guild_id)
+        created = (
+            panel.created_at.strftime("%Y-%m-%d %H:%M") if panel.created_at else "-"
+        )
+        posted = "Yes" if panel.message_id else "No"
+
+        rows += f"""
+        <tr class="border-b border-gray-700">
+            <td class="py-3 px-4">{escape(panel.title)}</td>
+            <td class="py-3 px-4 text-sm">{escape(guild_name)}</td>
+            <td class="py-3 px-4 font-mono text-sm">{escape(panel.channel_id)}</td>
+            <td class="py-3 px-4 text-sm">{posted}</td>
+            <td class="py-3 px-4 text-gray-400 text-sm">{created}</td>
+            <td class="py-3 px-4">
+                <form method="POST" action="/tickets/panels/{panel.id}/delete"
+                      onsubmit="return confirm('Delete this panel?');">
+                    {_csrf_field(csrf_token)}
+                    <button type="submit"
+                            class="text-red-400 hover:text-red-300 text-sm">
+                        Delete
+                    </button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    if not panels:
+        rows = """
+        <tr>
+            <td colspan="6" class="py-8 text-center text-gray-500">
+                No ticket panels configured
+            </td>
+        </tr>
+        """
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            "Ticket Panels",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Tickets", "/tickets"),
+                ("Panels", None),
+            ],
+        )
+    }
+        <div class="flex gap-3 mb-4">
+            <a href="/tickets/panels/new"
+               class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm transition-colors">
+                + Create Panel
+            </a>
+        </div>
+        <div class="bg-gray-800 rounded-lg overflow-hidden overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-gray-700">
+                    <tr>
+                        <th class="py-3 px-4 text-left">Title</th>
+                        <th class="py-3 px-4 text-left">Server</th>
+                        <th class="py-3 px-4 text-left">Channel</th>
+                        <th class="py-3 px-4 text-left">Posted</th>
+                        <th class="py-3 px-4 text-left">Created</th>
+                        <th class="py-3 px-4 text-left">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    """
+    return _base("Ticket Panels", content)
+
+
+def ticket_panel_create_page(
+    guilds_map: dict[str, str] | None = None,
+    channels_map: dict[str, list[tuple[str, str]]] | None = None,
+    categories_map: dict[str, list[tuple[int, str]]] | None = None,
+    csrf_token: str = "",
+    error: str | None = None,
+) -> str:
+    """Ticket panel create page template."""
+    if guilds_map is None:
+        guilds_map = {}
+    if channels_map is None:
+        channels_map = {}
+    if categories_map is None:
+        categories_map = {}
+
+    guild_options = ""
+    for gid, gname in sorted(guilds_map.items(), key=lambda x: x[1]):
+        guild_options += (
+            f'<option value="{escape(gid)}">{escape(gname)} ({escape(gid)})</option>'
+        )
+
+    error_html = ""
+    if error:
+        error_html = f"""
+        <div class="bg-red-500/20 border border-red-500 text-red-300 px-4 py-3 rounded mb-6">
+            {escape(error)}
+        </div>
+        """
+
+    import json as json_mod
+
+    channels_data: dict[str, list[dict[str, str]]] = {}
+    for gid, ch_list in channels_map.items():
+        channels_data[gid] = [{"id": cid, "name": cname} for cid, cname in ch_list]
+    channels_json = json_mod.dumps(channels_data)
+
+    cats_data: dict[str, list[dict[str, str | int]]] = {}
+    for gid, cat_list in categories_map.items():
+        cats_data[gid] = [{"id": cid, "name": cname} for cid, cname in cat_list]
+    cats_json = json_mod.dumps(cats_data)
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            "Create Ticket Panel",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Tickets", "/tickets"),
+                ("Panels", "/tickets/panels"),
+                ("Create", None),
+            ],
+        )
+    }
+        {error_html}
+        <div class="max-w-2xl">
+            <form method="POST" action="/tickets/panels/new" class="space-y-6">
+                {_csrf_field(csrf_token)}
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Server</label>
+                    <select name="guild_id" required id="guildSelect"
+                            onchange="updateChannelsAndCategories()"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">Select server...</option>
+                        {guild_options}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Channel</label>
+                    <select name="channel_id" required id="channelSelect"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">Select channel...</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Title</label>
+                    <input type="text" name="title" required
+                           placeholder="e.g. Support Ticket"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Description
+                        <span class="text-gray-400 font-normal">(optional)</span>
+                    </label>
+                    <textarea name="description" rows="3"
+                              placeholder="Click a button below to create a ticket."
+                              class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100"></textarea>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-2">Categories</label>
+                    <div id="categoriesContainer" class="space-y-2">
+                        <p class="text-gray-500 text-sm">Select a server first</p>
+                    </div>
+                </div>
+
+                <button type="submit"
+                        class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded transition-colors">
+                    Create Panel
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+    const channelsData = {channels_json};
+    const catsData = {cats_json};
+    function updateChannelsAndCategories() {{
+        const guildId = document.getElementById('guildSelect').value;
+
+        // Update channels
+        const chSelect = document.getElementById('channelSelect');
+        chSelect.innerHTML = '<option value="">Select channel...</option>';
+        if (channelsData[guildId]) {{
+            channelsData[guildId].forEach(ch => {{
+                const opt = document.createElement('option');
+                opt.value = ch.id;
+                opt.textContent = '#' + ch.name;
+                chSelect.appendChild(opt);
+            }});
+        }}
+
+        // Update categories
+        const container = document.getElementById('categoriesContainer');
+        container.innerHTML = '';
+        if (catsData[guildId] && catsData[guildId].length > 0) {{
+            catsData[guildId].forEach(cat => {{
+                const label = document.createElement('label');
+                label.className = 'flex items-center gap-2 cursor-pointer';
+                label.innerHTML = '<input type="checkbox" name="category_ids" value="' + cat.id + '"' +
+                    ' class="rounded bg-gray-700 border-gray-600">' +
+                    '<span>' + cat.name + '</span>';
+                container.appendChild(label);
+            }});
+        }} else {{
+            container.innerHTML = '<p class="text-gray-500 text-sm">No categories for this server</p>';
+        }}
+    }}
+    </script>
+    """
+    return _base("Create Ticket Panel", content)

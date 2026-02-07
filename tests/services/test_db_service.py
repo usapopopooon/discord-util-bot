@@ -3113,3 +3113,1036 @@ class TestDeleteRolePanelByMessageId:
         # None を指定しても False が返る（マッチしない）
         result = await delete_role_panel_by_message_id(db_session, "")
         assert result is False
+
+
+# ===========================================================================
+# チケットカテゴリ操作
+# ===========================================================================
+
+
+class TestTicketCategoryOperations:
+    """Tests for ticket category database operations."""
+
+    async def test_create_ticket_category(self, db_session: AsyncSession) -> None:
+        """チケットカテゴリを作成できる。"""
+        from src.services.db_service import create_ticket_category
+
+        category = await create_ticket_category(
+            db_session,
+            guild_id="123",
+            name="General Support",
+            staff_role_id="999",
+        )
+        assert category.id is not None
+        assert category.guild_id == "123"
+        assert category.name == "General Support"
+        assert category.staff_role_id == "999"
+        assert category.channel_prefix == "ticket-"
+        assert category.is_enabled is True
+
+    async def test_create_ticket_category_with_options(
+        self, db_session: AsyncSession
+    ) -> None:
+        """オプション付きでチケットカテゴリを作成できる。"""
+        from src.services.db_service import create_ticket_category
+
+        category = await create_ticket_category(
+            db_session,
+            guild_id="123",
+            name="Bug Report",
+            staff_role_id="999",
+            discord_category_id="555",
+            channel_prefix="bug-",
+            form_questions='["お名前","内容"]',
+        )
+        assert category.discord_category_id == "555"
+        assert category.channel_prefix == "bug-"
+        assert category.form_questions == '["お名前","内容"]'
+
+    async def test_get_ticket_category(self, db_session: AsyncSession) -> None:
+        """チケットカテゴリを ID で取得できる。"""
+        from src.services.db_service import create_ticket_category, get_ticket_category
+
+        created = await create_ticket_category(
+            db_session, guild_id="123", name="Test", staff_role_id="999"
+        )
+        found = await get_ticket_category(db_session, created.id)
+        assert found is not None
+        assert found.name == "Test"
+
+    async def test_get_ticket_category_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないカテゴリは None を返す。"""
+        from src.services.db_service import get_ticket_category
+
+        found = await get_ticket_category(db_session, 99999)
+        assert found is None
+
+    async def test_get_ticket_categories_by_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ギルドごとのカテゴリ一覧を取得できる。"""
+        from src.services.db_service import (
+            create_ticket_category,
+            get_ticket_categories_by_guild,
+        )
+
+        await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        await create_ticket_category(
+            db_session, guild_id="123", name="Cat2", staff_role_id="999"
+        )
+        await create_ticket_category(
+            db_session, guild_id="999", name="Other", staff_role_id="999"
+        )
+
+        cats = await get_ticket_categories_by_guild(db_session, "123")
+        assert len(cats) == 2
+
+    async def test_get_enabled_ticket_categories_by_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """有効なカテゴリのみ取得できる。"""
+        from src.services.db_service import (
+            create_ticket_category,
+            get_enabled_ticket_categories_by_guild,
+        )
+
+        await create_ticket_category(
+            db_session, guild_id="123", name="Enabled", staff_role_id="999"
+        )
+        cat2 = await create_ticket_category(
+            db_session, guild_id="123", name="Disabled", staff_role_id="999"
+        )
+        cat2.is_enabled = False
+        await db_session.commit()
+
+        cats = await get_enabled_ticket_categories_by_guild(db_session, "123")
+        assert len(cats) == 1
+        assert cats[0].name == "Enabled"
+
+    async def test_delete_ticket_category(self, db_session: AsyncSession) -> None:
+        """チケットカテゴリを削除できる。"""
+        from src.services.db_service import (
+            create_ticket_category,
+            delete_ticket_category,
+            get_ticket_category,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="ToDelete", staff_role_id="999"
+        )
+        result = await delete_ticket_category(db_session, cat.id)
+        assert result is True
+
+        found = await get_ticket_category(db_session, cat.id)
+        assert found is None
+
+    async def test_delete_ticket_category_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないカテゴリの削除は False。"""
+        from src.services.db_service import delete_ticket_category
+
+        result = await delete_ticket_category(db_session, 99999)
+        assert result is False
+
+    async def test_delete_ticket_category_cascades_tickets(
+        self, db_session: AsyncSession
+    ) -> None:
+        """カテゴリ削除時に関連チケットも CASCADE 削除される。"""
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            delete_ticket_category,
+            get_ticket,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="CascadeTest", staff_role_id="999"
+        )
+        ticket = await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+        )
+
+        result = await delete_ticket_category(db_session, cat.id)
+        assert result is True
+
+        found = await get_ticket(db_session, ticket.id)
+        assert found is None
+
+    async def test_delete_ticket_category_cascades_panel_categories(
+        self, db_session: AsyncSession
+    ) -> None:
+        """カテゴリ削除時に関連 panel_category も CASCADE 削除される。"""
+        from src.services.db_service import (
+            add_ticket_panel_category,
+            create_ticket_category,
+            create_ticket_panel,
+            delete_ticket_category,
+            get_ticket_panel_categories,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="CascadeTest", staff_role_id="999"
+        )
+        panel = await create_ticket_panel(
+            db_session, guild_id="123", channel_id="456", title="Panel"
+        )
+        await add_ticket_panel_category(
+            db_session, panel_id=panel.id, category_id=cat.id
+        )
+
+        result = await delete_ticket_category(db_session, cat.id)
+        assert result is True
+
+        associations = await get_ticket_panel_categories(db_session, panel.id)
+        assert len(associations) == 0
+
+
+# ===========================================================================
+# チケットパネル操作
+# ===========================================================================
+
+
+class TestTicketPanelOperations:
+    """Tests for ticket panel database operations."""
+
+    async def test_create_ticket_panel(self, db_session: AsyncSession) -> None:
+        """チケットパネルを作成できる。"""
+        from src.services.db_service import create_ticket_panel
+
+        panel = await create_ticket_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            title="Support",
+        )
+        assert panel.id is not None
+        assert panel.guild_id == "123"
+        assert panel.title == "Support"
+        assert panel.message_id is None
+
+    async def test_get_ticket_panel(self, db_session: AsyncSession) -> None:
+        """パネルを ID で取得できる。"""
+        from src.services.db_service import create_ticket_panel, get_ticket_panel
+
+        created = await create_ticket_panel(
+            db_session, guild_id="123", channel_id="456", title="Test"
+        )
+        found = await get_ticket_panel(db_session, created.id)
+        assert found is not None
+        assert found.title == "Test"
+
+    async def test_get_ticket_panel_by_message_id(
+        self, db_session: AsyncSession
+    ) -> None:
+        """message_id でパネルを取得できる。"""
+        from src.services.db_service import (
+            create_ticket_panel,
+            get_ticket_panel_by_message_id,
+            update_ticket_panel,
+        )
+
+        panel = await create_ticket_panel(
+            db_session, guild_id="123", channel_id="456", title="Test"
+        )
+        await update_ticket_panel(db_session, panel, message_id="msg123")
+
+        found = await get_ticket_panel_by_message_id(db_session, "msg123")
+        assert found is not None
+        assert found.id == panel.id
+
+    async def test_get_all_ticket_panels(self, db_session: AsyncSession) -> None:
+        """全パネルを取得できる。"""
+        from src.services.db_service import create_ticket_panel, get_all_ticket_panels
+
+        await create_ticket_panel(
+            db_session, guild_id="123", channel_id="ch1", title="P1"
+        )
+        await create_ticket_panel(
+            db_session, guild_id="456", channel_id="ch2", title="P2"
+        )
+
+        panels = await get_all_ticket_panels(db_session)
+        assert len(panels) == 2
+
+    async def test_update_ticket_panel(self, db_session: AsyncSession) -> None:
+        """パネルを更新できる。"""
+        from src.services.db_service import create_ticket_panel, update_ticket_panel
+
+        panel = await create_ticket_panel(
+            db_session, guild_id="123", channel_id="456", title="Old"
+        )
+        updated = await update_ticket_panel(
+            db_session, panel, title="New", message_id="msg1"
+        )
+        assert updated.title == "New"
+        assert updated.message_id == "msg1"
+
+    async def test_delete_ticket_panel(self, db_session: AsyncSession) -> None:
+        """パネルを削除できる。"""
+        from src.services.db_service import (
+            create_ticket_panel,
+            delete_ticket_panel,
+            get_ticket_panel,
+        )
+
+        panel = await create_ticket_panel(
+            db_session, guild_id="123", channel_id="456", title="ToDelete"
+        )
+        result = await delete_ticket_panel(db_session, panel.id)
+        assert result is True
+
+        found = await get_ticket_panel(db_session, panel.id)
+        assert found is None
+
+    async def test_delete_ticket_panel_by_message_id(
+        self, db_session: AsyncSession
+    ) -> None:
+        """message_id でパネルを削除できる。"""
+        from src.services.db_service import (
+            create_ticket_panel,
+            delete_ticket_panel_by_message_id,
+            update_ticket_panel,
+        )
+
+        panel = await create_ticket_panel(
+            db_session, guild_id="123", channel_id="456", title="Test"
+        )
+        await update_ticket_panel(db_session, panel, message_id="msg123")
+
+        result = await delete_ticket_panel_by_message_id(db_session, "msg123")
+        assert result is True
+
+    async def test_get_ticket_panel_not_found(self, db_session: AsyncSession) -> None:
+        """存在しないパネルは None を返す。"""
+        from src.services.db_service import get_ticket_panel
+
+        found = await get_ticket_panel(db_session, 99999)
+        assert found is None
+
+    async def test_get_ticket_panel_by_message_id_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない message_id は None を返す。"""
+        from src.services.db_service import get_ticket_panel_by_message_id
+
+        found = await get_ticket_panel_by_message_id(db_session, "nonexistent")
+        assert found is None
+
+    async def test_delete_ticket_panel_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないパネルの削除は False。"""
+        from src.services.db_service import delete_ticket_panel
+
+        result = await delete_ticket_panel(db_session, 99999)
+        assert result is False
+
+    async def test_delete_ticket_panel_by_message_id_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない message_id の削除は False。"""
+        from src.services.db_service import delete_ticket_panel_by_message_id
+
+        result = await delete_ticket_panel_by_message_id(db_session, "nonexistent")
+        assert result is False
+
+    async def test_get_ticket_panels_by_guild(self, db_session: AsyncSession) -> None:
+        """ギルドごとのパネル一覧を取得できる。"""
+        from src.services.db_service import (
+            create_ticket_panel,
+            get_ticket_panels_by_guild,
+        )
+
+        await create_ticket_panel(
+            db_session, guild_id="123", channel_id="ch1", title="P1"
+        )
+        await create_ticket_panel(
+            db_session, guild_id="123", channel_id="ch2", title="P2"
+        )
+        await create_ticket_panel(
+            db_session, guild_id="999", channel_id="ch3", title="Other"
+        )
+
+        panels = await get_ticket_panels_by_guild(db_session, "123")
+        assert len(panels) == 2
+
+        panels_999 = await get_ticket_panels_by_guild(db_session, "999")
+        assert len(panels_999) == 1
+
+    async def test_update_ticket_panel_description_only(
+        self, db_session: AsyncSession
+    ) -> None:
+        """description のみを更新できる。"""
+        from src.services.db_service import create_ticket_panel, update_ticket_panel
+
+        panel = await create_ticket_panel(
+            db_session, guild_id="123", channel_id="456", title="Title"
+        )
+        updated = await update_ticket_panel(
+            db_session, panel, description="New description"
+        )
+        assert updated.description == "New description"
+        assert updated.title == "Title"  # 変更されていない
+
+    async def test_create_ticket_panel_with_description(
+        self, db_session: AsyncSession
+    ) -> None:
+        """description 付きでパネルを作成できる。"""
+        from src.services.db_service import create_ticket_panel
+
+        panel = await create_ticket_panel(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            title="Support",
+            description="Click below to create a ticket",
+        )
+        assert panel.description == "Click below to create a ticket"
+
+    async def test_delete_ticket_panel_cascades_associations(
+        self, db_session: AsyncSession
+    ) -> None:
+        """パネル削除で関連する panel_category も CASCADE 削除される。"""
+        from src.services.db_service import (
+            add_ticket_panel_category,
+            create_ticket_category,
+            create_ticket_panel,
+            delete_ticket_panel,
+            get_ticket_panel_categories,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        panel = await create_ticket_panel(
+            db_session, guild_id="123", channel_id="456", title="Panel"
+        )
+        await add_ticket_panel_category(
+            db_session, panel_id=panel.id, category_id=cat.id
+        )
+
+        # パネル削除
+        result = await delete_ticket_panel(db_session, panel.id)
+        assert result is True
+
+        # 関連も消えている
+        associations = await get_ticket_panel_categories(db_session, panel.id)
+        assert len(associations) == 0
+
+
+# ===========================================================================
+# チケットパネルカテゴリ関連操作
+# ===========================================================================
+
+
+class TestTicketPanelCategoryOperations:
+    """Tests for ticket panel-category association operations."""
+
+    async def test_add_ticket_panel_category(self, db_session: AsyncSession) -> None:
+        """パネルにカテゴリを関連付けできる。"""
+        from src.services.db_service import (
+            add_ticket_panel_category,
+            create_ticket_category,
+            create_ticket_panel,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        panel = await create_ticket_panel(
+            db_session, guild_id="123", channel_id="456", title="Panel"
+        )
+        assoc = await add_ticket_panel_category(
+            db_session, panel_id=panel.id, category_id=cat.id
+        )
+        assert assoc is not None
+        assert assoc.panel_id == panel.id
+        assert assoc.category_id == cat.id
+
+    async def test_get_ticket_panel_categories(self, db_session: AsyncSession) -> None:
+        """パネルのカテゴリ関連を取得できる。"""
+        from src.services.db_service import (
+            add_ticket_panel_category,
+            create_ticket_category,
+            create_ticket_panel,
+            get_ticket_panel_categories,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        panel = await create_ticket_panel(
+            db_session, guild_id="123", channel_id="456", title="Panel"
+        )
+        await add_ticket_panel_category(
+            db_session, panel_id=panel.id, category_id=cat.id
+        )
+
+        associations = await get_ticket_panel_categories(db_session, panel.id)
+        assert len(associations) == 1
+
+    async def test_remove_ticket_panel_category(self, db_session: AsyncSession) -> None:
+        """パネルのカテゴリ関連を削除できる。"""
+        from src.services.db_service import (
+            add_ticket_panel_category,
+            create_ticket_category,
+            create_ticket_panel,
+            get_ticket_panel_categories,
+            remove_ticket_panel_category,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        panel = await create_ticket_panel(
+            db_session, guild_id="123", channel_id="456", title="Panel"
+        )
+        await add_ticket_panel_category(
+            db_session, panel_id=panel.id, category_id=cat.id
+        )
+
+        result = await remove_ticket_panel_category(
+            db_session, panel_id=panel.id, category_id=cat.id
+        )
+        assert result is True
+
+        associations = await get_ticket_panel_categories(db_session, panel.id)
+        assert len(associations) == 0
+
+    async def test_remove_ticket_panel_category_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない関連の削除は False。"""
+        from src.services.db_service import remove_ticket_panel_category
+
+        result = await remove_ticket_panel_category(db_session, 99999, 99999)
+        assert result is False
+
+    async def test_add_ticket_panel_category_with_options(
+        self, db_session: AsyncSession
+    ) -> None:
+        """オプション付きで関連を追加できる。"""
+        from src.services.db_service import (
+            add_ticket_panel_category,
+            create_ticket_category,
+            create_ticket_panel,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        panel = await create_ticket_panel(
+            db_session, guild_id="123", channel_id="456", title="Panel"
+        )
+        assoc = await add_ticket_panel_category(
+            db_session,
+            panel_id=panel.id,
+            category_id=cat.id,
+            button_label="Support",
+            button_style="success",
+            button_emoji="\U0001f4e9",
+        )
+        assert assoc.button_label == "Support"
+        assert assoc.button_style == "success"
+        assert assoc.button_emoji == "\U0001f4e9"
+
+    async def test_add_ticket_panel_category_auto_position(
+        self, db_session: AsyncSession
+    ) -> None:
+        """複数カテゴリ追加時に position が自動増加する。"""
+        from src.services.db_service import (
+            add_ticket_panel_category,
+            create_ticket_category,
+            create_ticket_panel,
+            get_ticket_panel_categories,
+        )
+
+        cat1 = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        cat2 = await create_ticket_category(
+            db_session, guild_id="123", name="Cat2", staff_role_id="999"
+        )
+        panel = await create_ticket_panel(
+            db_session, guild_id="123", channel_id="456", title="Panel"
+        )
+        await add_ticket_panel_category(
+            db_session, panel_id=panel.id, category_id=cat1.id
+        )
+        await add_ticket_panel_category(
+            db_session, panel_id=panel.id, category_id=cat2.id
+        )
+
+        associations = await get_ticket_panel_categories(db_session, panel.id)
+        assert len(associations) == 2
+        assert associations[0].position == 0
+        assert associations[1].position == 1
+
+
+# ===========================================================================
+# チケット操作
+# ===========================================================================
+
+
+class TestTicketOperations:
+    """Tests for ticket database operations."""
+
+    async def test_create_ticket(self, db_session: AsyncSession) -> None:
+        """チケットを作成できる。"""
+        from src.services.db_service import create_ticket, create_ticket_category
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        ticket = await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User One",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+        )
+        assert ticket.id is not None
+        assert ticket.guild_id == "123"
+        assert ticket.user_id == "user1"
+        assert ticket.status == "open"
+        assert ticket.ticket_number == 1
+
+    async def test_get_ticket(self, db_session: AsyncSession) -> None:
+        """チケットを ID で取得できる。"""
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            get_ticket,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        created = await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+        )
+        found = await get_ticket(db_session, created.id)
+        assert found is not None
+        assert found.user_id == "user1"
+
+    async def test_get_ticket_by_channel_id(self, db_session: AsyncSession) -> None:
+        """channel_id でチケットを取得できる。"""
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            get_ticket_by_channel_id,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+        )
+        found = await get_ticket_by_channel_id(db_session, "ch1")
+        assert found is not None
+
+    async def test_get_ticket_by_channel_id_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない channel_id は None を返す。"""
+        from src.services.db_service import get_ticket_by_channel_id
+
+        found = await get_ticket_by_channel_id(db_session, "nonexistent")
+        assert found is None
+
+    async def test_get_next_ticket_number(self, db_session: AsyncSession) -> None:
+        """次のチケット番号が正しく返される。"""
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            get_next_ticket_number,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+
+        # 最初のチケット番号は 1
+        num = await get_next_ticket_number(db_session, "123")
+        assert num == 1
+
+        await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+        )
+
+        # 次は 2
+        num = await get_next_ticket_number(db_session, "123")
+        assert num == 2
+
+    async def test_update_ticket_status(self, db_session: AsyncSession) -> None:
+        """チケットステータスを更新できる。"""
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            update_ticket_status,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        ticket = await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+        )
+
+        updated = await update_ticket_status(
+            db_session,
+            ticket,
+            status="claimed",
+            claimed_by="staff1",
+        )
+        assert updated.status == "claimed"
+        assert updated.claimed_by == "staff1"
+
+    async def test_update_ticket_status_close_with_channel_none(
+        self, db_session: AsyncSession
+    ) -> None:
+        """チケットクローズ時に channel_id を None に設定できる。"""
+        from datetime import UTC, datetime
+
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            update_ticket_status,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        ticket = await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+        )
+
+        now = datetime.now(UTC)
+        updated = await update_ticket_status(
+            db_session,
+            ticket,
+            status="closed",
+            closed_by="staff1",
+            close_reason="resolved",
+            transcript="transcript text",
+            closed_at=now,
+            channel_id=None,
+        )
+        assert updated.status == "closed"
+        assert updated.closed_by == "staff1"
+        assert updated.channel_id is None
+        assert updated.transcript == "transcript text"
+
+    async def test_get_all_tickets(self, db_session: AsyncSession) -> None:
+        """全チケットを取得できる。"""
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            get_all_tickets,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User1",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+        )
+        await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user2",
+            username="User2",
+            category_id=cat.id,
+            channel_id="ch2",
+            ticket_number=2,
+        )
+
+        tickets = await get_all_tickets(db_session)
+        assert len(tickets) == 2
+
+    async def test_get_tickets_by_guild_with_status(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ステータスフィルタ付きでギルドのチケットを取得できる。"""
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            get_tickets_by_guild,
+            update_ticket_status,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        t1 = await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User1",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+        )
+        await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user2",
+            username="User2",
+            category_id=cat.id,
+            channel_id="ch2",
+            ticket_number=2,
+        )
+        await update_ticket_status(db_session, t1, status="closed")
+
+        open_tickets = await get_tickets_by_guild(db_session, "123", status="open")
+        assert len(open_tickets) == 1
+
+        closed_tickets = await get_tickets_by_guild(db_session, "123", status="closed")
+        assert len(closed_tickets) == 1
+
+    async def test_get_ticket_not_found(self, db_session: AsyncSession) -> None:
+        """存在しないチケットは None を返す。"""
+        from src.services.db_service import get_ticket
+
+        found = await get_ticket(db_session, 99999)
+        assert found is None
+
+    async def test_create_ticket_with_form_answers(
+        self, db_session: AsyncSession
+    ) -> None:
+        """フォーム回答付きでチケットを作成できる。"""
+        from src.services.db_service import create_ticket, create_ticket_category
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        ticket = await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User One",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+            form_answers='["answer1","answer2"]',
+        )
+        assert ticket.form_answers == '["answer1","answer2"]'
+
+    async def test_get_all_tickets_with_status_filter(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ステータスフィルタ付きで全チケットを取得できる。"""
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            get_all_tickets,
+            update_ticket_status,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        t1 = await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User1",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+        )
+        await create_ticket(
+            db_session,
+            guild_id="456",
+            user_id="user2",
+            username="User2",
+            category_id=cat.id,
+            channel_id="ch2",
+            ticket_number=1,
+        )
+        await update_ticket_status(db_session, t1, status="closed")
+
+        open_tickets = await get_all_tickets(db_session, status="open")
+        assert len(open_tickets) == 1
+
+        closed_tickets = await get_all_tickets(db_session, status="closed")
+        assert len(closed_tickets) == 1
+
+    async def test_get_all_tickets_with_limit(self, db_session: AsyncSession) -> None:
+        """limit 付きで全チケットを取得できる。"""
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            get_all_tickets,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        for i in range(5):
+            await create_ticket(
+                db_session,
+                guild_id="123",
+                user_id=f"user{i}",
+                username=f"User{i}",
+                category_id=cat.id,
+                channel_id=f"ch{i}",
+                ticket_number=i + 1,
+            )
+
+        tickets = await get_all_tickets(db_session, limit=3)
+        assert len(tickets) == 3
+
+    async def test_get_tickets_by_guild_without_status(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ステータスフィルタなしでギルドのチケットを取得できる。"""
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            get_tickets_by_guild,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User1",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+        )
+        await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user2",
+            username="User2",
+            category_id=cat.id,
+            channel_id="ch2",
+            ticket_number=2,
+        )
+        await create_ticket(
+            db_session,
+            guild_id="999",
+            user_id="user3",
+            username="User3",
+            category_id=cat.id,
+            channel_id="ch3",
+            ticket_number=1,
+        )
+
+        tickets = await get_tickets_by_guild(db_session, "123")
+        assert len(tickets) == 2
+
+    async def test_get_next_ticket_number_cross_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """異なるギルドのチケット番号は独立している。"""
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            get_next_ticket_number,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=5,
+        )
+
+        # guild 123 は次が 6
+        num_123 = await get_next_ticket_number(db_session, "123")
+        assert num_123 == 6
+
+        # guild 999 はチケットなしなので 1
+        num_999 = await get_next_ticket_number(db_session, "999")
+        assert num_999 == 1
+
+    async def test_update_ticket_status_without_channel_id(
+        self, db_session: AsyncSession
+    ) -> None:
+        """channel_id を渡さない場合は変更しない (_UNSET sentinel)。"""
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            update_ticket_status,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        ticket = await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+        )
+
+        # channel_id を渡さず status のみ更新
+        updated = await update_ticket_status(
+            db_session, ticket, status="claimed", claimed_by="staff1"
+        )
+        assert updated.channel_id == "ch1"  # 変更されていない

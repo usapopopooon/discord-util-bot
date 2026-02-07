@@ -179,6 +179,7 @@ class EphemeralVCBot(commands.Bot):
             "src.cogs.sticky",
             "src.cogs.role_panel",
             "src.cogs.autoban",
+            "src.cogs.ticket",
         ]
         for ext in extensions:
             try:
