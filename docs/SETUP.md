@@ -32,6 +32,7 @@ Discord Util Bot の環境構築・開発・デプロイに関するドキュメ
 | `DATABASE_URL` | `postgresql+asyncpg://user@localhost/discord_util_bot` | PostgreSQL 接続 URL |
 | `HEALTH_CHANNEL_ID` | `0` | ヘルスチェック Embed を送信するチャンネル ID (0 = 無効) |
 | `BUMP_CHANNEL_ID` | `0` | Bump リマインダー用チャンネル ID (0 = 無効) |
+| `TIMEZONE_OFFSET` | `0` | UTC からのタイムゾーンオフセット (例: `9` = JST, `-5` = EST) |
 
 ### オプション (データベース接続)
 

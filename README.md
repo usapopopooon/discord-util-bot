@@ -3,7 +3,7 @@
 [![CI](https://github.com/usapopopooon/discord-util-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/usapopopooon/discord-util-bot/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/usapopopooon/discord-util-bot/graph/badge.svg)](https://codecov.io/gh/usapopopooon/discord-util-bot)
 
-Discord の一時ボイスチャンネル管理 Bot。ロビー VC に参加すると専用のボイスチャンネルが自動作成され、全員退出すると自動削除される。Bump リマインダー、Sticky メッセージ、Web 管理画面も搭載。
+Discord サーバー運営を支援する多機能 Bot。一時 VC 管理、チケットシステム、Bump リマインダー、Sticky メッセージ、ロールパネル、AutoBan、Web 管理画面を搭載。
 
 ## 機能
 
@@ -42,6 +42,15 @@ Discord の一時ボイスチャンネル管理 Bot。ロビー VC に参加す�
 - **デバウンス方式**: 連続投稿時の負荷を軽減 (遅延秒数を設定可能)
 - **Bot 再起動対応**: DB から設定を復元して動作継続
 
+### チケットシステム
+- **パネルベース**: Embed + ボタンでチケットカテゴリを選択して作成
+- **フォーム機能**: カテゴリごとに最大 5 問のフォーム質問を設定可能
+- **プライベートチャンネル**: チケットごとに専用チャンネルを自動作成
+- **スタッフ対応**: Claim ボタンで担当者を割り当て
+- **トランスクリプト保存**: クローズ時にメッセージ履歴を自動保存
+- **永続 View**: Bot 再起動後もボタンが動作
+- **Web 管理画面連携**: カテゴリ・パネルの作成・管理が可能
+
 ### ロールパネル機能
 - **ボタン式 / リアクション式**: 2つの入力方式から選択可能
 - **複数ロール対応**: 1パネルに複数のロールボタン/リアクションを設置
@@ -50,15 +59,25 @@ Discord の一時ボイスチャンネル管理 Bot。ロビー VC に参加す�
 - **永続 View**: Bot 再起動後もボタンが動作
 - **Web 管理画面連携**: パネルの作成・編集・Discord への投稿が可能
 
+### AutoBan 機能
+- **ユーザー名マッチ**: 正規表現でユーザー名をフィルタリング
+- **アカウント年齢**: 作成から N 日以内のアカウントを自動 BAN
+- **アバター未設定**: デフォルトアバターのアカウントを自動 BAN
+- **アクション選択**: BAN またはキックを選択可能
+- **ログ記録**: 実行ログを DB に保存、Web 管理画面で確認可能
+
 ### Web 管理画面
-- **ダッシュボード**: ロビー、Bump 設定、Sticky メッセージ、ロールパネルの一覧表示
+- **ダッシュボード**: ロビー、Bump 設定、Sticky メッセージ、ロールパネル、チケット、AutoBan の一覧表示
 - **ロールパネル管理**: パネルの作成・編集・Discord への投稿・更新
+- **チケット管理**: カテゴリ・パネルの作成、チケット一覧・トランスクリプト閲覧
+- **AutoBan 管理**: ルールの作成・有効/無効切替、実行ログの閲覧
 - **認証機能**: メール / パスワードによるログイン
 - **パスワードリセット**: SMTP 経由でリセットメールを送信
 - **メンテナンス**: データベース統計表示、孤立データのクリーンアップ
 - **セキュリティ**: レート制限、セキュア Cookie、セッション管理
 
 ### その他
+- **タイムゾーン設定**: `TIMEZONE_OFFSET` 環境変数で UTC オフセットを指定 (例: 9 = JST)
 - **ヘルスモニタリング**: 10 分ごとにハートビート Embed を送信し死活監視
 - **Graceful シャットダウン**: SIGTERM 受信時に安全に Bot を停止 (Heroku 対応)
 - **SSL 接続**: Heroku Postgres など SSL を要求するデータベースに対応
@@ -110,6 +129,24 @@ make run              # または docker-compose up -d
 | `/rolepanel delete` | パネルを削除 |
 | `/rolepanel list` | 設定済みパネル一覧 |
 
+### チケットコマンド
+
+| コマンド | 説明 |
+|---------|------|
+| `/ticket close [reason]` | チケットをクローズ (トランスクリプト保存) |
+| `/ticket claim` | チケットの担当者になる |
+| `/ticket add <user>` | ユーザーをチケットチャンネルに追加 |
+| `/ticket remove <user>` | ユーザーをチケットチャンネルから削除 |
+
+### AutoBan コマンド
+
+| コマンド | 説明 |
+|---------|------|
+| `/autoban add` | AutoBan ルールを追加 |
+| `/autoban remove` | AutoBan ルールを削除 |
+| `/autoban list` | AutoBan ルール一覧 |
+| `/autoban logs` | AutoBan 実行ログを表示 |
+
 ## コントロールパネル
 
 ロビーに参加して VC が作成されると、チャンネルにコントロールパネル Embed が送信される。オーナーのみがボタンを操作できる。
@@ -138,12 +175,15 @@ src/
 ├── bot.py               # Bot クラス定義
 ├── config.py            # pydantic-settings による設定管理
 ├── constants.py         # アプリケーション定数
+├── utils.py             # ユーティリティ関数 (データ同期、日時フォーマット等)
 ├── cogs/
 │   ├── admin.py         # 管理者用コマンド (/vc lobby)
 │   ├── voice.py         # VC 自動作成・削除、/vc コマンド
 │   ├── bump.py          # Bump リマインダー (/bump コマンド)
 │   ├── sticky.py        # Sticky メッセージ (/sticky コマンド)
 │   ├── role_panel.py    # ロールパネル (/rolepanel コマンド)
+│   ├── ticket.py        # チケットシステム (/ticket コマンド)
+│   ├── autoban.py       # AutoBan (/autoban コマンド)
 │   └── health.py        # ハートビート死活監視
 ├── core/
 │   ├── permissions.py   # Discord 権限ヘルパー
@@ -156,7 +196,8 @@ src/
 │   └── db_service.py    # DB CRUD 操作
 ├── ui/
 │   ├── control_panel.py # コントロールパネル UI (View / Button / Select)
-│   └── role_panel_view.py # ロールパネル UI (View / Button / Modal)
+│   ├── role_panel_view.py # ロールパネル UI (View / Button / Modal)
+│   └── ticket_view.py  # チケット UI (View / Button / Modal)
 └── web/
     ├── app.py           # FastAPI Web 管理画面
     ├── discord_api.py   # Discord REST API クライアント

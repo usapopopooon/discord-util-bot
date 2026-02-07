@@ -4,7 +4,7 @@
 
 ## プロジェクト概要
 
-Discord の一時ボイスチャンネル管理 Bot + Bump リマインダー + Sticky メッセージ + Web 管理画面。
+Discord サーバー運営を支援する多機能 Bot。一時 VC 管理、チケットシステム、Bump リマインダー、Sticky メッセージ、ロールパネル、AutoBan、Web 管理画面を搭載。
 
 ### 技術スタック
 
@@ -27,13 +27,15 @@ src/
 ├── bot.py               # Bot クラス (on_ready, Cog ローダー)
 ├── config.py            # pydantic-settings による環境変数管理
 ├── constants.py         # アプリケーション定数
-├── utils.py             # ユーティリティ関数 (チャンネル同期等)
+├── utils.py             # ユーティリティ関数 (データ同期、日時フォーマット等)
 ├── cogs/
 │   ├── admin.py         # 管理者用コマンド (/admin cleanup, /admin stats)
 │   ├── voice.py         # VC 自動作成・削除、/vc コマンドグループ
 │   ├── bump.py          # Bump リマインダー
 │   ├── sticky.py        # Sticky メッセージ
 │   ├── role_panel.py    # ロールパネル
+│   ├── ticket.py        # チケットシステム
+│   ├── autoban.py       # AutoBan (自動 BAN/キック)
 │   └── health.py        # ヘルスチェック (ハートビート)
 ├── core/
 │   ├── permissions.py   # Discord 権限ヘルパー
@@ -46,7 +48,8 @@ src/
 │   └── db_service.py    # DB CRUD 操作 (ビジネスロジック)
 ├── ui/
 │   ├── control_panel.py # コントロールパネル UI (View/Button/Select)
-│   └── role_panel_view.py # ロールパネル UI (View/Button/Modal)
+│   ├── role_panel_view.py # ロールパネル UI (View/Button/Modal)
+│   └── ticket_view.py  # チケット UI (View/Button/Modal)
 └── web/
     ├── app.py           # FastAPI Web 管理画面
     ├── discord_api.py   # Discord REST API クライアント (パネル投稿等)
@@ -62,6 +65,8 @@ tests/
 │   ├── test_bump.py
 │   ├── test_sticky.py
 │   ├── test_role_panel.py
+│   ├── test_ticket.py
+│   ├── test_autoban.py
 │   └── test_health.py
 ├── database/
 │   ├── test_engine.py
@@ -69,7 +74,10 @@ tests/
 │   └── test_integration.py
 ├── ui/
 │   ├── test_control_panel.py
-│   └── test_role_panel_view.py
+│   ├── test_role_panel_view.py
+│   └── test_ticket_view.py
+├── services/
+│   └── test_db_service.py
 └── web/
     ├── test_app.py
     ├── test_discord_api.py # Discord REST API クライアントのテスト
@@ -215,6 +223,109 @@ class RolePanelItem(Base):
     style: Mapped[str]                 # ボタンスタイル (primary/secondary/success/danger)
     position: Mapped[int]              # 表示順序
     # unique constraint: (panel_id, emoji)
+```
+
+### TicketCategory
+チケットカテゴリの設定。
+
+```python
+class TicketCategory(Base):
+    id: Mapped[int]                    # PK
+    guild_id: Mapped[str]              # Discord サーバー ID
+    name: Mapped[str]                  # カテゴリ名 (例: "General Support")
+    staff_role_id: Mapped[str]         # スタッフロール ID
+    discord_category_id: Mapped[str | None]  # チケットチャンネル配置先カテゴリ
+    channel_prefix: Mapped[str]        # チャンネル名接頭辞 (default "ticket-")
+    form_questions: Mapped[str | None] # JSON 配列、最大5問
+    is_enabled: Mapped[bool]           # 有効/無効
+    created_at: Mapped[datetime]
+    # relationship: panel_associations -> TicketPanelCategory[]
+    # relationship: tickets -> Ticket[]
+```
+
+### TicketPanel
+チケットパネル (Discord に送信される Embed + ボタン)。
+
+```python
+class TicketPanel(Base):
+    id: Mapped[int]                    # PK
+    guild_id: Mapped[str]              # Discord サーバー ID
+    channel_id: Mapped[str]            # パネル送信先チャンネル
+    message_id: Mapped[str | None]     # Discord メッセージ ID
+    title: Mapped[str]                 # パネルタイトル
+    description: Mapped[str | None]    # パネル説明
+    created_at: Mapped[datetime]
+    # relationship: category_associations -> TicketPanelCategory[]
+```
+
+### TicketPanelCategory
+パネルとカテゴリの結合テーブル。
+
+```python
+class TicketPanelCategory(Base):
+    id: Mapped[int]                    # PK
+    panel_id: Mapped[int]              # FK -> TicketPanel (CASCADE)
+    category_id: Mapped[int]           # FK -> TicketCategory (CASCADE)
+    button_label: Mapped[str | None]   # ラベル上書き
+    button_style: Mapped[str]          # ボタンスタイル (default "primary")
+    button_emoji: Mapped[str | None]   # ボタン絵文字
+    position: Mapped[int]              # 表示順序
+    # unique constraint: (panel_id, category_id)
+```
+
+### Ticket
+チケット本体。
+
+```python
+class Ticket(Base):
+    id: Mapped[int]                    # PK
+    guild_id: Mapped[str]              # Discord サーバー ID
+    channel_id: Mapped[str | None]     # チケットチャンネル ID (クローズ後 None)
+    user_id: Mapped[str]               # 作成者の Discord ID
+    username: Mapped[str]              # 作成時のユーザー名
+    category_id: Mapped[int]           # FK -> TicketCategory
+    status: Mapped[str]                # "open" | "claimed" | "closed"
+    claimed_by: Mapped[str | None]     # 担当スタッフ名
+    closed_by: Mapped[str | None]      # クローズしたユーザー名
+    close_reason: Mapped[str | None]   # クローズ理由
+    transcript: Mapped[str | None]     # トランスクリプト全文 (Text)
+    ticket_number: Mapped[int]         # ギルド内連番
+    form_answers: Mapped[str | None]   # JSON 文字列
+    created_at: Mapped[datetime]
+    closed_at: Mapped[datetime | None]
+    # unique constraint: (guild_id, ticket_number)
+    # relationship: category -> TicketCategory
+```
+
+### AutoBanRule
+AutoBan ルールの設定。
+
+```python
+class AutoBanRule(Base):
+    id: Mapped[int]                    # PK
+    guild_id: Mapped[str]              # Discord サーバー ID
+    rule_type: Mapped[str]             # "username" | "account_age" | "no_avatar"
+    pattern: Mapped[str | None]        # 正規表現 (username ルール用)
+    threshold_days: Mapped[int | None] # アカウント年齢閾値 (account_age ルール用)
+    action: Mapped[str]                # "ban" | "kick"
+    is_enabled: Mapped[bool]           # 有効/無効
+    log_channel_id: Mapped[str | None] # ログ送信先チャンネル ID
+    created_at: Mapped[datetime]
+```
+
+### AutoBanLog
+AutoBan 実行ログ。
+
+```python
+class AutoBanLog(Base):
+    id: Mapped[int]                    # PK
+    guild_id: Mapped[str]              # Discord サーバー ID
+    rule_id: Mapped[int]               # FK -> AutoBanRule
+    user_id: Mapped[str]               # 対象ユーザー ID
+    username: Mapped[str]              # 対象ユーザー名
+    action: Mapped[str]                # 実行されたアクション
+    reason: Mapped[str]                # 理由
+    created_at: Mapped[datetime]
 ```
 
 ### DiscordGuild
@@ -418,7 +529,77 @@ async def cog_load(self):
         self.bot.add_view(view)
 ```
 
-### 5. 管理者コマンド (`admin.py`)
+### 5. チケットシステム (`ticket.py` + `ticket_view.py`)
+
+#### 概要
+パネルベースのサポートチケットシステム。カテゴリごとにフォーム質問を設定でき、
+プライベートチャンネルでスタッフが対応、クローズ時にトランスクリプトを保存する。
+
+#### フロー
+1. Web 管理画面からカテゴリとパネルを作成
+2. パネルを Discord に投稿 (Embed + カテゴリボタン)
+3. ユーザーがボタンをクリック → フォームモーダル表示
+4. 回答送信 → プライベートチャンネル作成 + 開始 Embed 送信
+5. スタッフが Claim ボタンで担当割り当て
+6. `/ticket close` or Close ボタン → トランスクリプト保存 → チャンネル削除
+
+#### チャンネル権限
+```python
+overwrites = {
+    guild.default_role: PermissionOverwrite(view_channel=False),
+    user: PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True),
+    guild.me: PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True),
+    staff_role: PermissionOverwrite(view_channel=True, send_messages=True),
+}
+```
+
+#### 永続 View
+- `TicketPanelView`: パネルの各カテゴリボタン (`custom_id: "ticket_panel:{panel_id}:{category_id}"`)
+- `TicketControlView`: チケットチャンネル内の Claim/Close ボタン (`custom_id: "ticket_ctrl:{ticket_id}:..."`)
+- `_sync_views_task` (60秒ループ): Web 管理画面で作成されたパネルを Bot 側に同期
+
+#### トランスクリプト形式
+```
+=== Ticket #42 - General Support ===
+Created by: username (123456789)
+Created at: 2026-02-07 19:00
+
+[2026-02-07 19:00:05] username: Hello, I need help
+[2026-02-07 19:00:10] staff_user: How can I help you?
+=== Closed by: staff_user at 2026-02-07 19:30 ===
+```
+
+#### イベントリスナー
+- `on_guild_channel_delete`: チケットチャンネルが外部削除された場合の DB クリーンアップ
+- `on_raw_message_delete`: パネルメッセージが削除された場合の DB クリーンアップ
+
+### 6. AutoBan 機能 (`autoban.py`)
+
+#### 概要
+新規メンバー参加時に設定されたルールに基づいて自動 BAN/キックを実行する。
+
+#### ルールタイプ
+| タイプ | 説明 |
+|--------|------|
+| `username` | 正規表現でユーザー名をマッチ |
+| `account_age` | アカウント作成から N 日以内 |
+| `no_avatar` | デフォルトアバター (アバター未設定) |
+
+#### フロー
+1. `on_member_join` でイベント検知
+2. ギルドの有効ルールを取得
+3. 各ルールの条件をチェック
+4. マッチ → BAN or キック実行
+5. ログを DB に保存
+6. ログチャンネルが設定されていれば Embed を送信
+
+#### スラッシュコマンド
+- `/autoban add`: ルール追加 (タイプ・パターン・アクション等をモーダルで入力)
+- `/autoban remove`: ルール削除
+- `/autoban list`: ルール一覧表示
+- `/autoban logs`: 実行ログ表示
+
+### 7. 管理者コマンド (`admin.py`)
 
 Bot オーナー/管理者用のメンテナンスコマンド。
 
@@ -441,10 +622,12 @@ Bot オーナー/管理者用のメンテナンスコマンド。
 - Bump 設定数 (総数/孤立数)
 - Sticky メッセージ数 (総数/孤立数)
 - ロールパネル数 (総数/孤立数)
+- チケットカテゴリ数 (総数/孤立数)
+- AutoBan ルール数 (総数/孤立数)
 - 参加ギルド数
 ```
 
-### 6. Web 管理画面 (`web/app.py`)
+### 8. Web 管理画面 (`web/app.py`)
 
 #### 認証フロー
 1. 初回起動時: 環境変数の `ADMIN_EMAIL` / `ADMIN_PASSWORD` で管理者作成
@@ -473,6 +656,18 @@ Bot オーナー/管理者用のメンテナンスコマンド。
 | `/rolepanels/{id}/post` | パネルを Discord に投稿 (POST) |
 | `/rolepanels/{id}/items/{item_id}/delete` | ロールアイテム削除 |
 | `/rolepanels/{id}/delete` | ロールパネル削除 |
+| `/tickets` | チケット一覧 |
+| `/tickets/categories` | チケットカテゴリ一覧 |
+| `/tickets/categories/new` | チケットカテゴリ作成 |
+| `/tickets/panels` | チケットパネル一覧 |
+| `/tickets/panels/new` | チケットパネル作成 |
+| `/tickets/panels/{id}/delete` | チケットパネル削除 (POST) |
+| `/tickets/{ticket_id}` | チケット詳細・トランスクリプト |
+| `/autoban` | AutoBan ルール一覧 |
+| `/autoban/new` | AutoBan ルール作成 |
+| `/autoban/{rule_id}/delete` | AutoBan ルール削除 (POST) |
+| `/autoban/{rule_id}/toggle` | AutoBan ルール有効/無効切替 (POST) |
+| `/autoban/logs` | AutoBan 実行ログ |
 | `/settings` | 設定画面 (パスワード変更等) |
 | `/settings/maintenance` | メンテナンス画面 (統計/クリーンアップ) |
 | `/forgot-password` | パスワードリセット |
@@ -489,7 +684,7 @@ Bot オーナー/管理者用のメンテナンスコマンド。
   - 削除対象の内訳を表示
   - 合計件数を確認後に実行
 
-### 7. Graceful シャットダウン (`main.py`)
+### 9. Graceful シャットダウン (`main.py`)
 
 #### SIGTERM ハンドラ
 ```python
@@ -505,7 +700,7 @@ async def _shutdown_bot() -> None:
         await _bot.close()
 ```
 
-### 9. Discord データ同期 (`utils.py`)
+### 10. Discord データ同期 (`utils.py`)
 
 Bot が参加しているギルド/チャンネル/ロール情報を DB にキャッシュする。
 
@@ -526,7 +721,7 @@ async def sync_discord_data(bot: commands.Bot, session: AsyncSession) -> None:
 - ギルド参加/退出時
 - チャンネル/ロール変更時 (イベント)
 
-### 10. データベース接続設定 (`database/engine.py`)
+### 11. データベース接続設定 (`database/engine.py`)
 
 #### SSL 接続 (Heroku 対応)
 ```python
@@ -554,6 +749,26 @@ engine = create_async_engine(
     connect_args=_get_connect_args(),
 )
 ```
+
+### 12. タイムゾーン設定 (`config.py` + `utils.py`)
+
+`TIMEZONE_OFFSET` 環境変数で UTC からのオフセット (時間) を指定。
+Web 管理画面とトランスクリプトの全日時表示に適用される。
+
+```python
+# config.py
+timezone_offset: int = 0  # UTC offset in hours (例: 9 = JST)
+
+# utils.py
+def format_datetime(dt: datetime | None, fmt: str = "%Y-%m-%d %H:%M", *, fallback: str = "-") -> str:
+    """settings.timezone_offset に基づいてローカル日時にフォーマット。"""
+    if dt is None:
+        return fallback
+    tz = timezone(timedelta(hours=settings.timezone_offset))
+    return dt.astimezone(tz).strftime(fmt)
+```
+
+適用箇所: `ticket_view.py` (トランスクリプト 3箇所)、`templates.py` (Web 管理画面 9箇所)
 
 ## 設計原則
 
