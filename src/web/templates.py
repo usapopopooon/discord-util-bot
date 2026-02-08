@@ -1328,7 +1328,7 @@ def bump_list_page(
                 <span class="{status_class}">{status}</span>
             </td>
             <td class="py-3 px-4 align-middle">
-                <div class="flex gap-2 items-center">
+                <div class="inline-flex gap-2 items-center">
                     <form method="POST" action="/bump/reminder/{reminder.id}/toggle">
                         {_csrf_field(csrf_token)}
                         <button type="submit"
@@ -1507,7 +1507,7 @@ def role_panels_list_page(
             <td class="py-3 px-4 align-middle text-sm">{len(items)} role(s)</td>
             <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created_at}</td>
             <td class="py-3 px-4 align-middle">
-                <div class="flex gap-2 items-center">
+                <div class="inline-flex gap-2 items-center">
                     <a href="/rolepanels/{panel.id}"
                        class="text-blue-400 hover:text-blue-300 text-sm">
                         Edit
@@ -3035,7 +3035,7 @@ def autoban_list_page(
             </td>
             <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created}</td>
             <td class="py-3 px-4 align-middle">
-                <div class="flex gap-2 items-center">
+                <div class="inline-flex gap-2 items-center">
                     <a href="/autoban/{rule.id}/edit"
                        class="text-blue-400 hover:text-blue-300 text-sm">Edit</a>
                     <form method="POST" action="/autoban/{rule.id}/toggle"
@@ -3711,7 +3711,7 @@ def ticket_list_page(
             <td class="py-3 px-4 align-middle">{guild_display}</td>
             <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created}</td>
             <td class="py-3 px-4 align-middle">
-                <div class="flex gap-2 items-center">
+                <div class="inline-flex gap-2 items-center">
                     <a href="/tickets/{ticket.id}"
                        class="text-blue-400 hover:text-blue-300 text-sm">View</a>
                     <form method="POST" action="/tickets/{ticket.id}/delete"
