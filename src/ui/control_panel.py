@@ -60,14 +60,10 @@ def _cleanup_control_panel_cooldown_cache() -> None:
 
     _last_cleanup_time = now
 
-    # 古いエントリを削除 (5分以上経過したもの)
-    expired = [
-        key
-        for key, timestamp in _control_panel_cooldown_cache.items()
-        if now - timestamp > _CLEANUP_INTERVAL
-    ]
-    for key in expired:
-        del _control_panel_cooldown_cache[key]
+    # 1パス削除: キーのスナップショットから期限切れをその場で削除
+    for key in list(_control_panel_cooldown_cache):
+        if now - _control_panel_cooldown_cache[key] > _CLEANUP_INTERVAL:
+            del _control_panel_cooldown_cache[key]
 
 
 def is_control_panel_on_cooldown(user_id: int, channel_id: int) -> bool:

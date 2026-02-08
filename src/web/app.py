@@ -333,28 +333,36 @@ def _cleanup_old_rate_limit_entries() -> None:
         return
 
     _last_cleanup_time = now
-    # 期限切れのIPアドレスを削除
-    ips_to_remove = []
-    for ip, attempts in LOGIN_ATTEMPTS.items():
-        valid_attempts = [t for t in attempts if now - t < LOGIN_WINDOW_SECONDS]
-        if not valid_attempts:
-            ips_to_remove.append(ip)
+    # 1パス削除: キーのスナップショットからフィルタリング + 期限切れ削除
+    for ip in list(LOGIN_ATTEMPTS):
+        valid = [t for t in LOGIN_ATTEMPTS[ip] if now - t < LOGIN_WINDOW_SECONDS]
+        if valid:
+            LOGIN_ATTEMPTS[ip] = valid
         else:
-            LOGIN_ATTEMPTS[ip] = valid_attempts
-
-    for ip in ips_to_remove:
-        del LOGIN_ATTEMPTS[ip]
+            del LOGIN_ATTEMPTS[ip]
 
 
 def is_rate_limited(ip: str) -> bool:
     """Check if IP is rate limited."""
     _cleanup_old_rate_limit_entries()
 
+    attempts = LOGIN_ATTEMPTS.get(ip)
+
+    # IP のエントリがない or 空リスト → レート制限なし (dict 書き込み不要)
+    if not attempts:
+        return False
+
     now = time.time()
-    attempts = LOGIN_ATTEMPTS.get(ip, [])
-    attempts = [t for t in attempts if now - t < LOGIN_WINDOW_SECONDS]
-    LOGIN_ATTEMPTS[ip] = attempts
-    return len(attempts) >= LOGIN_MAX_ATTEMPTS
+    valid = [t for t in attempts if now - t < LOGIN_WINDOW_SECONDS]
+
+    # フィルタ後のリストが元と異なる場合のみ dict 更新
+    if len(valid) != len(attempts):
+        if valid:
+            LOGIN_ATTEMPTS[ip] = valid
+        else:
+            del LOGIN_ATTEMPTS[ip]
+
+    return len(valid) >= LOGIN_MAX_ATTEMPTS
 
 
 def record_failed_attempt(ip: str) -> None:
@@ -386,15 +394,11 @@ def _cleanup_form_cooldown_entries() -> None:
 
     _form_cooldown_last_cleanup_time = now
 
-    # 古いエントリを削除 (クールタイムの5倍以上経過したもの)
+    # 1パス削除: キーのスナップショットから期限切れをその場で削除
     threshold = FORM_SUBMIT_COOLDOWN_SECONDS * 5
-    keys_to_remove = [
-        key
-        for key, submit_time in FORM_SUBMIT_TIMES.items()
-        if now - submit_time > threshold
-    ]
-    for key in keys_to_remove:
-        del FORM_SUBMIT_TIMES[key]
+    for key in list(FORM_SUBMIT_TIMES):
+        if now - FORM_SUBMIT_TIMES[key] > threshold:
+            del FORM_SUBMIT_TIMES[key]
 
 
 def is_form_cooldown_active(user_email: str, path: str) -> bool:

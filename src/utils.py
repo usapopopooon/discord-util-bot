@@ -43,14 +43,11 @@ def _cleanup_resource_locks() -> None:
 
     _lock_last_cleanup_time = now
 
-    # 古いロックを削除 (5分以上アクセスがなく、ロックされていないもの)
-    expired = [
-        key
-        for key, (lock, last_access) in _resource_locks.items()
-        if now - last_access > _LOCK_EXPIRY_TIME and not lock.locked()
-    ]
-    for key in expired:
-        del _resource_locks[key]
+    # 1パス削除: キーのスナップショットから期限切れをその場で削除
+    for key in list(_resource_locks):
+        lock, last_access = _resource_locks[key]
+        if now - last_access > _LOCK_EXPIRY_TIME and not lock.locked():
+            del _resource_locks[key]
 
 
 def get_resource_lock(resource_key: str) -> asyncio.Lock:
@@ -75,14 +72,16 @@ def get_resource_lock(resource_key: str) -> asyncio.Lock:
 
     now = time.monotonic()
 
-    if resource_key not in _resource_locks:
-        _resource_locks[resource_key] = (asyncio.Lock(), now)
-    else:
-        # アクセス時刻を更新
-        lock, _ = _resource_locks[resource_key]
+    # 単一 .get() でキー存在チェックと値取得を同時に行う (dict 操作 3→2 回)
+    entry = _resource_locks.get(resource_key)
+    if entry is None:
+        lock = asyncio.Lock()
         _resource_locks[resource_key] = (lock, now)
+        return lock
 
-    return _resource_locks[resource_key][0]
+    # アクセス時刻を更新 (entry[0] で tuple unpack を回避)
+    _resource_locks[resource_key] = (entry[0], now)
+    return entry[0]
 
 
 def clear_resource_locks() -> None:
@@ -114,12 +113,9 @@ def _has_lone_surrogate(text: str) -> bool:
     Returns:
         壊れたサロゲートが含まれている場合True
     """
-    try:
-        # encode して decode できれば正常なUTF-8
-        text.encode("utf-8").decode("utf-8")
-        return False
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        return True
+    # サロゲート範囲 U+D800-U+DFFF をビット演算で検出 (メモリ割り当てゼロ):
+    # 上位 5 ビットが 11011 なら surrogate → (code point & 0xF800) == 0xD800
+    return any((ord(c) & 0xF800) == 0xD800 for c in text)
 
 
 def is_valid_emoji(text: str | None) -> bool:
@@ -143,17 +139,14 @@ def is_valid_emoji(text: str | None) -> bool:
     if not text:
         return False
 
-    # 壊れたサロゲートペアのチェック
-    if _has_lone_surrogate(text):
-        return False
-
-    # 制御文字 (改行、タブ等) のチェック
-    if CONTROL_CHAR_PATTERN.search(text):
-        return False
-
-    # Discord カスタム絵文字 (<:name:id> or <a:name:id>)
-    if DISCORD_CUSTOM_EMOJI_PATTERN.match(text):
+    # Discord カスタム絵文字は高速パス: サロゲート/制御文字チェック不要
+    # (フォーマットが固定 <:name:id> or <a:name:id> のため ASCII のみ)
+    if text[0] == "<" and DISCORD_CUSTOM_EMOJI_PATTERN.match(text):
         return True
+
+    # 壊れたサロゲートペア or 制御文字 → 無効 (短絡評価)
+    if _has_lone_surrogate(text) or CONTROL_CHAR_PATTERN.search(text):
+        return False
 
     # NFC 正規化して比較 (異体字セレクタ等の正規化)
     normalized = unicodedata.normalize("NFC", text)
@@ -162,11 +155,13 @@ def is_valid_emoji(text: str | None) -> bool:
     if emoji.is_emoji(normalized):
         return True
 
-    # VS16 (U+FE0F) 付きの絵文字に対応
-    # ブラウザやOSが⚓→⚓️のようにVS16を付加することがあり、
-    # emoji ライブラリが認識しないケースがあるため除去して再検証
-    stripped = normalized.replace("\ufe0f", "")
-    return bool(stripped and emoji.is_emoji(stripped))
+    # VS16 (U+FE0F) が含まれる場合のみ除去して再検証
+    # (不要な str.replace 回避)
+    if "\ufe0f" in normalized:
+        stripped = normalized.replace("\ufe0f", "")
+        return bool(stripped and emoji.is_emoji(stripped))
+
+    return False
 
 
 def normalize_emoji(text: str) -> str:
@@ -192,12 +187,16 @@ def normalize_emoji(text: str) -> str:
     if DISCORD_CUSTOM_EMOJI_PATTERN.match(text):
         return text
 
-    # NFC 正規化 + VS16 除去で統一的な保存形式にする
+    # NFC 正規化で統一的な保存形式にする
     normalized = unicodedata.normalize("NFC", text)
-    stripped = normalized.replace("\ufe0f", "")
-    # VS16 除去後も有効な絵文字なら除去した形で返す
-    if stripped and emoji.is_emoji(stripped):
-        return stripped
+
+    # VS16 が含まれる場合のみ除去を試みる (不要な str.replace 回避)
+    if "\ufe0f" in normalized:
+        stripped = normalized.replace("\ufe0f", "")
+        # VS16 除去後も有効な絵文字なら除去した形で返す
+        if stripped and emoji.is_emoji(stripped):
+            return stripped
+
     return normalized
 
 

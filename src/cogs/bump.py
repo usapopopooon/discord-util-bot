@@ -93,14 +93,10 @@ def _cleanup_bump_notification_cooldown_cache() -> None:
 
     _bump_last_cleanup_time = now
 
-    # 古いエントリを削除 (5分以上経過したもの)
-    expired = [
-        key
-        for key, timestamp in _bump_notification_cooldown_cache.items()
-        if now - timestamp > _BUMP_CLEANUP_INTERVAL
-    ]
-    for key in expired:
-        del _bump_notification_cooldown_cache[key]
+    # 1パス削除: キーのスナップショットから期限切れをその場で削除
+    for key in list(_bump_notification_cooldown_cache):
+        if now - _bump_notification_cooldown_cache[key] > _BUMP_CLEANUP_INTERVAL:
+            del _bump_notification_cooldown_cache[key]
 
 
 def is_bump_notification_on_cooldown(

@@ -80,14 +80,10 @@ def _cleanup_vc_create_cooldown_cache() -> None:
 
     _vc_last_cleanup_time = now
 
-    # 古いエントリを削除 (5分以上経過したもの)
-    expired = [
-        key
-        for key, timestamp in _vc_create_cooldown_cache.items()
-        if now - timestamp > _VC_CLEANUP_INTERVAL
-    ]
-    for key in expired:
-        del _vc_create_cooldown_cache[key]
+    # 1パス削除: キーのスナップショットから期限切れをその場で削除
+    for key in list(_vc_create_cooldown_cache):
+        if now - _vc_create_cooldown_cache[key] > _VC_CLEANUP_INTERVAL:
+            del _vc_create_cooldown_cache[key]
 
 
 def is_vc_create_on_cooldown(user_id: int) -> tuple[bool, float]:
