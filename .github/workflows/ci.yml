@@ -5,14 +5,19 @@
 # このワークフローは、コードの品質を自動的にチェックする。
 # push 時に実行され、以下の検証を行う:
 #
-# 1. requirements.txt 同期チェック
-# 2. スペルチェック (cspell)
-# 3. JSON/YAML/TOML の構文チェック
-# 4. Python コードのフォーマットチェック (Ruff format)
-# 5. Python コードの静的解析 (Ruff check)
-# 6. 型チェック (mypy)
-# 7. ユニットテスト (pytest)
-# 8. カバレッジレポート (Codecov)
+# [lint ジョブ] (PostgreSQL 不要 — 高速)
+#   1. requirements.txt 同期チェック
+#   2. スペルチェック (cspell)
+#   3. JSON/YAML/TOML の構文チェック
+#   4. Python コードのフォーマットチェック (Ruff format)
+#   5. Python コードの静的解析 (Ruff check)
+#   6. 型チェック (mypy)
+#
+# [test ジョブ] (PostgreSQL 必要)
+#   7. ユニットテスト (pytest + xdist 並列実行)
+#   8. カバレッジレポート (Codecov)
+#
+# lint と test は並列実行される。
 #
 # 注意:
 # - ローカルからの手動デプロイは禁止 (バージョン齟齬・テスト見逃し防止)
@@ -30,170 +35,161 @@ on:
   push:
 
 jobs:
-  test:
-    # Ubuntu の最新版で実行 (GitHub がホストするランナー)
+  # ===========================================================================
+  # Lint ジョブ — PostgreSQL 不要、高速
+  # ===========================================================================
+  lint:
     runs-on: ubuntu-latest
 
-    # -------------------------------------------------------------------------
-    # サービスコンテナ (PostgreSQL)
-    # -------------------------------------------------------------------------
-    # テスト用の PostgreSQL データベースを Docker コンテナで起動する。
-    # ジョブの開始時に自動起動し、終了時に自動削除される。
-    services:
-      postgres:
-        # PostgreSQL 16 の公式 Docker イメージを使用
-        image: postgres:16
-        # データベースの初期設定
-        env:
-          POSTGRES_USER: test_user        # テスト用ユーザー名
-          POSTGRES_PASSWORD: test_pass    # テスト用パスワード
-          POSTGRES_DB: discord_util_bot_test  # テスト用データベース名
-        # ポートマッピング: ホストの 5432 → コンテナの 5432
-        ports:
-          - 5432:5432
-        # ヘルスチェック設定
-        # PostgreSQL が接続可能になるまでジョブを待機させる
-        options: >-
-          --health-cmd="pg_isready -U test_user -d discord_util_bot_test"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-
-    # -------------------------------------------------------------------------
-    # ジョブステップ
-    # -------------------------------------------------------------------------
     steps:
       # -----------------------------------------------------------------------
       # 1. リポジトリのチェックアウト
       # -----------------------------------------------------------------------
-      # GitHub リポジトリのコードをランナーにクローンする
       - uses: actions/checkout@v4
 
       # -----------------------------------------------------------------------
       # 2. Node.js のセットアップ (Volta 経由)
       # -----------------------------------------------------------------------
-      # Volta: Node.js のバージョン管理ツール
-      # package.json の volta 設定に基づいて適切なバージョンをインストール
       - name: Set up Node.js with Volta
         uses: volta-cli/action@v4
 
       # -----------------------------------------------------------------------
       # 3. Node.js 依存関係のインストール
       # -----------------------------------------------------------------------
-      # npm ci: package-lock.json に基づいて依存関係を厳密にインストール
-      # (npm install より高速で、CI 環境に適している)
       - name: Install Node.js dependencies
         run: npm ci
 
       # -----------------------------------------------------------------------
-      # 4. Python のセットアップ
+      # 4. Python のセットアップ (pip キャッシュ有効)
       # -----------------------------------------------------------------------
-      # Python 3.12 をインストール
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
       # -----------------------------------------------------------------------
       # 5. Python 依存関係のインストール
       # -----------------------------------------------------------------------
-      # pip のアップグレード後、開発用依存関係を含めてインストール
-      # -e ".[dev]": 編集可能モードでインストール + dev オプションの依存関係
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev]" yamllint taplo
 
       # -----------------------------------------------------------------------
       # 6. requirements.txt 同期チェック
       # -----------------------------------------------------------------------
-      # requirements.txt が pyproject.toml と同期しているかチェック
-      # Heroku は requirements.txt を使用するため、同期が必須
       - name: Check requirements.txt sync
         run: python scripts/sync_requirements.py --check
 
       # -----------------------------------------------------------------------
       # 7. スペルチェック (cspell)
       # -----------------------------------------------------------------------
-      # コード内の英単語のスペルミスをチェック
-      # 設定ファイル: cspell.json
       - name: Spell check with cspell
         run: npm run lint:spell
 
       # -----------------------------------------------------------------------
       # 8. JSON 構文チェック
       # -----------------------------------------------------------------------
-      # JSON ファイルの構文エラーをチェック
       - name: Lint JSON
         run: npm run lint:json
 
       # -----------------------------------------------------------------------
       # 9. YAML 構文チェック (yamllint)
       # -----------------------------------------------------------------------
-      # YAML ファイルの構文・スタイルをチェック
-      # -s: 厳格モード (警告もエラーとして扱う)
       - name: Lint YAML
-        run: |
-          pip install yamllint
-          yamllint -s .
+        run: yamllint -s .
 
       # -----------------------------------------------------------------------
       # 10. TOML 構文チェック (taplo)
       # -----------------------------------------------------------------------
-      # pyproject.toml の構文をチェック
       - name: Lint TOML
-        run: |
-          pip install taplo
-          taplo check pyproject.toml
+        run: taplo check pyproject.toml
 
       # -----------------------------------------------------------------------
       # 11. Python フォーマットチェック (Ruff format)
       # -----------------------------------------------------------------------
-      # コードが Ruff のフォーマット規則に従っているかチェック
-      # --check: 実際にフォーマットせず、差分があればエラー
       - name: Format check with Ruff
         run: ruff format --check .
 
       # -----------------------------------------------------------------------
       # 12. Python 静的解析 (Ruff check)
       # -----------------------------------------------------------------------
-      # コードの問題 (未使用インポート、スタイル違反など) を検出
-      # 設定ファイル: pyproject.toml の [tool.ruff] セクション
       - name: Lint with Ruff
         run: ruff check src tests
 
       # -----------------------------------------------------------------------
       # 13. 型チェック (mypy)
       # -----------------------------------------------------------------------
-      # Python の型アノテーションの整合性をチェック
-      # 設定ファイル: pyproject.toml の [tool.mypy] セクション
       - name: Type check with mypy
         run: mypy src
 
-      # -----------------------------------------------------------------------
-      # 14. ユニットテスト (pytest)
-      # -----------------------------------------------------------------------
-      # テストを実行し、カバレッジレポートを生成
-      # --cov: カバレッジ計測を有効化
-      # --cov-report=xml: Codecov 用の XML レポートを出力
-      - name: Run tests with coverage
-        run: pytest --cov --cov-report=xml
+  # ===========================================================================
+  # Test ジョブ — PostgreSQL + pytest-xdist 並列実行
+  # ===========================================================================
+  test:
+    runs-on: ubuntu-latest
+
+    # -------------------------------------------------------------------------
+    # サービスコンテナ (PostgreSQL)
+    # -------------------------------------------------------------------------
+    services:
+      postgres:
+        image: postgres:16
         env:
-          # テスト用の環境変数
-          DISCORD_TOKEN: test-token  # ダミートークン (実際には使用しない)
-          # PostgreSQL 接続 URL (非同期ドライバ: asyncpg)
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_DB: discord_util_bot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U test_user -d discord_util_bot_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. リポジトリのチェックアウト
+      # -----------------------------------------------------------------------
+      - uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 2. Python のセットアップ (pip キャッシュ有効)
+      # -----------------------------------------------------------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # -----------------------------------------------------------------------
+      # 3. Python 依存関係のインストール
+      # -----------------------------------------------------------------------
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # -----------------------------------------------------------------------
+      # 4. ユニットテスト (pytest-xdist で並列実行)
+      # -----------------------------------------------------------------------
+      # -n auto: CPU コア数に基づいてワーカー数を自動決定
+      # 各ワーカーは専用の PostgreSQL データベースを自動作成する
+      # (tests/conftest.py の xdist セットアップコードを参照)
+      - name: Run tests with coverage
+        run: pytest -n auto --cov --cov-report=xml
+        env:
+          DISCORD_TOKEN: test-token
           DATABASE_URL: postgresql+asyncpg://test_user:test_pass@localhost/discord_util_bot_test
           TEST_DATABASE_URL: postgresql+asyncpg://test_user:test_pass@localhost/discord_util_bot_test
-          # PostgreSQL 接続 URL (同期ドライバ: psycopg2)
           TEST_DATABASE_URL_SYNC: postgresql://test_user:test_pass@localhost/discord_util_bot_test
 
       # -----------------------------------------------------------------------
-      # 15. カバレッジレポートのアップロード (Codecov)
+      # 5. カバレッジレポートのアップロード (Codecov)
       # -----------------------------------------------------------------------
-      # テストカバレッジを Codecov にアップロードし、可視化する
-      # PRにカバレッジの変化がコメントされる
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: coverage.xml  # アップロードするカバレッジファイル
-          token: ${{ secrets.CODECOV_TOKEN }}  # Codecov の認証トークン (リポジトリの Secrets に設定)
+          files: coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}

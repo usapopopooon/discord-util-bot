@@ -96,7 +96,10 @@
     "Upserting",
     "noopener",
     "banlogs",
-    "banneduser"
+    "banneduser",
+    "xdist",
+    "XDIST",
+    "datname"
   ],
   "ignorePaths": [
     ".venv",

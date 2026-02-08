@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -24,6 +25,8 @@ from src.web.app import app, generate_csrf_token, get_db, hash_password
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
+
+logger = logging.getLogger(__name__)
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
@@ -66,11 +69,17 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """PostgreSQL テスト DB のセッションを提供する。"""
     global _schema_created
     if _schema_created:
-        # 2回目以降: TRUNCATE (DROP/CREATE DDL より大幅に高速)
-        async with _engine.begin() as conn:
-            await conn.execute(_TRUNCATE_SQL)
-    else:
-        # 初回: スキーマ作成
+        try:
+            # 2回目以降: TRUNCATE (DROP/CREATE DDL より大幅に高速)
+            async with _engine.begin() as conn:
+                await conn.execute(_TRUNCATE_SQL)
+        except Exception:
+            # TRUNCATE 失敗時はスキーマを再作成してリカバリ
+            logger.warning("TRUNCATE failed, recreating schema", exc_info=True)
+            _schema_created = False
+
+    if not _schema_created:
+        # 初回 or TRUNCATE フォールバック: スキーマ作成
         async with _engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
             await conn.run_sync(Base.metadata.create_all)

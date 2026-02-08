@@ -1021,7 +1021,8 @@ def lobbies_list_page(
             <td class="py-3 px-4 align-middle">{session_count}</td>
             <td class="py-3 px-4 align-middle">
                 <form method="POST" action="/lobbies/{lobby.id}/delete"
-                      onsubmit="return confirm('Delete this lobby?');">
+                      onsubmit="return confirm('Delete this lobby?');"
+                      class="inline">
                     {_csrf_field(csrf_token)}
                     <button type="submit"
                             class="text-red-400 hover:text-red-300 text-sm">
@@ -1163,7 +1164,8 @@ def sticky_list_page(
             </td>
             <td class="py-3 px-4 align-middle">
                 <form method="POST" action="/sticky/{sticky.channel_id}/delete"
-                      onsubmit="return confirm('Delete this sticky message?');">
+                      onsubmit="return confirm('Delete this sticky message?');"
+                      class="inline">
                     {_csrf_field(csrf_token)}
                     <button type="submit"
                             class="text-red-400 hover:text-red-300 text-sm">
@@ -1286,7 +1288,8 @@ def bump_list_page(
             </td>
             <td class="py-3 px-4 align-middle">
                 <form method="POST" action="/bump/config/{config.guild_id}/delete"
-                      onsubmit="return confirm('Delete this bump config?');">
+                      onsubmit="return confirm('Delete this bump config?');"
+                      class="inline">
                     {_csrf_field(csrf_token)}
                     <button type="submit"
                             class="text-red-400 hover:text-red-300 text-sm">
@@ -2091,13 +2094,13 @@ def role_panel_create_page(
             }}
 
             row.innerHTML = `
-                <td class="py-1 px-1 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200">
+                <td class="py-1 px-1 align-middle cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200">
                     <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                         <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm-6 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
                     </svg>
                     <input type="hidden" name="item_position[]" class="position-input" value="${{index}}">
                 </td>
-                <td class="py-1 px-2">
+                <td class="py-1 px-2 align-middle">
                     <input
                         type="text"
                         name="item_emoji[]"
@@ -2109,7 +2112,7 @@ def role_panel_create_page(
                         placeholder="🎮"
                     >
                 </td>
-                <td class="py-1 px-2">
+                <td class="py-1 px-2 align-middle">
                     ${{roleSelectHtml}}
                     <input
                         type="hidden"
@@ -2117,7 +2120,7 @@ def role_panel_create_page(
                         class="role-id-input"
                     >
                 </td>
-                <td class="py-1 px-2 label-field">
+                <td class="py-1 px-2 align-middle label-field">
                     <input
                         type="text"
                         name="item_label[]"
@@ -2128,7 +2131,7 @@ def role_panel_create_page(
                         placeholder="Gamer"
                     >
                 </td>
-                <td class="py-1 px-2 style-field">
+                <td class="py-1 px-2 align-middle style-field">
                     <select
                         name="item_style[]"
                         class="w-full px-2 py-1 bg-gray-600 border border-gray-500 rounded
@@ -2141,7 +2144,7 @@ def role_panel_create_page(
                         <option value="danger">Red</option>
                     </select>
                 </td>
-                <td class="py-1 px-2">
+                <td class="py-1 px-2 align-middle">
                     <button
                         type="button"
                         class="remove-role-item text-red-400 hover:text-red-300 text-sm"
@@ -2511,7 +2514,8 @@ def role_panel_detail_page(
             {style_cell}
             <td class="py-3 px-4 align-middle">
                 <form method="POST" action="/rolepanels/{panel.id}/items/{item.id}/delete"
-                      onsubmit="return confirm('Delete this role item?');">
+                      onsubmit="return confirm('Delete this role item?');"
+                      class="inline">
                     {_csrf_field(csrf_token)}
                     <button type="submit"
                             class="text-red-400 hover:text-red-300 text-sm">
@@ -4118,7 +4122,8 @@ def ticket_panels_list_page(
             <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created}</td>
             <td class="py-3 px-4 align-middle">
                 <form method="POST" action="/tickets/panels/{panel.id}/delete"
-                      onsubmit="return confirm('Delete this panel?');">
+                      onsubmit="return confirm('Delete this panel?');"
+                      class="inline">
                     {_csrf_field(csrf_token)}
                     <button type="submit"
                             class="text-red-400 hover:text-red-300 text-sm">

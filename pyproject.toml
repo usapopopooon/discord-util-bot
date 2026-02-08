@@ -27,6 +27,7 @@ dev = [
     "pytest~=8.0",
     "pytest-cov~=4.0",
     "pytest-asyncio~=0.23",
+    "pytest-xdist~=3.5",
     "dpytest~=0.7",
     "mypy~=1.8",
     "ruff~=0.14.0",
@@ -62,7 +63,7 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 "src/web/app.py" = ["B008"]  # FastAPI Depends() is standard pattern
 "src/web/templates.py" = ["E501"]  # HTML templates have long lines
-"tests/**/conftest.py" = ["ARG001"]  # pytest fixtures used for side effects
+"tests/**/conftest.py" = ["ARG001", "E402"]  # pytest fixtures; xdist env setup before imports
 "tests/**/test_*.py" = ["ARG002"]  # pytest fixtures used for side effects
 
 [tool.ruff.lint.isort]
