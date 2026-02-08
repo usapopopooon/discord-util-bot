@@ -13,6 +13,8 @@ from discord import app_commands
 from src.cogs.voice import (
     VC_CREATE_COOLDOWN_SECONDS,
     VoiceCog,
+    _cleanup_vc_create_cooldown_cache,
+    _vc_create_cooldown_cache,
     clear_vc_create_cooldown_cache,
     is_vc_create_on_cooldown,
     record_vc_create_cooldown,
@@ -25,6 +27,20 @@ def clear_cooldown_cache() -> None:
     """Clear VC create cooldown cache and resource locks before each test."""
     clear_vc_create_cooldown_cache()
     clear_resource_locks()
+
+
+class TestVoiceStateIsolation:
+    """autouse fixture によるステート分離が機能することを検証するカナリアテスト."""
+
+    def test_cache_starts_empty(self) -> None:
+        """各テスト開始時にキャッシュが空であることを検証."""
+        assert len(_vc_create_cooldown_cache) == 0
+
+    def test_cleanup_time_is_reset(self) -> None:
+        """各テスト開始時にクリーンアップ時刻がリセットされていることを検証."""
+        import src.cogs.voice as voice_module
+
+        assert voice_module._vc_last_cleanup_time == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -3536,3 +3552,226 @@ class TestGetLongestMemberAdditionalEdgeCases:
                 mock_session, voice_session, channel, exclude_id=999
             )
             assert result is m2
+
+
+class TestVcCleanupGuard:
+    """VC クールダウンクリーンアップのガード条件テスト。"""
+
+    def test_cleanup_guard_allows_zero_last_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_vc_last_cleanup_time=0 でもクリーンアップが実行される.
+
+        time.monotonic() が小さい環境 (CI等) でも
+        0 は「未実行」として扱われクリーンアップがスキップされないことを検証。
+        """
+        import time
+
+        import src.cogs.voice as voice_module
+
+        key = 99999
+        _vc_create_cooldown_cache[key] = time.monotonic() - 400
+
+        monkeypatch.setattr(voice_module, "_vc_last_cleanup_time", 0)
+        _cleanup_vc_create_cooldown_cache()
+
+        assert key not in _vc_create_cooldown_cache
+        assert voice_module._vc_last_cleanup_time > 0
+
+    def test_cleanup_removes_old_entries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """古いエントリがクリーンアップされる."""
+        import time
+
+        import src.cogs.voice as voice_module
+
+        key = 11111
+        _vc_create_cooldown_cache[key] = time.monotonic() - 400
+
+        monkeypatch.setattr(
+            voice_module, "_vc_last_cleanup_time", time.monotonic() - 700
+        )
+        _cleanup_vc_create_cooldown_cache()
+
+        assert key not in _vc_create_cooldown_cache
+
+    def test_cleanup_preserves_recent_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """最近のエントリはクリーンアップされない."""
+        import time
+
+        import src.cogs.voice as voice_module
+
+        key = 22222
+        _vc_create_cooldown_cache[key] = time.monotonic() - 10
+
+        monkeypatch.setattr(
+            voice_module, "_vc_last_cleanup_time", time.monotonic() - 700
+        )
+        _cleanup_vc_create_cooldown_cache()
+
+        assert key in _vc_create_cooldown_cache
+
+    def test_cleanup_interval_respected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """クリーンアップ間隔が未経過ならスキップされる."""
+        import time
+
+        import src.cogs.voice as voice_module
+
+        key = 33333
+        _vc_create_cooldown_cache[key] = time.monotonic() - 400
+
+        monkeypatch.setattr(voice_module, "_vc_last_cleanup_time", time.monotonic() - 1)
+        _cleanup_vc_create_cooldown_cache()
+
+        # 間隔未経過なのでエントリはまだ残る
+        assert key in _vc_create_cooldown_cache
+
+    def test_cleanup_keeps_active_removes_expired(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """期限切れエントリは削除、アクティブは保持."""
+        import time
+
+        import src.cogs.voice as voice_module
+
+        expired_key = 44444
+        active_key = 55555
+        _vc_create_cooldown_cache[expired_key] = time.monotonic() - 400
+        _vc_create_cooldown_cache[active_key] = time.monotonic()
+
+        monkeypatch.setattr(voice_module, "_vc_last_cleanup_time", 0)
+        _cleanup_vc_create_cooldown_cache()
+
+        assert expired_key not in _vc_create_cooldown_cache
+        assert active_key in _vc_create_cooldown_cache
+
+
+class TestVcCleanupEmptyCache:
+    """空キャッシュに対するクリーンアップが安全に動作することを検証。"""
+
+    def test_cleanup_on_empty_cache_does_not_crash(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """キャッシュが空でもクリーンアップがクラッシュしない."""
+        import src.cogs.voice as voice_module
+
+        assert len(_vc_create_cooldown_cache) == 0
+        monkeypatch.setattr(voice_module, "_vc_last_cleanup_time", 0)
+        _cleanup_vc_create_cooldown_cache()
+        assert len(_vc_create_cooldown_cache) == 0
+        assert voice_module._vc_last_cleanup_time > 0
+
+    def test_is_cooldown_on_empty_cache(self) -> None:
+        """空キャッシュで is_vc_create_on_cooldown が (False, 0.0) を返す."""
+        assert len(_vc_create_cooldown_cache) == 0
+        on_cooldown, remaining = is_vc_create_on_cooldown(99999)
+        assert on_cooldown is False
+        assert remaining == 0.0
+
+
+class TestVcCleanupAllExpired:
+    """全エントリが期限切れの場合にキャッシュが空になることを検証。"""
+
+    def test_all_expired_entries_removed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """全エントリが期限切れなら全て削除されキャッシュが空になる."""
+        import time
+
+        import src.cogs.voice as voice_module
+
+        now = time.monotonic()
+        _vc_create_cooldown_cache[1001] = now - 400
+        _vc_create_cooldown_cache[1002] = now - 500
+        _vc_create_cooldown_cache[1003] = now - 600
+
+        monkeypatch.setattr(voice_module, "_vc_last_cleanup_time", 0)
+        _cleanup_vc_create_cooldown_cache()
+
+        assert len(_vc_create_cooldown_cache) == 0
+
+
+class TestVcCleanupTriggerViaPublicAPI:
+    """公開 API 関数がクリーンアップを内部的にトリガーすることを検証。"""
+
+    def test_is_cooldown_triggers_cleanup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """is_vc_create_on_cooldown がクリーンアップをトリガーする."""
+        import time
+
+        import src.cogs.voice as voice_module
+
+        old_key = 77777
+        _vc_create_cooldown_cache[old_key] = time.monotonic() - 400
+
+        monkeypatch.setattr(voice_module, "_vc_last_cleanup_time", 0)
+        is_vc_create_on_cooldown(99999)
+
+        assert old_key not in _vc_create_cooldown_cache
+
+    def test_cleanup_updates_last_cleanup_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """クリーンアップ実行後に _vc_last_cleanup_time が更新される."""
+        import src.cogs.voice as voice_module
+
+        monkeypatch.setattr(voice_module, "_vc_last_cleanup_time", 0)
+        is_vc_create_on_cooldown(99999)
+
+        assert voice_module._vc_last_cleanup_time > 0
+
+    def test_record_cooldown_then_check(self) -> None:
+        """record_vc_create_cooldown で記録後 is_vc_create_on_cooldown で検出される."""
+        user_id = 88888
+        record_vc_create_cooldown(user_id)
+        on_cooldown, remaining = is_vc_create_on_cooldown(user_id)
+        assert on_cooldown is True
+        assert remaining > 0
+
+
+class TestVoiceSetupCacheVerification:
+    """setup() がキャッシュを正しく構築することを検証。"""
+
+    async def test_setup_builds_lobby_cache(self) -> None:
+        """setup が _lobby_channel_ids キャッシュを構築する."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from src.cogs.voice import setup
+
+        mock_bot = MagicMock()
+        mock_bot.add_cog = AsyncMock()
+
+        mock_lobby1 = MagicMock()
+        mock_lobby1.lobby_channel_id = 111
+        mock_lobby2 = MagicMock()
+        mock_lobby2.lobby_channel_id = 222
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.voice.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.voice.get_all_lobbies",
+                new_callable=AsyncMock,
+                return_value=[mock_lobby1, mock_lobby2],
+            ),
+        ):
+            await setup(mock_bot)
+
+        cog = mock_bot.add_cog.call_args[0][0]
+        assert hasattr(cog, "_lobby_channel_ids")
+        assert cog._lobby_channel_ids == {111, 222}
+
+    async def test_setup_does_not_raise_without_db(self) -> None:
+        """DB未接続でも setup が例外を出さずに完了する."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from src.cogs.voice import setup
+
+        mock_bot = MagicMock()
+        mock_bot.add_cog = AsyncMock()
+
+        await setup(mock_bot)
+        mock_bot.add_cog.assert_called_once()

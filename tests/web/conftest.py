@@ -38,6 +38,8 @@ def clear_rate_limit() -> None:
     """各テスト前にレート制限とフォームクールタイムをクリアする。"""
     web_app_module.LOGIN_ATTEMPTS.clear()
     web_app_module.FORM_SUBMIT_TIMES.clear()
+    web_app_module._last_cleanup_time = 0.0
+    web_app_module._form_cooldown_last_cleanup_time = 0.0
 
 
 @pytest.fixture

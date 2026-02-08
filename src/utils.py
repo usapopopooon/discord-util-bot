@@ -87,7 +87,9 @@ def get_resource_lock(resource_key: str) -> asyncio.Lock:
 
 def clear_resource_locks() -> None:
     """全てのリソースロックをクリアする (テスト用)."""
+    global _lock_last_cleanup_time
     _resource_locks.clear()
+    _lock_last_cleanup_time = float("-inf")
 
 
 def get_resource_lock_count() -> int:

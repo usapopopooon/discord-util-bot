@@ -2194,6 +2194,18 @@ class TestSetupWithStickies:
         bot.add_cog.assert_called_once()
         mock_get_all.assert_called_once()
 
+    async def test_setup_does_not_raise_without_db(self) -> None:
+        """DB未接続でも setup が例外を出さずに完了する."""
+        from src.cogs.sticky import setup
+
+        bot = MagicMock(spec=commands.Bot)
+        bot.add_cog = AsyncMock()
+
+        # DB モック無しで呼び出しても例外が発生しないことを検証
+        await setup(bot)
+
+        bot.add_cog.assert_called_once()
+
 
 # =============================================================================
 # クリーンアップリスナーのテスト
@@ -2810,3 +2822,63 @@ class TestBuildEmbedEdgeCases:
         embed = cog._build_embed("Title", "Description", 0)
         # 0 is falsy → `color or DEFAULT_COLOR` → DEFAULT_COLOR (0x5865F2)
         assert embed.color == discord.Color(0x5865F2)
+
+
+class TestStickySetupCacheVerification:
+    """setup() がキャッシュを正しく構築することを検証。"""
+
+    @patch("src.cogs.sticky.async_session")
+    @patch("src.cogs.sticky.get_all_sticky_messages")
+    async def test_setup_builds_channel_cache(
+        self,
+        mock_get_all: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """setup が _sticky_channels キャッシュを構築する."""
+        from src.cogs.sticky import setup
+
+        bot = MagicMock(spec=commands.Bot)
+        bot.add_cog = AsyncMock()
+
+        mock_sticky1 = MagicMock()
+        mock_sticky1.channel_id = 111
+        mock_sticky2 = MagicMock()
+        mock_sticky2.channel_id = 222
+        mock_get_all.return_value = [mock_sticky1, mock_sticky2]
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        await setup(bot)
+
+        cog = bot.add_cog.call_args[0][0]
+        assert hasattr(cog, "_sticky_channels")
+        assert cog._sticky_channels == {111, 222}
+
+    @patch("src.cogs.sticky.async_session")
+    @patch("src.cogs.sticky.get_all_sticky_messages")
+    async def test_setup_empty_stickies_builds_empty_cache(
+        self,
+        mock_get_all: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """sticky が 0 件の場合に空キャッシュが構築される."""
+        from src.cogs.sticky import setup
+
+        bot = MagicMock(spec=commands.Bot)
+        bot.add_cog = AsyncMock()
+
+        mock_get_all.return_value = []
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        await setup(bot)
+
+        cog = bot.add_cog.call_args[0][0]
+        assert hasattr(cog, "_sticky_channels")
+        assert len(cog._sticky_channels) == 0

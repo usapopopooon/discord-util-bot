@@ -7,6 +7,24 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _clear_rate_limit_state() -> None:
+    """Clear rate limit state before each test (outside web conftest scope)."""
+    from src.web.app import LOGIN_ATTEMPTS
+
+    LOGIN_ATTEMPTS.clear()
+
+
+class TestEdgeCaseStateIsolation:
+    """autouse fixture によるステート分離が機能することを検証するカナリアテスト."""
+
+    def test_login_attempts_starts_empty(self) -> None:
+        """各テスト開始時に LOGIN_ATTEMPTS が空であることを検証."""
+        from src.web.app import LOGIN_ATTEMPTS
+
+        assert len(LOGIN_ATTEMPTS) == 0
+
+
 class TestConfigEdgeCases:
     """Configuration edge case tests."""
 

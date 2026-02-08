@@ -2721,6 +2721,29 @@ class TestVerifySessionTokenEdgeCases:
 # ===========================================================================
 
 
+class TestWebStateIsolation:
+    """autouse fixture によるステート分離が機能することを検証するカナリアテスト."""
+
+    def test_login_attempts_starts_empty(self) -> None:
+        """各テスト開始時に LOGIN_ATTEMPTS が空であることを検証."""
+        from src.web.app import LOGIN_ATTEMPTS
+
+        assert len(LOGIN_ATTEMPTS) == 0
+
+    def test_form_submit_times_starts_empty(self) -> None:
+        """各テスト開始時に FORM_SUBMIT_TIMES が空であることを検証."""
+        from src.web.app import FORM_SUBMIT_TIMES
+
+        assert len(FORM_SUBMIT_TIMES) == 0
+
+    def test_cleanup_times_are_reset(self) -> None:
+        """各テスト開始時にクリーンアップ時刻がリセットされていることを検証."""
+        import src.web.app as web_app_module
+
+        assert web_app_module._last_cleanup_time == 0.0
+        assert web_app_module._form_cooldown_last_cleanup_time == 0.0
+
+
 class TestRateLimitCleanup:
     """レート制限クリーンアップのテスト。"""
 
@@ -2767,6 +2790,62 @@ class TestRateLimitCleanup:
 
         # クリーンアップ
         LOGIN_ATTEMPTS.pop(test_ip, None)
+
+    def test_cleanup_guard_allows_zero_last_time(self) -> None:
+        """_last_cleanup_time=0 でもクリーンアップが実行される.
+
+        0 は「未実行」として扱われクリーンアップがスキップされないことを検証。
+        """
+        import time
+
+        import src.web.app as web_app_module
+        from src.web.app import LOGIN_ATTEMPTS
+
+        test_ip = "10.0.0.99"
+        LOGIN_ATTEMPTS[test_ip] = [time.time() - 400]
+
+        web_app_module._last_cleanup_time = 0
+        _cleanup_old_rate_limit_entries()
+
+        assert test_ip not in LOGIN_ATTEMPTS
+        assert web_app_module._last_cleanup_time > 0
+
+    def test_cleanup_interval_respected(self) -> None:
+        """クリーンアップ間隔が未経過ならスキップされる."""
+        import time
+
+        import src.web.app as web_app_module
+        from src.web.app import LOGIN_ATTEMPTS
+
+        test_ip = "10.0.0.88"
+        LOGIN_ATTEMPTS[test_ip] = [time.time() - 400]
+
+        # 最終クリーンアップを最近に設定 (間隔未経過)
+        web_app_module._last_cleanup_time = time.time() - 1
+        _cleanup_old_rate_limit_entries()
+
+        # 間隔未経過なのでエントリはまだ残る
+        assert test_ip in LOGIN_ATTEMPTS
+        LOGIN_ATTEMPTS.pop(test_ip, None)
+
+    def test_cleanup_keeps_active_removes_expired(self) -> None:
+        """期限切れエントリは削除、アクティブは保持."""
+        import time
+
+        import src.web.app as web_app_module
+        from src.web.app import LOGIN_ATTEMPTS
+
+        expired_ip = "10.0.0.77"
+        active_ip = "10.0.0.66"
+        LOGIN_ATTEMPTS[expired_ip] = [time.time() - 400]
+        LOGIN_ATTEMPTS[active_ip] = [time.time()]
+
+        web_app_module._last_cleanup_time = 0
+        _cleanup_old_rate_limit_entries()
+
+        assert expired_ip not in LOGIN_ATTEMPTS
+        assert active_ip in LOGIN_ATTEMPTS
+        LOGIN_ATTEMPTS.pop(active_ip, None)
 
 
 # ===========================================================================
@@ -6323,6 +6402,71 @@ class TestFormCooldown:
         # 古いエントリが削除されている
         assert test_key not in FORM_SUBMIT_TIMES
 
+    def test_cooldown_cleanup_guard_allows_zero_last_time(self) -> None:
+        """_form_cooldown_last_cleanup_time=0 でもクリーンアップが実行される.
+
+        0 は「未実行」として扱われクリーンアップがスキップされないことを検証。
+        """
+        import time
+
+        import src.web.app as web_app_module
+        from src.web.app import (
+            FORM_SUBMIT_TIMES,
+            _cleanup_form_cooldown_entries,
+        )
+
+        test_key = "guard_test@example.com:/test/guard"
+        FORM_SUBMIT_TIMES[test_key] = time.time() - 100
+
+        web_app_module._form_cooldown_last_cleanup_time = 0
+        _cleanup_form_cooldown_entries()
+
+        assert test_key not in FORM_SUBMIT_TIMES
+        assert web_app_module._form_cooldown_last_cleanup_time > 0
+
+    def test_cooldown_cleanup_interval_respected(self) -> None:
+        """クリーンアップ間隔が未経過ならスキップされる."""
+        import time
+
+        import src.web.app as web_app_module
+        from src.web.app import (
+            FORM_SUBMIT_TIMES,
+            _cleanup_form_cooldown_entries,
+        )
+
+        test_key = "interval_test@example.com:/test/interval"
+        FORM_SUBMIT_TIMES[test_key] = time.time() - 100
+
+        # 最終クリーンアップを最近に設定 (間隔未経過)
+        web_app_module._form_cooldown_last_cleanup_time = time.time() - 1
+        _cleanup_form_cooldown_entries()
+
+        # 間隔未経過なのでエントリはまだ残る
+        assert test_key in FORM_SUBMIT_TIMES
+        FORM_SUBMIT_TIMES.pop(test_key, None)
+
+    def test_cooldown_cleanup_keeps_active_removes_expired(self) -> None:
+        """期限切れエントリは削除、アクティブは保持."""
+        import time
+
+        import src.web.app as web_app_module
+        from src.web.app import (
+            FORM_SUBMIT_TIMES,
+            _cleanup_form_cooldown_entries,
+        )
+
+        expired_key = "expired@example.com:/test/expired"
+        active_key = "active@example.com:/test/active"
+        FORM_SUBMIT_TIMES[expired_key] = time.time() - 100
+        FORM_SUBMIT_TIMES[active_key] = time.time()
+
+        web_app_module._form_cooldown_last_cleanup_time = 0
+        _cleanup_form_cooldown_entries()
+
+        assert expired_key not in FORM_SUBMIT_TIMES
+        assert active_key in FORM_SUBMIT_TIMES
+        FORM_SUBMIT_TIMES.pop(active_key, None)
+
 
 class TestFormCooldownRoutes:
     """フォームクールタイムのルートテスト。"""
@@ -7655,6 +7799,202 @@ class TestFormCooldownFunctions:
 
         # 古いエントリは削除される
         assert key not in app_module.FORM_SUBMIT_TIMES
+
+
+class TestRateLimitCleanupEmptyCache:
+    """空キャッシュに対するレート制限クリーンアップが安全に動作することを検証。"""
+
+    def test_cleanup_on_empty_cache_does_not_crash(self) -> None:
+        """LOGIN_ATTEMPTS が空でもクリーンアップがクラッシュしない."""
+        import src.web.app as web_app_module
+        from src.web.app import LOGIN_ATTEMPTS
+
+        assert len(LOGIN_ATTEMPTS) == 0
+        web_app_module._last_cleanup_time = 0
+        _cleanup_old_rate_limit_entries()
+        assert len(LOGIN_ATTEMPTS) == 0
+        assert web_app_module._last_cleanup_time > 0
+
+    def test_is_rate_limited_on_empty_returns_false(self) -> None:
+        """空状態で is_rate_limited が False を返す."""
+        from src.web.app import LOGIN_ATTEMPTS
+
+        assert len(LOGIN_ATTEMPTS) == 0
+        result = is_rate_limited("10.0.0.1")
+        assert result is False
+
+
+class TestRateLimitCleanupAllExpired:
+    """全エントリが期限切れの場合にキャッシュが空になることを検証。"""
+
+    def test_all_expired_entries_removed(self) -> None:
+        """全エントリが期限切れなら全て削除されキャッシュが空になる."""
+        import time
+
+        import src.web.app as web_app_module
+        from src.web.app import LOGIN_ATTEMPTS
+
+        old_time = time.time() - 400
+        LOGIN_ATTEMPTS["10.0.0.1"] = [old_time]
+        LOGIN_ATTEMPTS["10.0.0.2"] = [old_time - 100]
+        LOGIN_ATTEMPTS["10.0.0.3"] = [old_time - 200]
+
+        web_app_module._last_cleanup_time = 0
+        _cleanup_old_rate_limit_entries()
+
+        assert len(LOGIN_ATTEMPTS) == 0
+
+
+class TestRateLimitCleanupTriggerViaPublicAPI:
+    """is_rate_limited がクリーンアップを内部的にトリガーすることを検証。"""
+
+    def test_is_rate_limited_triggers_cleanup(self) -> None:
+        """is_rate_limited がクリーンアップをトリガーする."""
+        import time
+
+        import src.web.app as web_app_module
+        from src.web.app import LOGIN_ATTEMPTS
+
+        old_ip = "10.0.0.50"
+        LOGIN_ATTEMPTS[old_ip] = [time.time() - 400]
+
+        web_app_module._last_cleanup_time = 0
+        is_rate_limited("10.0.0.51")
+
+        assert old_ip not in LOGIN_ATTEMPTS
+
+    def test_cleanup_updates_last_cleanup_time(self) -> None:
+        """クリーンアップ実行後に _last_cleanup_time が更新される."""
+        import src.web.app as web_app_module
+
+        web_app_module._last_cleanup_time = 0
+        is_rate_limited("10.0.0.52")
+
+        assert web_app_module._last_cleanup_time > 0
+
+
+class TestFormCooldownCleanupEmptyCache:
+    """空キャッシュに対するフォームクールダウンクリーンアップが安全に動作することを検証。"""
+
+    def test_cleanup_on_empty_cache_does_not_crash(self) -> None:
+        """FORM_SUBMIT_TIMES が空でもクリーンアップがクラッシュしない."""
+        import src.web.app as app_module
+        from src.web.app import FORM_SUBMIT_TIMES
+
+        assert len(FORM_SUBMIT_TIMES) == 0
+        app_module._form_cooldown_last_cleanup_time = 0
+        _cleanup_form_cooldown_entries()
+        assert len(FORM_SUBMIT_TIMES) == 0
+        assert app_module._form_cooldown_last_cleanup_time > 0
+
+    def test_is_form_cooldown_on_empty_returns_false(self) -> None:
+        """空状態で is_form_cooldown_active が False を返す."""
+        from src.web.app import FORM_SUBMIT_TIMES
+
+        assert len(FORM_SUBMIT_TIMES) == 0
+        result = is_form_cooldown_active("user@example.com", "/test")
+        assert result is False
+
+
+class TestFormCooldownCleanupAllExpired:
+    """全エントリが期限切れの場合にキャッシュが空になることを検証。"""
+
+    def test_all_expired_entries_removed(self) -> None:
+        """全エントリが期限切れなら全て削除されキャッシュが空になる."""
+        import time
+
+        import src.web.app as app_module
+        from src.web.app import FORM_SUBMIT_TIMES
+
+        old_time = time.time() - 100
+        FORM_SUBMIT_TIMES["user1@example.com:/path1"] = old_time
+        FORM_SUBMIT_TIMES["user2@example.com:/path2"] = old_time - 100
+        FORM_SUBMIT_TIMES["user3@example.com:/path3"] = old_time - 200
+
+        app_module._form_cooldown_last_cleanup_time = 0
+        _cleanup_form_cooldown_entries()
+
+        assert len(FORM_SUBMIT_TIMES) == 0
+
+
+class TestFormCooldownCleanupTriggerViaPublicAPI:
+    """is_form_cooldown_active がクリーンアップを内部的にトリガーすることを検証。"""
+
+    def test_is_form_cooldown_triggers_cleanup(self) -> None:
+        """is_form_cooldown_active がクリーンアップをトリガーする."""
+        import time
+
+        import src.web.app as app_module
+        from src.web.app import FORM_SUBMIT_TIMES
+
+        old_key = "old@example.com:/old"
+        FORM_SUBMIT_TIMES[old_key] = time.time() - 100
+
+        app_module._form_cooldown_last_cleanup_time = 0
+        is_form_cooldown_active("new@example.com", "/new")
+
+        assert old_key not in FORM_SUBMIT_TIMES
+
+    def test_cleanup_updates_last_cleanup_time(self) -> None:
+        """クリーンアップ実行後に _form_cooldown_last_cleanup_time が更新される."""
+        import src.web.app as app_module
+
+        app_module._form_cooldown_last_cleanup_time = 0
+        is_form_cooldown_active("new@example.com", "/new")
+
+        assert app_module._form_cooldown_last_cleanup_time > 0
+
+    def test_form_cooldown_guard_allows_zero(self) -> None:
+        """_form_cooldown_last_cleanup_time=0 でもクリーンアップが実行される."""
+        import time
+
+        import src.web.app as app_module
+        from src.web.app import FORM_SUBMIT_TIMES
+
+        old_key = "guard@example.com:/guard"
+        FORM_SUBMIT_TIMES[old_key] = time.time() - 100
+
+        app_module._form_cooldown_last_cleanup_time = 0
+        _cleanup_form_cooldown_entries()
+
+        assert old_key not in FORM_SUBMIT_TIMES
+        assert app_module._form_cooldown_last_cleanup_time > 0
+
+    def test_form_cooldown_interval_respected(self) -> None:
+        """フォームクールダウンクリーンアップ間隔が未経過ならスキップされる."""
+        import time
+
+        import src.web.app as app_module
+        from src.web.app import FORM_SUBMIT_TIMES
+
+        old_key = "interval@example.com:/interval"
+        FORM_SUBMIT_TIMES[old_key] = time.time() - 100
+
+        app_module._form_cooldown_last_cleanup_time = time.time() - 1
+        _cleanup_form_cooldown_entries()
+
+        # 間隔未経過なのでエントリはまだ残る
+        assert old_key in FORM_SUBMIT_TIMES
+        FORM_SUBMIT_TIMES.pop(old_key, None)
+
+    def test_form_cooldown_keeps_active_removes_expired(self) -> None:
+        """期限切れエントリは削除、アクティブは保持."""
+        import time
+
+        import src.web.app as app_module
+        from src.web.app import FORM_SUBMIT_TIMES
+
+        expired_key = "expired@example.com:/expired"
+        active_key = "active@example.com:/active"
+        FORM_SUBMIT_TIMES[expired_key] = time.time() - 100
+        FORM_SUBMIT_TIMES[active_key] = time.time()
+
+        app_module._form_cooldown_last_cleanup_time = 0
+        _cleanup_form_cooldown_entries()
+
+        assert expired_key not in FORM_SUBMIT_TIMES
+        assert active_key in FORM_SUBMIT_TIMES
+        FORM_SUBMIT_TIMES.pop(active_key, None)
 
 
 # ===========================================================================

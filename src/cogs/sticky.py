@@ -676,11 +676,14 @@ async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(cog)
 
     # Bot 起動時に全ての sticky 設定をログ出力 + キャッシュ構築
-    async with async_session() as session:
-        stickies = await get_all_sticky_messages(session)
-        cog._sticky_channels = {s.channel_id for s in stickies}
-        if stickies:
-            logger.info(
-                "Loaded %d sticky message configurations",
-                len(stickies),
-            )
+    try:
+        async with async_session() as session:
+            stickies = await get_all_sticky_messages(session)
+            cog._sticky_channels = {s.channel_id for s in stickies}
+            if stickies:
+                logger.info(
+                    "Loaded %d sticky message configurations",
+                    len(stickies),
+                )
+    except Exception:
+        logger.critical("Failed to load sticky channel cache", exc_info=True)

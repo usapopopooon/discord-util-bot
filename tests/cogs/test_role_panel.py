@@ -635,6 +635,27 @@ class TestSetupFunction:
         bot.add_cog.assert_awaited_once()
 
 
+class TestCogLoad:
+    """cog_load のエラーハンドリングテスト。"""
+
+    async def test_cog_load_does_not_raise_on_db_error(self) -> None:
+        """DB エラーでも cog_load が例外を出さずに完了する."""
+        from src.cogs.role_panel import RolePanelCog
+
+        bot = MagicMock(spec=commands.Bot)
+        cog = RolePanelCog(bot)
+
+        # _register_all_views が例外を投げても cog_load は失敗しない
+        with patch.object(
+            cog, "_register_all_views", side_effect=Exception("DB error")
+        ):
+            cog._sync_views_task = MagicMock()
+            await cog.cog_load()
+
+        # _sync_views_task は開始される
+        cog._sync_views_task.start.assert_called_once()
+
+
 # =============================================================================
 # Remove Reaction Feature Tests
 # =============================================================================

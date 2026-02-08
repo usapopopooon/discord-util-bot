@@ -326,7 +326,10 @@ def _cleanup_old_rate_limit_entries() -> None:
     global _last_cleanup_time
     now = time.time()
 
-    if now - _last_cleanup_time < RATE_LIMIT_CLEANUP_INTERVAL_SECONDS:
+    if (
+        _last_cleanup_time > 0
+        and now - _last_cleanup_time < RATE_LIMIT_CLEANUP_INTERVAL_SECONDS
+    ):
         return
 
     _last_cleanup_time = now
@@ -374,7 +377,11 @@ def _cleanup_form_cooldown_entries() -> None:
     global _form_cooldown_last_cleanup_time
     now = time.time()
 
-    if now - _form_cooldown_last_cleanup_time < FORM_COOLDOWN_CLEANUP_INTERVAL_SECONDS:
+    if (
+        _form_cooldown_last_cleanup_time > 0
+        and now - _form_cooldown_last_cleanup_time
+        < FORM_COOLDOWN_CLEANUP_INTERVAL_SECONDS
+    ):
         return
 
     _form_cooldown_last_cleanup_time = now

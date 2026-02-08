@@ -75,7 +75,7 @@ def _cleanup_vc_create_cooldown_cache() -> None:
     now = time.monotonic()
 
     # 5分ごとにクリーンアップ
-    if now - _vc_last_cleanup_time < _VC_CLEANUP_INTERVAL:
+    if _vc_last_cleanup_time > 0 and now - _vc_last_cleanup_time < _VC_CLEANUP_INTERVAL:
         return
 
     _vc_last_cleanup_time = now
@@ -120,7 +120,9 @@ def record_vc_create_cooldown(user_id: int) -> None:
 
 def clear_vc_create_cooldown_cache() -> None:
     """VC作成クールダウンキャッシュをクリアする (テスト用)."""
+    global _vc_last_cleanup_time
     _vc_create_cooldown_cache.clear()
+    _vc_last_cleanup_time = 0.0
 
 
 class VoiceCog(commands.Cog):

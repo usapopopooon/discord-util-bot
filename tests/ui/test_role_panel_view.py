@@ -12,6 +12,8 @@ from src.ui.role_panel_view import (
     RoleButton,
     RolePanelCreateModal,
     RolePanelView,
+    _cleanup_cooldown_cache,
+    _cooldown_cache,
     clear_cooldown_cache,
     create_role_panel_content,
     create_role_panel_embed,
@@ -19,6 +21,27 @@ from src.ui.role_panel_view import (
     is_on_cooldown,
     refresh_role_panel,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_role_panel_cooldown() -> None:
+    """Clear role panel cooldown cache before each test."""
+    clear_cooldown_cache()
+
+
+class TestRolePanelStateIsolation:
+    """autouse fixture によるステート分離が機能することを検証するカナリアテスト."""
+
+    def test_cache_starts_empty(self) -> None:
+        """各テスト開始時にキャッシュが空であることを検証."""
+        assert len(_cooldown_cache) == 0
+
+    def test_cleanup_time_is_reset(self) -> None:
+        """各テスト開始時にクリーンアップ時刻がリセットされていることを検証."""
+        import src.ui.role_panel_view as rpv_module
+
+        assert rpv_module._last_cleanup_time == 0.0
+
 
 # ===========================================================================
 # Helper Functions
@@ -1204,3 +1227,164 @@ class TestCooldownFeature:
             await handle_role_reaction(payload, "add")
             # セッションが開始されないことを確認 (クールダウンで早期リターン)
             mock_session.assert_not_called()
+
+
+class TestRolePanelCleanupGuard:
+    """ロールパネルクリーンアップのガード条件テスト。"""
+
+    def test_cleanup_guard_allows_zero_last_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_last_cleanup_time=0 でもクリーンアップが実行される.
+
+        time.monotonic() が小さい環境 (CI等) でも
+        0 は「未実行」として扱われクリーンアップがスキップされないことを検証。
+        """
+        import time
+
+        import src.ui.role_panel_view as rpv_module
+
+        key = (99999, 88888)
+        _cooldown_cache[key] = time.monotonic() - 400
+
+        monkeypatch.setattr(rpv_module, "_last_cleanup_time", 0)
+        _cleanup_cooldown_cache()
+
+        assert key not in _cooldown_cache
+        assert rpv_module._last_cleanup_time > 0
+
+    def test_cleanup_removes_old_entries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """古いエントリがクリーンアップされる."""
+        import time
+
+        import src.ui.role_panel_view as rpv_module
+
+        key = (11111, 22222)
+        _cooldown_cache[key] = time.monotonic() - 400
+
+        monkeypatch.setattr(rpv_module, "_last_cleanup_time", time.monotonic() - 700)
+        _cleanup_cooldown_cache()
+
+        assert key not in _cooldown_cache
+
+    def test_cleanup_preserves_recent_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """最近のエントリはクリーンアップされない."""
+        import time
+
+        import src.ui.role_panel_view as rpv_module
+
+        key = (33333, 44444)
+        _cooldown_cache[key] = time.monotonic() - 10
+
+        monkeypatch.setattr(rpv_module, "_last_cleanup_time", time.monotonic() - 700)
+        _cleanup_cooldown_cache()
+
+        assert key in _cooldown_cache
+
+    def test_cleanup_interval_respected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """クリーンアップ間隔が未経過ならスキップされる."""
+        import time
+
+        import src.ui.role_panel_view as rpv_module
+
+        key = (55555, 66666)
+        _cooldown_cache[key] = time.monotonic() - 400
+
+        monkeypatch.setattr(rpv_module, "_last_cleanup_time", time.monotonic() - 1)
+        _cleanup_cooldown_cache()
+
+        assert key in _cooldown_cache
+
+    def test_cleanup_keeps_active_removes_expired(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """期限切れエントリは削除、アクティブは保持."""
+        import time
+
+        import src.ui.role_panel_view as rpv_module
+
+        expired_key = (77777, 88888)
+        active_key = (99990, 99991)
+        _cooldown_cache[expired_key] = time.monotonic() - 400
+        _cooldown_cache[active_key] = time.monotonic()
+
+        monkeypatch.setattr(rpv_module, "_last_cleanup_time", 0)
+        _cleanup_cooldown_cache()
+
+        assert expired_key not in _cooldown_cache
+        assert active_key in _cooldown_cache
+
+
+class TestRolePanelCleanupEmptyCache:
+    """空キャッシュに対するクリーンアップが安全に動作することを検証。"""
+
+    def test_cleanup_on_empty_cache_does_not_crash(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """キャッシュが空でもクリーンアップがクラッシュしない."""
+        import src.ui.role_panel_view as rpv_module
+
+        assert len(_cooldown_cache) == 0
+        monkeypatch.setattr(rpv_module, "_last_cleanup_time", 0)
+        _cleanup_cooldown_cache()
+        assert len(_cooldown_cache) == 0
+        assert rpv_module._last_cleanup_time > 0
+
+    def test_is_cooldown_on_empty_cache_returns_false(self) -> None:
+        """空キャッシュで is_on_cooldown が False を返す."""
+        assert len(_cooldown_cache) == 0
+        result = is_on_cooldown(99999, 88888)
+        assert result is False
+
+
+class TestRolePanelCleanupAllExpired:
+    """全エントリが期限切れの場合にキャッシュが空になることを検証。"""
+
+    def test_all_expired_entries_removed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """全エントリが期限切れなら全て削除されキャッシュが空になる."""
+        import time
+
+        import src.ui.role_panel_view as rpv_module
+
+        now = time.monotonic()
+        _cooldown_cache[(1, 10)] = now - 400
+        _cooldown_cache[(2, 20)] = now - 500
+        _cooldown_cache[(3, 30)] = now - 600
+
+        monkeypatch.setattr(rpv_module, "_last_cleanup_time", 0)
+        _cleanup_cooldown_cache()
+
+        assert len(_cooldown_cache) == 0
+
+
+class TestRolePanelCleanupTriggerViaPublicAPI:
+    """公開 API 関数がクリーンアップを内部的にトリガーすることを検証。"""
+
+    def test_is_cooldown_triggers_cleanup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """is_on_cooldown がクリーンアップをトリガーする."""
+        import time
+
+        import src.ui.role_panel_view as rpv_module
+
+        old_key = (11111, 22222)
+        _cooldown_cache[old_key] = time.monotonic() - 400
+
+        monkeypatch.setattr(rpv_module, "_last_cleanup_time", 0)
+        is_on_cooldown(99999, 88888)
+
+        assert old_key not in _cooldown_cache
+
+    def test_cleanup_updates_last_cleanup_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """クリーンアップ実行後に _last_cleanup_time が更新される."""
+        import src.ui.role_panel_view as rpv_module
+
+        monkeypatch.setattr(rpv_module, "_last_cleanup_time", 0)
+        is_on_cooldown(99999, 88888)
+
+        assert rpv_module._last_cleanup_time > 0

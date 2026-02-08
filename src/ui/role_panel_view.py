@@ -45,7 +45,7 @@ def _cleanup_cooldown_cache() -> None:
     global _last_cleanup_time
     now = time.monotonic()
 
-    if now - _last_cleanup_time < _CLEANUP_INTERVAL:
+    if _last_cleanup_time > 0 and now - _last_cleanup_time < _CLEANUP_INTERVAL:
         return
 
     _last_cleanup_time = now
@@ -85,7 +85,9 @@ def is_on_cooldown(user_id: int, panel_id: int) -> bool:
 
 def clear_cooldown_cache() -> None:
     """クールダウンキャッシュをクリアする (テスト用)."""
+    global _last_cleanup_time
     _cooldown_cache.clear()
+    _last_cleanup_time = 0.0
 
 
 def create_role_panel_embed(

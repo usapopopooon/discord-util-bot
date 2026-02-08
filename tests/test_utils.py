@@ -212,6 +212,20 @@ def clear_locks_before_each_test() -> None:
     clear_resource_locks()
 
 
+class TestResourceLockStateIsolation:
+    """autouse fixture によるステート分離が機能することを検証するカナリアテスト."""
+
+    def test_locks_start_empty(self) -> None:
+        """各テスト開始時にロックが空であることを検証."""
+        assert get_resource_lock_count() == 0
+
+    def test_cleanup_time_is_reset(self) -> None:
+        """各テスト開始時にクリーンアップ時刻がリセットされていることを検証."""
+        import src.utils as utils_module
+
+        assert utils_module._lock_last_cleanup_time <= 0
+
+
 class TestGetResourceLock:
     """get_resource_lock 関数のテスト。"""
 
@@ -1027,3 +1041,119 @@ class TestResourceLockCleanupEdgeCases:
 
         # 300秒未満なので削除されない
         assert key in _resource_locks
+
+    def test_cleanup_guard_allows_zero_last_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_lock_last_cleanup_time=0 でもクリーンアップが実行される.
+
+        time.monotonic() が小さい環境 (CI等) でも
+        0 は「未実行」として扱われクリーンアップがスキップされないことを検証。
+        """
+        import src.utils as utils_module
+
+        key = "test:guard_zero"
+        get_resource_lock(key)
+
+        old_time = time.monotonic() - 400
+        lock, _ = _resource_locks[key]
+        _resource_locks[key] = (lock, old_time)
+
+        monkeypatch.setattr(utils_module, "_lock_last_cleanup_time", 0.0)
+        _cleanup_resource_locks()
+
+        # クリーンアップが実行されたことを検証
+        assert key not in _resource_locks
+        # _lock_last_cleanup_time が更新されている (0 より大きい)
+        assert utils_module._lock_last_cleanup_time > 0
+
+
+class TestResourceLockCleanupEmptyCache:
+    """空キャッシュに対するクリーンアップが安全に動作することを検証。"""
+
+    def test_cleanup_on_empty_cache_does_not_crash(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ロックが空でもクリーンアップがクラッシュしない."""
+        import src.utils as utils_module
+
+        assert len(_resource_locks) == 0
+        monkeypatch.setattr(utils_module, "_lock_last_cleanup_time", 0.0)
+        _cleanup_resource_locks()
+        assert len(_resource_locks) == 0
+        assert utils_module._lock_last_cleanup_time > 0
+
+    def test_get_resource_lock_on_empty_returns_lock(self) -> None:
+        """空状態で get_resource_lock が新しいロックを返す."""
+        assert len(_resource_locks) == 0
+        lock = get_resource_lock("test:empty")
+        assert lock is not None
+        assert isinstance(lock, asyncio.Lock)
+
+
+class TestResourceLockCleanupAllExpired:
+    """全ロックが期限切れの場合にキャッシュが空になることを検証。"""
+
+    def test_all_expired_locks_removed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """全ロックが期限切れなら全て削除されキャッシュが空になる."""
+        import src.utils as utils_module
+
+        now = time.monotonic()
+        _resource_locks["key1"] = (asyncio.Lock(), now - 400)
+        _resource_locks["key2"] = (asyncio.Lock(), now - 500)
+        _resource_locks["key3"] = (asyncio.Lock(), now - 600)
+
+        monkeypatch.setattr(utils_module, "_lock_last_cleanup_time", 0.0)
+        _cleanup_resource_locks()
+
+        assert len(_resource_locks) == 0
+
+
+class TestResourceLockCleanupTriggerViaPublicAPI:
+    """get_resource_lock がクリーンアップを内部的にトリガーすることを検証。"""
+
+    def test_get_resource_lock_triggers_cleanup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """get_resource_lock がクリーンアップをトリガーする."""
+        import src.utils as utils_module
+
+        old_key = "test:old_trigger"
+        _resource_locks[old_key] = (asyncio.Lock(), time.monotonic() - 400)
+
+        monkeypatch.setattr(utils_module, "_lock_last_cleanup_time", 0.0)
+        get_resource_lock("test:new_trigger")
+
+        assert old_key not in _resource_locks
+
+    def test_cleanup_updates_last_cleanup_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """クリーンアップ実行後に _lock_last_cleanup_time が更新される."""
+        import src.utils as utils_module
+
+        monkeypatch.setattr(utils_module, "_lock_last_cleanup_time", 0.0)
+        get_resource_lock("test:update_time")
+
+        assert utils_module._lock_last_cleanup_time > 0
+
+    def test_locked_entries_preserved_during_cleanup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ロック中のエントリはクリーンアップで削除されない."""
+        import src.utils as utils_module
+
+        locked_key = "test:locked_preserve"
+        lock = asyncio.Lock()
+        # ロックを取得 (非同期ではなく直接内部状態を設定)
+        _resource_locks[locked_key] = (lock, time.monotonic() - 400)
+
+        # 事前にロックを取得しておく (同期的にテスト)
+        # Note: asyncio.Lock() は _locked フラグで管理される
+        lock._locked = True  # type: ignore[attr-defined]
+
+        monkeypatch.setattr(utils_module, "_lock_last_cleanup_time", 0.0)
+        _cleanup_resource_locks()
+
+        # ロック中のエントリは残る
+        assert locked_key in _resource_locks

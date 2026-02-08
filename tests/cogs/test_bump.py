@@ -34,6 +34,20 @@ def clear_cooldown_cache() -> None:
     clear_resource_locks()
 
 
+class TestBumpStateIsolation:
+    """autouse fixture によるステート分離が機能することを検証するカナリアテスト."""
+
+    def test_cache_starts_empty(self) -> None:
+        """各テスト開始時にキャッシュが空であることを検証."""
+        assert len(_bump_notification_cooldown_cache) == 0
+
+    def test_cleanup_time_is_reset(self) -> None:
+        """各テスト開始時にクリーンアップ時刻がリセットされていることを検証."""
+        import src.cogs.bump as bump_module
+
+        assert bump_module._bump_last_cleanup_time <= 0
+
+
 # ---------------------------------------------------------------------------
 # テスト用ヘルパー
 # ---------------------------------------------------------------------------
@@ -1728,6 +1742,20 @@ class TestBumpCogSetup:
         assert mock_bot.add_view.call_count == 2
         mock_bot.add_cog.assert_awaited_once()
 
+    async def test_setup_does_not_raise_without_db(self) -> None:
+        """DB未接続でも setup が例外を出さずに完了する."""
+        from src.cogs.bump import setup
+
+        mock_bot = MagicMock(spec=commands.Bot)
+        mock_bot.add_view = MagicMock()
+        mock_bot.add_cog = AsyncMock()
+
+        # DB モック無しで呼び出しても例外が発生しないことを検証
+        await setup(mock_bot)
+
+        assert mock_bot.add_view.call_count == 2
+        mock_bot.add_cog.assert_awaited_once()
+
 
 # ---------------------------------------------------------------------------
 # スラッシュコマンド テスト
@@ -3352,6 +3380,29 @@ class TestBumpCooldownBoundary:
         # アクティブなエントリは残る
         assert active_key in _bump_notification_cooldown_cache
 
+    def test_cleanup_guard_allows_zero_last_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_bump_last_cleanup_time=0 でもクリーンアップが実行される.
+
+        time.monotonic() が小さい環境 (CI等) でも
+        0 は「未実行」として扱われクリーンアップがスキップされないことを検証。
+        """
+        import time
+
+        import src.cogs.bump as bump_module
+
+        key = (99999, "guard_test", "DISBOARD")
+        _bump_notification_cooldown_cache[key] = time.monotonic() - 400
+
+        monkeypatch.setattr(bump_module, "_bump_last_cleanup_time", 0)
+        _cleanup_bump_notification_cooldown_cache()
+
+        # クリーンアップが実行されたことを検証
+        assert key not in _bump_notification_cooldown_cache
+        # _bump_last_cleanup_time が更新されている (0 より大きい)
+        assert bump_module._bump_last_cleanup_time > 0
+
 
 # ---------------------------------------------------------------------------
 # Bump 検知エッジケーステスト
@@ -3601,3 +3652,109 @@ class TestBumpNotificationViewEdgeCases:
         """BumpNotificationView の timeout は None (永続 View)。"""
         view = BumpNotificationView("guild1", "DISBOARD", is_enabled=True)
         assert view.timeout is None
+
+
+class TestBumpCleanupEmptyCache:
+    """空キャッシュに対するクリーンアップが安全に動作することを検証。"""
+
+    def test_cleanup_on_empty_cache_does_not_crash(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """キャッシュが空でもクリーンアップがクラッシュしない."""
+        import src.cogs.bump as bump_module
+
+        assert len(_bump_notification_cooldown_cache) == 0
+        monkeypatch.setattr(bump_module, "_bump_last_cleanup_time", 0)
+        _cleanup_bump_notification_cooldown_cache()
+        assert len(_bump_notification_cooldown_cache) == 0
+        assert bump_module._bump_last_cleanup_time > 0
+
+    def test_is_cooldown_on_empty_cache_returns_false(self) -> None:
+        """空キャッシュで is_bump_notification_on_cooldown が False を返す."""
+        assert len(_bump_notification_cooldown_cache) == 0
+        result = is_bump_notification_on_cooldown(99999, "99999", "DISBOARD")
+        assert result is False
+
+
+class TestBumpCleanupAllExpired:
+    """全エントリが期限切れの場合にキャッシュが空になることを検証。"""
+
+    def test_all_expired_entries_removed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """全エントリが期限切れなら全て削除されキャッシュが空になる."""
+        import src.cogs.bump as bump_module
+
+        now = time.monotonic()
+        _bump_notification_cooldown_cache[(1, "1", "DISBOARD")] = now - 400
+        _bump_notification_cooldown_cache[(2, "2", "ディス速報")] = now - 500
+        _bump_notification_cooldown_cache[(3, "3", "DISBOARD")] = now - 600
+
+        monkeypatch.setattr(bump_module, "_bump_last_cleanup_time", 0)
+        _cleanup_bump_notification_cooldown_cache()
+
+        assert len(_bump_notification_cooldown_cache) == 0
+
+
+class TestBumpCleanupTriggerViaPublicAPI:
+    """公開 API 関数がクリーンアップを内部的にトリガーすることを検証。"""
+
+    def test_is_cooldown_triggers_cleanup(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """is_bump_notification_on_cooldown がクリーンアップをトリガーする."""
+        import src.cogs.bump as bump_module
+
+        old_key = (11111, "22222", "DISBOARD")
+        _bump_notification_cooldown_cache[old_key] = time.monotonic() - 400
+
+        monkeypatch.setattr(bump_module, "_bump_last_cleanup_time", 0)
+        is_bump_notification_on_cooldown(99999, "99999", "DISBOARD")
+
+        assert old_key not in _bump_notification_cooldown_cache
+
+    def test_cleanup_updates_last_cleanup_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """クリーンアップ実行後に _bump_last_cleanup_time が更新される."""
+        import src.cogs.bump as bump_module
+
+        monkeypatch.setattr(bump_module, "_bump_last_cleanup_time", 0)
+        is_bump_notification_on_cooldown(99999, "99999", "DISBOARD")
+
+        assert bump_module._bump_last_cleanup_time > 0
+
+
+class TestBumpCogSetupCacheVerification:
+    """setup() がキャッシュを正しく構築することを検証。"""
+
+    async def test_setup_builds_guild_cache(self) -> None:
+        """setup が _bump_guild_ids キャッシュを構築する."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from src.cogs.bump import setup
+
+        mock_bot = MagicMock(spec=commands.Bot)
+        mock_bot.add_view = MagicMock()
+        mock_bot.add_cog = AsyncMock()
+
+        mock_config1 = MagicMock()
+        mock_config1.guild_id = "guild1"
+        mock_config2 = MagicMock()
+        mock_config2.guild_id = "guild2"
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.bump.async_session", return_value=mock_session),
+            patch(
+                "src.services.db_service.get_all_bump_configs",
+                new_callable=AsyncMock,
+                return_value=[mock_config1, mock_config2],
+            ),
+        ):
+            await setup(mock_bot)
+
+        cog = mock_bot.add_cog.call_args[0][0]
+        assert hasattr(cog, "_bump_guild_ids")
+        assert cog._bump_guild_ids == {"guild1", "guild2"}

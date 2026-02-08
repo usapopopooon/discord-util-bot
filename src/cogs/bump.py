@@ -132,7 +132,9 @@ def is_bump_notification_on_cooldown(
 
 def clear_bump_notification_cooldown_cache() -> None:
     """Bump通知設定クールダウンキャッシュをクリアする (テスト用)."""
+    global _bump_last_cleanup_time
     _bump_notification_cooldown_cache.clear()
+    _bump_last_cleanup_time = float("-inf")
 
 
 # =============================================================================

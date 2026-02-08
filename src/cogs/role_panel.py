@@ -64,7 +64,14 @@ class RolePanelCog(commands.Cog):
 
     async def cog_load(self) -> None:
         """Cog 読み込み時に永続 View を登録し、定期同期タスクを開始する。"""
-        await self._register_all_views()
+        try:
+            await self._register_all_views()
+        except Exception:
+            logger.critical(
+                "Failed to register role panel views on startup. "
+                "Role panel buttons will NOT work until the sync task succeeds.",
+                exc_info=True,
+            )
         self._sync_views_task.start()
 
     async def cog_unload(self) -> None:

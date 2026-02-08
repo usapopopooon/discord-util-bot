@@ -55,7 +55,7 @@ def _cleanup_control_panel_cooldown_cache() -> None:
     now = time.monotonic()
 
     # 5分ごとにクリーンアップ
-    if now - _last_cleanup_time < _CLEANUP_INTERVAL:
+    if _last_cleanup_time > 0 and now - _last_cleanup_time < _CLEANUP_INTERVAL:
         return
 
     _last_cleanup_time = now
@@ -96,7 +96,9 @@ def is_control_panel_on_cooldown(user_id: int, channel_id: int) -> bool:
 
 def clear_control_panel_cooldown_cache() -> None:
     """コントロールパネルクールダウンキャッシュをクリアする (テスト用)."""
+    global _last_cleanup_time
     _control_panel_cooldown_cache.clear()
+    _last_cleanup_time = 0.0
 
 
 # パネルメッセージの Embed タイトル (検索用定数)
