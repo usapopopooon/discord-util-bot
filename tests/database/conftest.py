@@ -8,11 +8,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 from faker import Faker
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from src.constants import DEFAULT_TEST_DATABASE_URL
 from src.database.models import (
@@ -43,6 +45,20 @@ TEST_DATABASE_URL = os.environ.get(
     DEFAULT_TEST_DATABASE_URL,
 )
 
+# --- Speed optimizations ---
+# NullPool: コネクションプールなし (function スコープの event loop でも安全)
+_engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+
+# スキーマ作成フラグ: DROP/CREATE は初回のみ、以降は TRUNCATE
+_schema_created = False
+
+# 全テーブル TRUNCATE 文を事前構築
+_TRUNCATE_SQL = text(
+    "TRUNCATE TABLE "
+    + ",".join(Base.metadata.tables.keys())
+    + " RESTART IDENTITY CASCADE"
+)
+
 
 def snowflake() -> str:
     """Discord snowflake 風の ID を生成する。"""
@@ -52,16 +68,21 @@ def snowflake() -> str:
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """PostgreSQL テスト DB のセッションを提供する。"""
-    engine = create_async_engine(TEST_DATABASE_URL)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
+    global _schema_created
+    if _schema_created:
+        # 2回目以降: TRUNCATE (DROP/CREATE DDL より大幅に高速)
+        async with _engine.begin() as conn:
+            await conn.execute(_TRUNCATE_SQL)
+    else:
+        # 初回: スキーマ作成
+        async with _engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+        _schema_created = True
 
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
         yield session
-
-    await engine.dispose()
 
 
 @pytest.fixture

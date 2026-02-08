@@ -9,11 +9,13 @@ from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from src.constants import DEFAULT_TEST_DATABASE_URL
 from src.database.models import AdminUser, Base
@@ -32,6 +34,23 @@ TEST_DATABASE_URL = os.environ.get(
 TEST_ADMIN_EMAIL = "test@example.com"
 TEST_ADMIN_PASSWORD = "testpassword123"
 
+# --- Speed optimizations ---
+# bcrypt hash をモジュールレベルでキャッシュ (bcrypt は意図的に低速 ~0.2-0.3s)
+_CACHED_PASSWORD_HASH = hash_password(TEST_ADMIN_PASSWORD)
+
+# NullPool: コネクションプールなし (function スコープの event loop でも安全)
+_engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+
+# スキーマ作成フラグ: DROP/CREATE は初回のみ、以降は TRUNCATE
+_schema_created = False
+
+# 全テーブル TRUNCATE 文を事前構築
+_TRUNCATE_SQL = text(
+    "TRUNCATE TABLE "
+    + ",".join(Base.metadata.tables.keys())
+    + " RESTART IDENTITY CASCADE"
+)
+
 
 @pytest.fixture(autouse=True)
 def clear_rate_limit() -> None:
@@ -45,16 +64,21 @@ def clear_rate_limit() -> None:
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """PostgreSQL テスト DB のセッションを提供する。"""
-    engine = create_async_engine(TEST_DATABASE_URL)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
+    global _schema_created
+    if _schema_created:
+        # 2回目以降: TRUNCATE (DROP/CREATE DDL より大幅に高速)
+        async with _engine.begin() as conn:
+            await conn.execute(_TRUNCATE_SQL)
+    else:
+        # 初回: スキーマ作成
+        async with _engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+        _schema_created = True
 
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    factory = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
         yield session
-
-    await engine.dispose()
 
 
 @pytest.fixture
@@ -62,9 +86,9 @@ async def admin_user(db_session: AsyncSession) -> AdminUser:
     """テスト用の AdminUser を作成する (パスワード変更済み、メール認証済み)。"""
     admin = AdminUser(
         email=TEST_ADMIN_EMAIL,
-        password_hash=hash_password(TEST_ADMIN_PASSWORD),
-        password_changed_at=datetime.now(UTC),  # パスワード変更済みとしてマーク
-        email_verified=True,  # メール認証済み
+        password_hash=_CACHED_PASSWORD_HASH,
+        password_changed_at=datetime.now(UTC),
+        email_verified=True,
     )
     db_session.add(admin)
     await db_session.commit()
@@ -77,8 +101,8 @@ async def initial_admin_user(db_session: AsyncSession) -> AdminUser:
     """テスト用の AdminUser を作成する (初回セットアップ状態)。"""
     admin = AdminUser(
         email=TEST_ADMIN_EMAIL,
-        password_hash=hash_password(TEST_ADMIN_PASSWORD),
-        password_changed_at=None,  # 初回セットアップ
+        password_hash=_CACHED_PASSWORD_HASH,
+        password_changed_at=None,
         email_verified=False,
     )
     db_session.add(admin)
@@ -92,9 +116,9 @@ async def unverified_admin_user(db_session: AsyncSession) -> AdminUser:
     """テスト用の AdminUser を作成する (パスワード変更済み、メール未認証)。"""
     admin = AdminUser(
         email=TEST_ADMIN_EMAIL,
-        password_hash=hash_password(TEST_ADMIN_PASSWORD),
-        password_changed_at=datetime.now(UTC),  # パスワード変更済み
-        email_verified=False,  # メール未認証
+        password_hash=_CACHED_PASSWORD_HASH,
+        password_changed_at=datetime.now(UTC),
+        email_verified=False,
         pending_email="pending@example.com",
         email_change_token="test_verify_token",
         email_change_token_expires_at=datetime.now(UTC) + timedelta(hours=1),
@@ -127,9 +151,6 @@ async def authenticated_client(
     admin_user: AdminUser,
 ) -> AsyncClient:
     """認証済みのテストクライアントを提供する。"""
-    # ログインページから CSRF トークンを取得
-    from src.web.app import generate_csrf_token
-
     csrf_token = generate_csrf_token()
 
     response = await client.post(
@@ -141,7 +162,6 @@ async def authenticated_client(
         },
         follow_redirects=False,
     )
-    # セッション cookie を取得
     session_cookie = response.cookies.get("session")
     if session_cookie:
         client.cookies.set("session", session_cookie)
@@ -156,11 +176,6 @@ def mock_email_sending() -> Generator[None, None, None]:
             "src.web.app.send_email_change_verification",
             return_value=True,
         ),
-        # SMTP 未設定のためコメントアウト
-        # patch(
-        #     "src.web.app.send_password_reset_email",
-        #     return_value=True,
-        # ),
     ):
         yield
 
@@ -179,12 +194,10 @@ def disable_csrf_validation(
 
     TestCSRFProtection クラスのテストでは CSRF 検証を有効にする。
     """
-    # TestCSRFProtection クラスのテストでは CSRF 検証を有効にする
     if request.node.parent and "TestCSRFProtection" in request.node.parent.name:
         yield
         return
 
-    # その他のテストでは CSRF 検証を無効化
     with patch(
         "src.web.app.validate_csrf_token",
         return_value=True,
