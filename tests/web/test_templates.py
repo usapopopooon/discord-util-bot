@@ -31,10 +31,14 @@ from src.web.templates import (
     ban_logs_page,
     bump_list_page,
     dashboard_page,
+    email_change_page,
+    forgot_password_page,
     joinrole_page,
     lobbies_list_page,
     login_page,
     maintenance_page,
+    password_change_page,
+    reset_password_page,
     role_panel_create_page,
     role_panel_detail_page,
     role_panels_list_page,
@@ -3115,3 +3119,344 @@ class TestJoinRolePage:
         assert "Beta" in result
         assert "RoleA" in result
         assert "RoleB" in result
+
+
+# ===========================================================================
+# パンくず / ナビゲーション 追加カバレッジ
+# ===========================================================================
+
+
+class TestBreadcrumbNoneUrl:
+    """パンくず中間要素に url=None の場合のテスト (line 91)。"""
+
+    def test_intermediate_none_url_shows_span(self) -> None:
+        result = _breadcrumb([("Category", None), ("Sub", "/sub"), ("Page", None)])
+        assert '<span class="text-gray-300">Category</span>' in result
+
+
+class TestNavNoBreadcrumbs:
+    """_nav で breadcrumbs=None, show_dashboard_link=True のテスト (line 112)。"""
+
+    def test_no_breadcrumbs_shows_dashboard_link(self) -> None:
+        result = _nav("Title", show_dashboard_link=True, breadcrumbs=None)
+        assert "&larr; Dashboard" in result
+
+    def test_no_breadcrumbs_no_dashboard_link(self) -> None:
+        result = _nav("Title", show_dashboard_link=False, breadcrumbs=None)
+        assert "&larr; Dashboard" not in result
+
+
+# ===========================================================================
+# Success メッセージ テンプレート (lines 215, 280, 679, 687, 762)
+# ===========================================================================
+
+
+class TestForgotPasswordPageSuccess:
+    """forgot_password_page の success メッセージテスト。"""
+
+    def test_success_message_displayed(self) -> None:
+        result = forgot_password_page(success="Email sent!")
+        assert "Email sent!" in result
+        assert "bg-green-500" in result
+
+
+class TestResetPasswordPageSuccess:
+    """reset_password_page の success メッセージテスト。"""
+
+    def test_success_message_displayed(self) -> None:
+        result = reset_password_page(token="tok123", success="Password reset!")
+        assert "Password reset!" in result
+        assert "bg-green-500" in result
+
+
+class TestEmailChangePageSuccess:
+    """email_change_page の success/pending_email テスト。"""
+
+    def test_success_message_displayed(self) -> None:
+        result = email_change_page(current_email="a@b.com", success="Email changed!")
+        assert "Email changed!" in result
+        assert "bg-green-500" in result
+
+    def test_pending_email_displayed(self) -> None:
+        result = email_change_page(current_email="a@b.com", pending_email="new@b.com")
+        assert "new@b.com" in result
+        assert "bg-yellow-500" in result
+
+
+# ===========================================================================
+# Autoban list ルールタイプ別表示 (lines 2975, 2977)
+# ===========================================================================
+
+
+class TestAutobanListPageRuleTypes:
+    """autoban_list_page のルールタイプ別詳細表示テスト。"""
+
+    def test_account_age_rule_shows_hours(self) -> None:
+        rule = AutoBanRule(
+            id=1,
+            guild_id="123",
+            rule_type="account_age",
+            action="ban",
+            threshold_hours=48,
+            is_enabled=True,
+        )
+        result = autoban_list_page([rule])
+        assert "48h" in result
+
+    def test_vc_join_rule_shows_seconds(self) -> None:
+        rule = AutoBanRule(
+            id=1,
+            guild_id="123",
+            rule_type="vc_join",
+            action="kick",
+            threshold_seconds=120,
+            is_enabled=True,
+        )
+        result = autoban_list_page([rule])
+        assert "120s after join" in result
+
+    def test_message_post_rule_shows_seconds(self) -> None:
+        rule = AutoBanRule(
+            id=1,
+            guild_id="123",
+            rule_type="message_post",
+            action="ban",
+            threshold_seconds=30,
+            is_enabled=True,
+        )
+        result = autoban_list_page([rule])
+        assert "30s after join" in result
+
+    def test_role_acquired_rule(self) -> None:
+        rule = AutoBanRule(
+            id=1,
+            guild_id="123",
+            rule_type="role_acquired",
+            action="ban",
+            threshold_seconds=60,
+            is_enabled=True,
+        )
+        result = autoban_list_page([rule])
+        assert "60s after join" in result
+
+
+# ===========================================================================
+# Ticket detail transcript テスト (lines 3767-3852, 3922)
+# ===========================================================================
+
+
+class TestTicketDetailTranscript:
+    """ticket_detail_page のトランスクリプト表示テスト。"""
+
+    def _make_ticket(
+        self,
+        *,
+        transcript: str | None = None,
+        form_answers: str | None = None,
+    ) -> Ticket:
+        from datetime import UTC, datetime
+
+        return Ticket(
+            id=1,
+            guild_id="123",
+            channel_id=None,
+            ticket_number=1,
+            user_id="456",
+            username="testuser",
+            category_id=1,
+            status="closed",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            closed_at=datetime(2026, 1, 2, tzinfo=UTC),
+            closed_by="admin",
+            transcript=transcript,
+            form_answers=form_answers,
+        )
+
+    def test_transcript_with_attachments(self) -> None:
+        ticket = self._make_ticket(
+            transcript="[2026-01-01 12:00:00] User: Hello [Attachment: https://cdn.example.com/file.png]"
+        )
+        result = ticket_detail_page(ticket)
+        assert "cdn.example.com/file.png" in result
+
+    def test_transcript_with_sticker(self) -> None:
+        ticket = self._make_ticket(
+            transcript="[2026-01-01 12:00:00] User: Look at this [Sticker: wave]"
+        )
+        result = ticket_detail_page(ticket)
+        assert "wave" in result
+
+    def test_transcript_meta_lines(self) -> None:
+        ticket = self._make_ticket(
+            transcript="Created by: TestUser\nCreated at: 2026-01-01"
+        )
+        result = ticket_detail_page(ticket)
+        assert "Created by: TestUser" in result
+
+    def test_transcript_continuation_messages(self) -> None:
+        transcript = (
+            "[2026-01-01 12:00:00] User: First message\n"
+            "[2026-01-01 12:00:05] User: Second message"
+        )
+        ticket = self._make_ticket(transcript=transcript)
+        result = ticket_detail_page(ticket)
+        assert "First message" in result
+        assert "Second message" in result
+
+    def test_transcript_empty_lines_skipped(self) -> None:
+        transcript = (
+            "[2026-01-01 12:00:00] User: Hello\n\n\n[2026-01-01 12:01:00] Admin: Hi"
+        )
+        ticket = self._make_ticket(transcript=transcript)
+        result = ticket_detail_page(ticket)
+        assert "Hello" in result
+        assert "Hi" in result
+
+    def test_form_answers_displayed(self) -> None:
+        import json
+
+        answers = [
+            {"question": "What is your issue?", "answer": "Need help"},
+            {"question": "Priority?", "answer": "High"},
+        ]
+        ticket = self._make_ticket(form_answers=json.dumps(answers))
+        result = ticket_detail_page(ticket)
+        assert "What is your issue?" in result
+        assert "Need help" in result
+        assert "Form Answers" in result
+
+    def test_form_answers_non_list_json(self) -> None:
+        """form_answers が有効な JSON だがリストではない場合 (branch 3922->3941)。"""
+        import json
+
+        ticket = self._make_ticket(form_answers=json.dumps({"key": "value"}))
+        result = ticket_detail_page(ticket)
+        # non-list JSON は form_answers_html として表示されない
+        assert "Form Answers" not in result
+
+    def test_transcript_attachment_only_no_main_text(self) -> None:
+        """メッセージ本文がなく添付ファイルのみの場合 (branch 3772->3775)。"""
+        ticket = self._make_ticket(
+            transcript="[2026-01-01 12:00:00] User: [Attachment: https://cdn.example.com/img.png]"
+        )
+        result = ticket_detail_page(ticket)
+        # 添付ファイルリンクは表示される
+        assert "cdn.example.com/img.png" in result
+        # main text が空なので escape(main) は出力されない
+
+
+# ===========================================================================
+# ticket_panel_create_page None マップテスト (lines 4128-4132)
+# ===========================================================================
+
+
+class TestTicketPanelCreatePageNoneMaps:
+    """ticket_panel_create_page の None マップテスト。"""
+
+    def test_none_maps_render_without_error(self) -> None:
+        result = ticket_panel_create_page(
+            guilds_map=None,
+            channels_map=None,
+            roles_map=None,
+            discord_categories_map=None,
+        )
+        assert "Create Ticket Panel" in result
+
+
+class TestPasswordChangePageSuccess:
+    """password_change_page の success メッセージ表示テスト。"""
+
+    def test_success_message(self) -> None:
+        result = password_change_page(success="Password updated")
+        assert "Password updated" in result
+        assert "bg-green-500" in result
+
+
+class TestTicketListPageNoneGuildsMap:
+    """ticket_list_page で guilds_map=None のテスト。"""
+
+    def test_none_guilds_map(self) -> None:
+        result = ticket_list_page([], csrf_token="token", guilds_map=None)
+        assert "Tickets" in result
+
+
+class TestTicketPanelsListPageNoneMap:
+    """ticket_panels_list_page で guilds_map=None のテスト。"""
+
+    def test_none_guilds_map(self) -> None:
+        result = ticket_panels_list_page([], csrf_token="token", guilds_map=None)
+        assert "Ticket Panels" in result
+
+
+class TestChannelLookupBranches:
+    """get_channel_name 内部関数の for ループ反復ブランチカバレッジ。"""
+
+    def test_lobby_channel_not_first_in_map(self) -> None:
+        """ロビーのチャンネルが channels_map の最初でない場合。"""
+        lobby = Lobby(
+            id=1,
+            guild_id="100",
+            lobby_channel_id="202",
+            default_user_limit=10,
+        )
+        channels_map = {"100": [("201", "first-ch"), ("202", "target-ch")]}
+        result = lobbies_list_page([lobby], channels_map=channels_map)
+        assert "#target-ch" in result
+
+    def test_sticky_channel_not_first_in_map(self) -> None:
+        """スティッキーのチャンネルが channels_map の最初でない場合。"""
+        sticky = StickyMessage(
+            guild_id="100",
+            channel_id="302",
+            message_type="embed",
+            title="Test",
+            description="Desc",
+        )
+        channels_map = {"100": [("301", "first"), ("302", "sticky-ch")]}
+        result = sticky_list_page([sticky], csrf_token="tok", channels_map=channels_map)
+        assert "#sticky-ch" in result
+
+    def test_role_panel_channel_not_first_in_map(self) -> None:
+        """ロールパネルのチャンネルが channels_map の最初でない場合。"""
+        panel = RolePanel(
+            id=1,
+            guild_id="100",
+            channel_id="502",
+            panel_type="button",
+            title="Panel",
+        )
+        channels_map = {"100": [("501", "other"), ("502", "panel-ch")]}
+        result = role_panels_list_page(
+            [panel], items_by_panel={}, csrf_token="tok", channels_map=channels_map
+        )
+        assert "#panel-ch" in result
+
+    def test_bump_reminder_channel_not_first_in_map(self) -> None:
+        """Bump リマインダーのチャンネルが channels_map の最初でない場合。"""
+        reminder = BumpReminder(
+            id=1,
+            guild_id="100",
+            channel_id="402",
+            service_name="DISBOARD",
+        )
+        channels_map = {"100": [("401", "other-ch"), ("402", "bump-ch")]}
+        result = bump_list_page(
+            [], [reminder], csrf_token="tok", channels_map=channels_map
+        )
+        assert "#bump-ch" in result
+
+    def test_ticket_panel_channel_not_first_in_map(self) -> None:
+        """チケットパネルのチャンネルが channels_map の最初でない場合。"""
+        panel = TicketPanel(
+            id=1,
+            guild_id="100",
+            channel_id="702",
+            title="Ticket Panel",
+        )
+        channels_map = {"100": [("701", "other"), ("702", "ticket-ch")]}
+        result = ticket_panels_list_page(
+            [panel],
+            csrf_token="tok",
+            channels_map=channels_map,
+        )
+        assert "#ticket-ch" in result

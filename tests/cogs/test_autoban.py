@@ -247,6 +247,68 @@ class TestCheckRule:
         matched, _ = cog._check_rule(rule, member)
         assert not matched
 
+    def test_dispatches_role_acquired(self) -> None:
+        """role_acquired タイプは _check_join_timing にディスパッチ。"""
+        cog = _make_cog()
+        member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=5))
+        rule = _make_rule(
+            rule_type="role_acquired",
+            pattern=None,
+            threshold_seconds=10,
+        )
+        matched, reason = cog._check_rule(rule, member)
+        assert matched
+        assert "threshold" in reason.lower()
+
+    def test_dispatches_vc_join(self) -> None:
+        """vc_join タイプは _check_join_timing にディスパッチ。"""
+        cog = _make_cog()
+        member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=3))
+        rule = _make_rule(rule_type="vc_join", pattern=None, threshold_seconds=60)
+        matched, _ = cog._check_rule(rule, member)
+        assert matched
+
+    def test_dispatches_message_post(self) -> None:
+        """message_post タイプは _check_join_timing にディスパッチ。"""
+        cog = _make_cog()
+        member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=1))
+        rule = _make_rule(rule_type="message_post", pattern=None, threshold_seconds=30)
+        matched, _ = cog._check_rule(rule, member)
+        assert matched
+
+
+class TestCheckJoinTiming:
+    """_check_join_timing のテスト。"""
+
+    def test_within_threshold_matches(self) -> None:
+        cog = _make_cog()
+        member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=5))
+        rule = _make_rule(rule_type="role_acquired", pattern=None, threshold_seconds=60)
+        matched, reason = cog._check_join_timing(rule, member)
+        assert matched
+        assert "threshold" in reason.lower()
+
+    def test_outside_threshold_no_match(self) -> None:
+        cog = _make_cog()
+        member = _make_member(joined_at=datetime.now(UTC) - timedelta(hours=1))
+        rule = _make_rule(rule_type="vc_join", pattern=None, threshold_seconds=60)
+        matched, _ = cog._check_join_timing(rule, member)
+        assert not matched
+
+    def test_no_threshold_returns_false(self) -> None:
+        cog = _make_cog()
+        member = _make_member(joined_at=datetime.now(UTC))
+        rule = _make_rule(rule_type="vc_join", pattern=None, threshold_seconds=None)
+        matched, _ = cog._check_join_timing(rule, member)
+        assert not matched
+
+    def test_no_joined_at_returns_false(self) -> None:
+        cog = _make_cog()
+        member = _make_member(joined_at=None)
+        rule = _make_rule(rule_type="vc_join", pattern=None, threshold_seconds=60)
+        matched, _ = cog._check_join_timing(rule, member)
+        assert not matched
+
 
 # ---------------------------------------------------------------------------
 # TestOnMemberJoin: on_member_join の統合テスト
@@ -1395,3 +1457,465 @@ class TestOnMemberBan:
             call_kwargs = mock_create.call_args
             assert call_kwargs.kwargs["reason"] is None
             assert call_kwargs.kwargs["is_autoban"] is False
+
+
+# ---------------------------------------------------------------------------
+# TestOnMemberUpdate: on_member_update (role_acquired) のテスト
+# ---------------------------------------------------------------------------
+
+
+class TestOnMemberUpdate:
+    """on_member_update イベントのテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_ignores_bots(self) -> None:
+        cog = _make_cog()
+        before = _make_member(is_bot=True)
+        after = _make_member(is_bot=True)
+        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+            await cog.on_member_update(before, after)
+            mock_get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_role_change_skips(self) -> None:
+        cog = _make_cog()
+        role = MagicMock(spec=discord.Role)
+        before = _make_member()
+        before.roles = [role]
+        after = _make_member()
+        after.roles = [role]
+        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+            await cog.on_member_update(before, after)
+            mock_get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_role_removed_skips(self) -> None:
+        """ロール削除は検知しない (追加のみ)。"""
+        cog = _make_cog()
+        role = MagicMock(spec=discord.Role)
+        before = _make_member()
+        before.roles = [role]
+        after = _make_member()
+        after.roles = []
+        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+            await cog.on_member_update(before, after)
+            mock_get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_rules_no_action(self) -> None:
+        cog = _make_cog()
+        role = MagicMock(spec=discord.Role)
+        before = _make_member()
+        before.roles = []
+        after = _make_member()
+        after.roles = [role]
+        with patch(
+            "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            await cog.on_member_update(before, after)
+            after.guild.ban.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_matching_role_acquired_bans(self) -> None:
+        cog = _make_cog()
+        role = MagicMock(spec=discord.Role)
+        before = _make_member()
+        before.roles = []
+        after = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=5))
+        after.roles = [role]
+        rule = _make_rule(
+            rule_type="role_acquired",
+            pattern=None,
+            threshold_seconds=60,
+        )
+        with (
+            patch(
+                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                new_callable=AsyncMock,
+                return_value=[rule],
+            ),
+            patch.object(cog, "_execute_action", new_callable=AsyncMock) as mock,
+        ):
+            await cog.on_member_update(before, after)
+            mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_non_role_acquired_rule_skipped(self) -> None:
+        """role_acquired 以外のルールはスキップ。"""
+        cog = _make_cog()
+        role = MagicMock(spec=discord.Role)
+        before = _make_member()
+        before.roles = []
+        after = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=5))
+        after.roles = [role]
+        rule = _make_rule(rule_type="username_match", pattern="test")
+        with (
+            patch(
+                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                new_callable=AsyncMock,
+                return_value=[rule],
+            ),
+            patch.object(cog, "_execute_action", new_callable=AsyncMock) as mock,
+        ):
+            await cog.on_member_update(before, after)
+            mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestOnVoiceStateUpdate: on_voice_state_update (vc_join) のテスト
+# ---------------------------------------------------------------------------
+
+
+class TestOnVoiceStateUpdate:
+    """on_voice_state_update イベントのテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_ignores_bots(self) -> None:
+        cog = _make_cog()
+        member = _make_member(is_bot=True)
+        before = MagicMock(spec=discord.VoiceState)
+        before.channel = None
+        after = MagicMock(spec=discord.VoiceState)
+        after.channel = MagicMock()
+        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+            await cog.on_voice_state_update(member, before, after)
+            mock_get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_channel_move_skips(self) -> None:
+        """チャンネル移動は無視 (新規参加のみ)。"""
+        cog = _make_cog()
+        member = _make_member()
+        before = MagicMock(spec=discord.VoiceState)
+        before.channel = MagicMock()
+        after = MagicMock(spec=discord.VoiceState)
+        after.channel = MagicMock()
+        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+            await cog.on_voice_state_update(member, before, after)
+            mock_get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_vc_leave_skips(self) -> None:
+        """VC退出は無視。"""
+        cog = _make_cog()
+        member = _make_member()
+        before = MagicMock(spec=discord.VoiceState)
+        before.channel = MagicMock()
+        after = MagicMock(spec=discord.VoiceState)
+        after.channel = None
+        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+            await cog.on_voice_state_update(member, before, after)
+            mock_get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_rules_no_action(self) -> None:
+        cog = _make_cog()
+        member = _make_member()
+        before = MagicMock(spec=discord.VoiceState)
+        before.channel = None
+        after = MagicMock(spec=discord.VoiceState)
+        after.channel = MagicMock()
+        with patch(
+            "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            await cog.on_voice_state_update(member, before, after)
+            member.guild.ban.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_matching_vc_join_bans(self) -> None:
+        cog = _make_cog()
+        member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=3))
+        before = MagicMock(spec=discord.VoiceState)
+        before.channel = None
+        after = MagicMock(spec=discord.VoiceState)
+        after.channel = MagicMock()
+        rule = _make_rule(rule_type="vc_join", pattern=None, threshold_seconds=60)
+        with (
+            patch(
+                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                new_callable=AsyncMock,
+                return_value=[rule],
+            ),
+            patch.object(cog, "_execute_action", new_callable=AsyncMock) as mock,
+        ):
+            await cog.on_voice_state_update(member, before, after)
+            mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_non_vc_join_rule_skipped(self) -> None:
+        cog = _make_cog()
+        member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=3))
+        before = MagicMock(spec=discord.VoiceState)
+        before.channel = None
+        after = MagicMock(spec=discord.VoiceState)
+        after.channel = MagicMock()
+        rule = _make_rule(rule_type="no_avatar", pattern=None)
+        with (
+            patch(
+                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                new_callable=AsyncMock,
+                return_value=[rule],
+            ),
+            patch.object(cog, "_execute_action", new_callable=AsyncMock) as mock,
+        ):
+            await cog.on_voice_state_update(member, before, after)
+            mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestOnMessage: on_message (message_post) のテスト
+# ---------------------------------------------------------------------------
+
+
+class TestOnMessage:
+    """on_message イベントのテスト。"""
+
+    def _make_message(
+        self,
+        *,
+        is_bot: bool = False,
+        is_member: bool = True,
+        has_guild: bool = True,
+        joined_at: datetime | None = None,
+    ) -> MagicMock:
+        msg = MagicMock(spec=discord.Message)
+        if has_guild:
+            msg.guild = MagicMock()
+            msg.guild.id = 789
+        else:
+            msg.guild = None
+
+        if is_member:
+            member = _make_member(is_bot=is_bot, joined_at=joined_at)
+            msg.author = member
+            msg.author.__class__ = discord.Member
+            # isinstance check needs special handling
+        else:
+            msg.author = MagicMock(spec=discord.User)
+            msg.author.bot = is_bot
+        return msg
+
+    @pytest.mark.asyncio
+    async def test_no_guild_skips(self) -> None:
+        cog = _make_cog()
+        msg = self._make_message(has_guild=False)
+        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+            await cog.on_message(msg)
+            mock_get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bot_message_skips(self) -> None:
+        cog = _make_cog()
+        msg = self._make_message(is_bot=True)
+        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+            await cog.on_message(msg)
+            mock_get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_non_member_author_skips(self) -> None:
+        """author が Member でない場合はスキップ。"""
+        cog = _make_cog()
+        msg = MagicMock(spec=discord.Message)
+        msg.guild = MagicMock()
+        msg.guild.id = 789
+        msg.author = MagicMock(spec=discord.User)  # Not a Member
+        msg.author.bot = False
+        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+            await cog.on_message(msg)
+            mock_get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_rules_no_action(self) -> None:
+        cog = _make_cog()
+        member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=5))
+        msg = MagicMock(spec=discord.Message)
+        msg.guild = MagicMock()
+        msg.guild.id = 789
+        msg.author = member
+        with patch(
+            "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            await cog.on_message(msg)
+
+    @pytest.mark.asyncio
+    async def test_matching_message_post_bans(self) -> None:
+        cog = _make_cog()
+        member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=2))
+        msg = MagicMock(spec=discord.Message)
+        msg.guild = MagicMock()
+        msg.guild.id = 789
+        msg.author = member
+        rule = _make_rule(rule_type="message_post", pattern=None, threshold_seconds=60)
+        with (
+            patch(
+                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                new_callable=AsyncMock,
+                return_value=[rule],
+            ),
+            patch.object(cog, "_execute_action", new_callable=AsyncMock) as mock,
+        ):
+            await cog.on_message(msg)
+            mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_non_message_post_rule_skipped(self) -> None:
+        cog = _make_cog()
+        member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=2))
+        msg = MagicMock(spec=discord.Message)
+        msg.guild = MagicMock()
+        msg.guild.id = 789
+        msg.author = member
+        rule = _make_rule(rule_type="account_age", pattern=None, threshold_hours=24)
+        with (
+            patch(
+                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                new_callable=AsyncMock,
+                return_value=[rule],
+            ),
+            patch.object(cog, "_execute_action", new_callable=AsyncMock) as mock,
+        ):
+            await cog.on_message(msg)
+            mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestAutobanAddTimingRules: slash command for timing-based rules
+# ---------------------------------------------------------------------------
+
+
+class TestAutobanAddTimingRules:
+    """autoban_add タイミングベースルール テスト。"""
+
+    @pytest.mark.asyncio
+    async def test_role_acquired_without_threshold(self) -> None:
+        cog = _make_cog()
+        interaction = _make_interaction()
+        await cog.autoban_add.callback(
+            cog, interaction, rule_type="role_acquired", threshold_seconds=None
+        )
+        call_args = interaction.response.send_message.call_args
+        assert "threshold_seconds" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_vc_join_threshold_zero(self) -> None:
+        cog = _make_cog()
+        interaction = _make_interaction()
+        await cog.autoban_add.callback(
+            cog, interaction, rule_type="vc_join", threshold_seconds=0
+        )
+        call_args = interaction.response.send_message.call_args
+        assert "threshold_seconds" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_message_post_exceeds_max(self) -> None:
+        cog = _make_cog()
+        interaction = _make_interaction()
+        await cog.autoban_add.callback(
+            cog, interaction, rule_type="message_post", threshold_seconds=5000
+        )
+        call_args = interaction.response.send_message.call_args
+        assert "3600" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_successful_add_with_threshold_seconds(self) -> None:
+        cog = _make_cog()
+        interaction = _make_interaction()
+        mock_rule = _make_rule(rule_id=10, rule_type="vc_join", threshold_seconds=30)
+        with patch(
+            "src.cogs.autoban.create_autoban_rule",
+            new_callable=AsyncMock,
+            return_value=mock_rule,
+        ):
+            await cog.autoban_add.callback(
+                cog,
+                interaction,
+                rule_type="vc_join",
+                threshold_seconds=30,
+            )
+            call_args = interaction.response.send_message.call_args
+            assert "#10" in call_args.args[0]
+            assert "30s" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_successful_add_with_wildcard(self) -> None:
+        cog = _make_cog()
+        interaction = _make_interaction()
+        mock_rule = _make_rule(rule_id=11, use_wildcard=True)
+        with patch(
+            "src.cogs.autoban.create_autoban_rule",
+            new_callable=AsyncMock,
+            return_value=mock_rule,
+        ):
+            await cog.autoban_add.callback(
+                cog,
+                interaction,
+                rule_type="username_match",
+                pattern="spam",
+                use_wildcard=True,
+            )
+            call_args = interaction.response.send_message.call_args
+            assert "Wildcard: Yes" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_successful_add_with_threshold_hours(self) -> None:
+        cog = _make_cog()
+        interaction = _make_interaction()
+        mock_rule = _make_rule(rule_id=12, rule_type="account_age", threshold_hours=48)
+        with patch(
+            "src.cogs.autoban.create_autoban_rule",
+            new_callable=AsyncMock,
+            return_value=mock_rule,
+        ):
+            await cog.autoban_add.callback(
+                cog,
+                interaction,
+                rule_type="account_age",
+                threshold_hours=48,
+            )
+            call_args = interaction.response.send_message.call_args
+            assert "48h" in call_args.args[0]
+
+
+# ---------------------------------------------------------------------------
+# TestAutobanListTimingRules: list command for timing-based rules
+# ---------------------------------------------------------------------------
+
+
+class TestAutobanListTimingRules:
+    """autoban_list のタイミングベースルール表示テスト。"""
+
+    @pytest.mark.asyncio
+    async def test_shows_account_age_threshold(self) -> None:
+        cog = _make_cog()
+        interaction = _make_interaction()
+        rule = _make_rule(rule_type="account_age", threshold_hours=24, pattern=None)
+        with patch(
+            "src.cogs.autoban.get_autoban_rules_by_guild",
+            new_callable=AsyncMock,
+            return_value=[rule],
+        ):
+            await cog.autoban_list.callback(cog, interaction)
+            call_kwargs = interaction.response.send_message.call_args
+            embed = call_kwargs.kwargs["embed"]
+            assert "24h" in embed.fields[0].value
+
+    @pytest.mark.asyncio
+    async def test_shows_timing_rule_threshold(self) -> None:
+        cog = _make_cog()
+        interaction = _make_interaction()
+        rule = _make_rule(rule_type="vc_join", threshold_seconds=120, pattern=None)
+        with patch(
+            "src.cogs.autoban.get_autoban_rules_by_guild",
+            new_callable=AsyncMock,
+            return_value=[rule],
+        ):
+            await cog.autoban_list.callback(cog, interaction)
+            call_kwargs = interaction.response.send_message.call_args
+            embed = call_kwargs.kwargs["embed"]
+            assert "120s" in embed.fields[0].value

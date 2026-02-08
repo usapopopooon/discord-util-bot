@@ -138,15 +138,15 @@ class TestSettingsValidation:
 class TestTimezoneOffset:
     """timezone_offset フィールドのテスト。"""
 
-    def test_default_is_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """デフォルトは 0。"""
+    def test_default_is_jst(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """デフォルトは 9 (JST)。"""
         monkeypatch.delenv("TIMEZONE_OFFSET", raising=False)
         s = Settings(
             discord_token="test",
             database_url="postgresql+asyncpg://x@y/z",
             _env_file=None,  # type: ignore[call-arg]
         )
-        assert s.timezone_offset == 0
+        assert s.timezone_offset == 9
 
     def test_custom_positive_offset(self) -> None:
         """正のオフセット (JST) を設定できる。"""

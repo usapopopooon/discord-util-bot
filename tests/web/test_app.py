@@ -12879,3 +12879,707 @@ class TestJoinRoleRoutes:
         )
         assert response.status_code == 302
         assert "/joinrole" in response.headers["location"]
+
+
+# ===========================================================================
+# 追加 CSRF / バリデーション テスト (カバレッジ向上)
+# ===========================================================================
+
+
+class TestAdditionalCsrfFailures:
+    """追加の CSRF 検証失敗テスト (app.py 未カバー行用)。"""
+
+    @pytest.mark.asyncio
+    async def test_forgot_password_csrf_failure(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """forgot-password の CSRF 失敗は 403。"""
+        from unittest.mock import patch
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                "/forgot-password",
+                data={"email": "test@example.com", "csrf_token": "bad"},
+            )
+        assert response.status_code == 403
+        assert "Invalid security token" in response.text
+
+    @pytest.mark.asyncio
+    async def test_reset_password_csrf_failure(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """reset-password の CSRF 失敗は 403。"""
+        from unittest.mock import patch
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                "/reset-password",
+                data={
+                    "token": "tok",
+                    "new_password": "pass",
+                    "confirm_password": "pass",
+                    "csrf_token": "bad",
+                },
+            )
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_initial_setup_csrf_failure(
+        self,
+        client: AsyncClient,
+        initial_admin_user: AdminUser,
+    ) -> None:
+        """initial-setup の CSRF 失敗は 403。"""
+        from unittest.mock import patch
+
+        from src.web.app import generate_csrf_token
+
+        # 初回セットアップ状態でログイン
+        csrf = generate_csrf_token()
+        resp = await client.post(
+            "/login",
+            data={
+                "email": TEST_ADMIN_EMAIL,
+                "password": TEST_ADMIN_PASSWORD,
+                "csrf_token": csrf,
+            },
+            follow_redirects=False,
+        )
+        client.cookies.set("session", resp.cookies.get("session") or "")
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                "/initial-setup",
+                data={
+                    "new_email": "new@test.com",
+                    "new_password": "newpassword123",
+                    "confirm_password": "newpassword123",
+                    "csrf_token": "bad",
+                },
+            )
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_email_change_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+    ) -> None:
+        """email-change の CSRF 失敗は 403。"""
+        from unittest.mock import patch
+
+        from src.web.app import generate_csrf_token
+
+        csrf = generate_csrf_token()
+        resp = await client.post(
+            "/login",
+            data={
+                "email": TEST_ADMIN_EMAIL,
+                "password": TEST_ADMIN_PASSWORD,
+                "csrf_token": csrf,
+            },
+            follow_redirects=False,
+        )
+        client.cookies.set("session", resp.cookies.get("session") or "")
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                "/settings/email",
+                data={"new_email": "new@test.com", "csrf_token": "bad"},
+            )
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_settings_email_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+    ) -> None:
+        """settings/email POST の CSRF 失敗は 403。"""
+        from unittest.mock import patch
+
+        from src.web.app import generate_csrf_token
+
+        csrf = generate_csrf_token()
+        resp = await client.post(
+            "/login",
+            data={
+                "email": TEST_ADMIN_EMAIL,
+                "password": TEST_ADMIN_PASSWORD,
+                "csrf_token": csrf,
+            },
+            follow_redirects=False,
+        )
+        client.cookies.set("session", resp.cookies.get("session") or "")
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                "/settings/email",
+                data={"new_email": "new@test.com", "csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 403
+
+
+class TestAdditionalAutobanValidation:
+    """autoban 追加バリデーション (threshold_seconds)。"""
+
+    @pytest.mark.asyncio
+    async def test_vc_join_invalid_threshold(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """vc_join の threshold_seconds が無効な場合リダイレクト。"""
+        response = await authenticated_client.post(
+            "/autoban/new",
+            data={
+                "guild_id": "123456",
+                "rule_type": "vc_join",
+                "action": "ban",
+                "threshold_seconds": "abc",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+    @pytest.mark.asyncio
+    async def test_role_acquired_threshold_too_high(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """role_acquired の threshold_seconds が上限超え。"""
+        response = await authenticated_client.post(
+            "/autoban/new",
+            data={
+                "guild_id": "123456",
+                "rule_type": "role_acquired",
+                "action": "ban",
+                "threshold_seconds": "5000",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+    @pytest.mark.asyncio
+    async def test_message_post_threshold_zero(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """message_post の threshold_seconds=0 はリダイレクト。"""
+        response = await authenticated_client.post(
+            "/autoban/new",
+            data={
+                "guild_id": "123456",
+                "rule_type": "message_post",
+                "action": "kick",
+                "threshold_seconds": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+
+class TestJoinRoleEmptyGuildRole:
+    """Join role の guild_id/role_id 空バリデーション。"""
+
+    @pytest.mark.asyncio
+    async def test_empty_guild_id(self, authenticated_client: AsyncClient) -> None:
+        response = await authenticated_client.post(
+            "/joinrole/new",
+            data={"guild_id": "", "role_id": "123", "duration_hours": "24"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/joinrole" in response.headers["location"]
+
+    @pytest.mark.asyncio
+    async def test_empty_role_id(self, authenticated_client: AsyncClient) -> None:
+        response = await authenticated_client.post(
+            "/joinrole/new",
+            data={"guild_id": "123", "role_id": "", "duration_hours": "24"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/joinrole" in response.headers["location"]
+
+
+class TestAppCoverageGaps:
+    """app.py の未カバー行を埋めるテスト群。"""
+
+    # --- Line 1346: dashboard redirects unverified admin to verify-email ---
+
+    @pytest.mark.asyncio
+    async def test_dashboard_unverified_admin_redirects(
+        self,
+        client: AsyncClient,
+        unverified_admin_user: AdminUser,
+    ) -> None:
+        """未認証の admin は dashboard から verify-email にリダイレクト。"""
+        from src.web.app import generate_csrf_token
+
+        csrf = generate_csrf_token()
+        resp = await client.post(
+            "/login",
+            data={
+                "email": TEST_ADMIN_EMAIL,
+                "password": TEST_ADMIN_PASSWORD,
+                "csrf_token": csrf,
+            },
+            follow_redirects=False,
+        )
+        client.cookies.set("session", resp.cookies.get("session") or "")
+        response = await client.get("/dashboard", follow_redirects=False)
+        assert response.status_code == 302
+        assert "/verify-email" in response.headers["location"]
+
+    # --- Line 818: resend-verification CSRF failure ---
+
+    @pytest.mark.asyncio
+    async def test_resend_verification_csrf_failure(
+        self,
+        client: AsyncClient,
+        unverified_admin_user: AdminUser,
+    ) -> None:
+        """resend-verification の CSRF 失敗は 403。"""
+        from unittest.mock import patch
+
+        from src.web.app import generate_csrf_token
+
+        csrf = generate_csrf_token()
+        resp = await client.post(
+            "/login",
+            data={
+                "email": TEST_ADMIN_EMAIL,
+                "password": TEST_ADMIN_PASSWORD,
+                "csrf_token": csrf,
+            },
+            follow_redirects=False,
+        )
+        client.cookies.set("session", resp.cookies.get("session") or "")
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                "/resend-verification",
+                data={"csrf_token": "bad"},
+            )
+        assert response.status_code == 403
+
+    # --- Line 1406: refresh maintenance CSRF failure ---
+
+    @pytest.mark.asyncio
+    async def test_refresh_maintenance_csrf_failure(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """maintenance refresh の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await authenticated_client.post(
+                "/settings/maintenance/refresh",
+                data={"csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "/settings/maintenance" in response.headers["location"]
+
+    # --- Line 1439: cleanup orphaned CSRF failure ---
+
+    @pytest.mark.asyncio
+    async def test_cleanup_orphaned_csrf_failure(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """cleanup orphaned の CSRF 失敗は 400。"""
+        from unittest.mock import patch
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await authenticated_client.post(
+                "/settings/maintenance/cleanup",
+                data={"csrf_token": "bad"},
+            )
+        assert response.status_code == 400
+
+    # --- Line 1928: delete role panel CSRF failure ---
+
+    @pytest.mark.asyncio
+    async def test_delete_role_panel_csrf_failure(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """ロールパネル削除の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await authenticated_client.post(
+                "/rolepanels/1/delete",
+                data={"csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "/rolepanels" in response.headers["location"]
+
+    # --- Line 2515: role panel detail requires auth ---
+
+    @pytest.mark.asyncio
+    async def test_role_panel_detail_requires_auth(self, client: AsyncClient) -> None:
+        """ロールパネル詳細は認証必須。"""
+        response = await client.get("/rolepanels/1", follow_redirects=False)
+        assert response.status_code == 302
+        assert "/login" in response.headers["location"]
+
+    # --- Line 2524: role panel detail not found ---
+
+    @pytest.mark.asyncio
+    async def test_role_panel_detail_not_found(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """存在しないロールパネルはリダイレクト。"""
+        response = await authenticated_client.get(
+            "/rolepanels/99999", follow_redirects=False
+        )
+        assert response.status_code == 302
+        assert "/rolepanels" in response.headers["location"]
+
+    # --- Line 2571: edit role panel CSRF failure ---
+
+    @pytest.mark.asyncio
+    async def test_edit_role_panel_csrf_failure(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """ロールパネル編集の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await authenticated_client.post(
+                "/rolepanels/1/edit",
+                data={"title": "t", "csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "rolepanels/1" in response.headers["location"]
+
+    # --- Lines 3224->3228: autoban delete with nonexistent rule ---
+
+    @pytest.mark.asyncio
+    async def test_autoban_delete_nonexistent_rule(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """存在しないルールの削除は正常にリダイレクト。"""
+        response = await authenticated_client.post(
+            "/autoban/99999/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/autoban"
+
+    # --- Lines 3257->3261: autoban toggle with nonexistent rule ---
+
+    @pytest.mark.asyncio
+    async def test_autoban_toggle_nonexistent_rule(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """存在しないルールのトグルは正常にリダイレクト。"""
+        response = await authenticated_client.post(
+            "/autoban/99999/toggle",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/autoban"
+
+    # --- Line 3037: autoban create requires auth ---
+
+    @pytest.mark.asyncio
+    async def test_autoban_create_requires_auth(self, client: AsyncClient) -> None:
+        """autoban ルール作成は認証必須。"""
+        response = await client.post(
+            "/autoban/new",
+            data={"guild_id": "1", "rule_type": "no_avatar"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/login" in response.headers["location"]
+
+    # --- Line 3485: ticket panel create POST requires auth ---
+
+    @pytest.mark.asyncio
+    async def test_ticket_panel_create_post_requires_auth(
+        self, client: AsyncClient
+    ) -> None:
+        """チケットパネル作成 POST は認証必須。"""
+        response = await client.post(
+            "/tickets/panels/new",
+            data={"guild_id": "1", "title": "t"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/login" in response.headers["location"]
+
+    # --- Line 3661: ticket panel title too long ---
+
+    @pytest.mark.asyncio
+    async def test_ticket_panel_edit_title_too_long(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """チケットパネルのタイトルが100文字超はリダイレクト。"""
+        panel = TicketPanel(guild_id="123456", channel_id="789", title="Test")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/tickets/panels/{panel.id}/edit",
+            data={"title": "x" * 101, "description": "ok"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "100+characters" in response.headers["location"]
+
+    # --- Line 3668: ticket panel description too long ---
+
+    @pytest.mark.asyncio
+    async def test_ticket_panel_edit_description_too_long(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """チケットパネルの説明が2000文字超はリダイレクト。"""
+        panel = TicketPanel(guild_id="123456", channel_id="789", title="Test")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        response = await authenticated_client.post(
+            f"/tickets/panels/{panel.id}/edit",
+            data={"title": "Valid Title", "description": "x" * 2001},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "2000+characters" in response.headers["location"]
+
+    # --- Lines 3714, 3734, 3742: ticket panel button edit ---
+
+    @pytest.mark.asyncio
+    async def test_ticket_panel_button_edit_cooldown(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ボタン編集のクールダウン中はリダイレクト。"""
+        panel = TicketPanel(guild_id="123456", channel_id="789", title="Test")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        record_form_submit(
+            "test@example.com",
+            f"/tickets/panels/{panel.id}/buttons/1/edit",
+        )
+        response = await authenticated_client.post(
+            f"/tickets/panels/{panel.id}/buttons/1/edit",
+            data={
+                "button_label": "Click",
+                "button_style": "primary",
+                "button_emoji": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "Please+wait" in response.headers["location"]
+
+    @pytest.mark.asyncio
+    async def test_ticket_panel_button_edit_label_truncation(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ボタンラベルが80文字超は切り詰められる。"""
+        cat = TicketCategory(
+            guild_id="123456",
+            name="TestCat",
+            staff_role_id="111",
+        )
+        db_session.add(cat)
+        await db_session.flush()
+
+        panel = TicketPanel(guild_id="123456", channel_id="789", title="Test")
+        db_session.add(panel)
+        await db_session.flush()
+
+        assoc = TicketPanelCategory(
+            panel_id=panel.id,
+            category_id=cat.id,
+            position=0,
+        )
+        db_session.add(assoc)
+        await db_session.commit()
+        await db_session.refresh(assoc)
+
+        response = await authenticated_client.post(
+            f"/tickets/panels/{panel.id}/buttons/{assoc.id}/edit",
+            data={
+                "button_label": "L" * 100,
+                "button_style": "primary",
+                "button_emoji": "E" * 100,
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(assoc)
+        assert len(assoc.button_label) <= 80
+        assert len(assoc.button_emoji) <= 64
+
+    # --- Lines 3767, 3775: ticket panel post-to-discord ---
+
+    @pytest.mark.asyncio
+    async def test_ticket_panel_post_to_discord_csrf_failure(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """post-to-discord の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        panel = TicketPanel(guild_id="123456", channel_id="789", title="Test")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await authenticated_client.post(
+                f"/tickets/panels/{panel.id}/post",
+                data={"csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "Invalid+security+token" in response.headers["location"]
+
+    @pytest.mark.asyncio
+    async def test_ticket_panel_post_to_discord_cooldown(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """post-to-discord のクールダウン中はリダイレクト。"""
+        panel = TicketPanel(guild_id="123456", channel_id="789", title="Test")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        record_form_submit("test@example.com", f"/tickets/panels/{panel.id}/post")
+        response = await authenticated_client.post(
+            f"/tickets/panels/{panel.id}/post",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "Please+wait" in response.headers["location"]
+
+    # --- Lines 3822-3825: post-to-discord success with message_id ---
+
+    @pytest.mark.asyncio
+    async def test_ticket_panel_post_to_discord_success(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """post-to-discord 成功で message_id が保存される。"""
+        from unittest.mock import AsyncMock, patch
+
+        panel = TicketPanel(guild_id="123456", channel_id="789", title="Test")
+        db_session.add(panel)
+        await db_session.commit()
+        await db_session.refresh(panel)
+
+        with patch(
+            "src.web.app.post_ticket_panel_to_discord",
+            new_callable=AsyncMock,
+            return_value=(True, "msg_id_123", None),
+        ):
+            response = await authenticated_client.post(
+                f"/tickets/panels/{panel.id}/post",
+                data={},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "Posted+to+Discord" in response.headers["location"]
+
+        await db_session.refresh(panel)
+        assert panel.message_id == "msg_id_123"
+
+    # --- Lines 2447-2448: role panel create with bad position ---
+
+    @pytest.mark.asyncio
+    async def test_role_panel_create_bad_position(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """ロールパネル作成時の position が不正な場合はデフォルト値。"""
+        guild = DiscordGuild(guild_id="123456", guild_name="Test")
+        db_session.add(guild)
+        channel = DiscordChannel(channel_id="789", guild_id="123456", channel_name="ch")
+        db_session.add(channel)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            "/rolepanels/new",
+            data={
+                "guild_id": "123456",
+                "channel_id": "789",
+                "title": "Test Panel",
+                "panel_type": "button",
+                "use_embed": "1",
+                "item_emoji[]": "😀",
+                "item_role_id[]": "999",
+                "item_label[]": "Role1",
+                "item_style[]": "primary",
+                "item_position[]": "abc",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/rolepanels/" in response.headers["location"]
+
+        # Check the item was created with position=0 (fallback)
+        result = await db_session.execute(select(RolePanelItem))
+        item = result.scalar_one_or_none()
+        assert item is not None
+        assert item.position == 0
+
+    # --- Lines 367-370: login rate limit cleanup via HTTP ---
+
+    @pytest.mark.asyncio
+    async def test_login_rate_limit_cleanup_expired(
+        self, client: AsyncClient, admin_user: AdminUser
+    ) -> None:
+        """期限切れのレート制限エントリがログインリクエスト時に削除される。"""
+        import time
+
+        from src.web import app as web_app_module
+
+        test_ip = "127.0.0.1"
+        web_app_module.LOGIN_ATTEMPTS.clear()
+        old_time = time.time() - web_app_module.LOGIN_WINDOW_SECONDS - 10
+        web_app_module.LOGIN_ATTEMPTS[test_ip] = [old_time]
+
+        await client.post(
+            "/login",
+            data={
+                "email": "test@example.com",
+                "password": "wrong",
+                "csrf_token": "token",
+            },
+        )
+        # 古いエントリはクリーンアップされ、新しい失敗のみ残る
+        remaining = web_app_module.LOGIN_ATTEMPTS.get(test_ip, [])
+        assert all(
+            time.time() - t < web_app_module.LOGIN_WINDOW_SECONDS for t in remaining
+        )
+
+    @pytest.mark.asyncio
+    async def test_login_rate_limit_cleanup_partial(
+        self, client: AsyncClient, admin_user: AdminUser
+    ) -> None:
+        """一部だけ期限切れのエントリがログインリクエスト時に更新される。"""
+        import time
+
+        from src.web import app as web_app_module
+
+        test_ip = "127.0.0.1"
+        web_app_module.LOGIN_ATTEMPTS.clear()
+        old_time = time.time() - web_app_module.LOGIN_WINDOW_SECONDS - 10
+        recent_time = time.time()
+        web_app_module.LOGIN_ATTEMPTS[test_ip] = [old_time, recent_time]
+
+        await client.post(
+            "/login",
+            data={
+                "email": "test@example.com",
+                "password": "wrong",
+                "csrf_token": "token",
+            },
+        )
+        # 古いエントリが削除され、新しいものが残る
+        assert test_ip in web_app_module.LOGIN_ATTEMPTS

@@ -22,6 +22,8 @@ from src.database.models import (
     DiscordChannel,
     DiscordGuild,
     DiscordRole,
+    JoinRoleAssignment,
+    JoinRoleConfig,
     Lobby,
     RolePanel,
     RolePanelItem,
@@ -2648,3 +2650,131 @@ class TestDiscordEntityEdgeCases:
         text = repr(guild)
         assert guild_id in text
         assert "My Server" in text
+
+
+# ===========================================================================
+# __repr__ 追加カバレッジ
+# ===========================================================================
+
+
+class TestModelReprCoverage:
+    """未カバーの __repr__ メソッドをテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_autoban_rule_repr(self, db_session: AsyncSession) -> None:
+        rule = AutoBanRule(
+            guild_id=snowflake(),
+            rule_type="no_avatar",
+            action="ban",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        text = repr(rule)
+        assert "AutoBanRule" in text
+        assert rule.guild_id in text
+
+    @pytest.mark.asyncio
+    async def test_autoban_log_repr(self, db_session: AsyncSession) -> None:
+        rule = AutoBanRule(
+            guild_id=snowflake(),
+            rule_type="no_avatar",
+            action="ban",
+        )
+        db_session.add(rule)
+        await db_session.flush()
+
+        log = AutoBanLog(
+            guild_id=rule.guild_id,
+            user_id=snowflake(),
+            username="testuser",
+            rule_id=rule.id,
+            action_taken="banned",
+            reason="No avatar",
+        )
+        db_session.add(log)
+        await db_session.commit()
+        text = repr(log)
+        assert "AutoBanLog" in text
+        assert log.guild_id in text
+
+    @pytest.mark.asyncio
+    async def test_ticket_category_repr(self, db_session: AsyncSession) -> None:
+        cat = TicketCategory(
+            guild_id=snowflake(),
+            name="Support",
+            staff_role_id=snowflake(),
+        )
+        db_session.add(cat)
+        await db_session.commit()
+        text = repr(cat)
+        assert "TicketCategory" in text
+        assert "Support" in text
+
+    @pytest.mark.asyncio
+    async def test_ticket_panel_repr(self, db_session: AsyncSession) -> None:
+        panel = TicketPanel(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            title="Help Panel",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+        text = repr(panel)
+        assert "TicketPanel" in text
+        assert "Help Panel" in text
+
+    @pytest.mark.asyncio
+    async def test_ticket_panel_category_repr(self, db_session: AsyncSession) -> None:
+        cat = TicketCategory(
+            guild_id=snowflake(),
+            name="Bug",
+            staff_role_id=snowflake(),
+        )
+        db_session.add(cat)
+        await db_session.flush()
+
+        panel = TicketPanel(
+            guild_id=cat.guild_id,
+            channel_id=snowflake(),
+            title="Bug Panel",
+        )
+        db_session.add(panel)
+        await db_session.flush()
+
+        assoc = TicketPanelCategory(
+            panel_id=panel.id,
+            category_id=cat.id,
+            position=0,
+        )
+        db_session.add(assoc)
+        await db_session.commit()
+        text = repr(assoc)
+        assert "TicketPanelCategory" in text
+
+    @pytest.mark.asyncio
+    async def test_join_role_config_repr(self, db_session: AsyncSession) -> None:
+        config = JoinRoleConfig(
+            guild_id=snowflake(),
+            role_id=snowflake(),
+            duration_hours=24,
+        )
+        db_session.add(config)
+        await db_session.commit()
+        text = repr(config)
+        assert "JoinRoleConfig" in text
+        assert config.guild_id in text
+
+    @pytest.mark.asyncio
+    async def test_join_role_assignment_repr(self, db_session: AsyncSession) -> None:
+        assignment = JoinRoleAssignment(
+            guild_id=snowflake(),
+            user_id=snowflake(),
+            role_id=snowflake(),
+            assigned_at=datetime.now(UTC),
+            expires_at=datetime.now(UTC) + timedelta(hours=24),
+        )
+        db_session.add(assignment)
+        await db_session.commit()
+        text = repr(assignment)
+        assert "JoinRoleAssignment" in text
+        assert assignment.user_id in text

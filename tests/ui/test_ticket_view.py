@@ -174,8 +174,13 @@ class TestGenerateTranscript:
         assert "Created by: testuser (123)" in result
         assert "Closed by: staff_user" in result
 
-    async def test_transcript_with_messages(self) -> None:
+    async def test_transcript_with_messages(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """メッセージ付きトランスクリプト。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", 0)
         ticket = _make_ticket(ticket_number=1, username="user1", user_id="1")
         channel = MagicMock(spec=discord.TextChannel)
 

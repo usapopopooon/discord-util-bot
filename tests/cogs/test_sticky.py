@@ -2882,3 +2882,52 @@ class TestStickySetupCacheVerification:
         cog = bot.add_cog.call_args[0][0]
         assert hasattr(cog, "_sticky_channels")
         assert len(cog._sticky_channels) == 0
+
+
+# ---------------------------------------------------------------------------
+# _sticky_channels キャッシュ統合テスト
+# ---------------------------------------------------------------------------
+
+
+class TestStickyChannelsCache:
+    """_sticky_channels キャッシュが初期化されている場合のテスト。"""
+
+    @patch("src.cogs.sticky.async_session")
+    @patch("src.cogs.sticky.delete_sticky_message")
+    async def test_channel_delete_discards_from_cache(
+        self,
+        mock_delete: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """チャンネル削除時にキャッシュから channel_id を削除する (line 343)。"""
+        cog = _make_cog()
+        cog._sticky_channels = {"456", "789"}
+
+        mock_delete.return_value = True
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.id = 456
+        channel.guild = MagicMock()
+        channel.guild.id = 789
+
+        await cog.on_guild_channel_delete(channel)
+
+        assert "456" not in cog._sticky_channels
+        assert "789" in cog._sticky_channels
+
+    async def test_on_message_cache_miss_returns_early(self) -> None:
+        """キャッシュ未登録チャンネルは DB アクセスなしで無視する。"""
+        cog = _make_cog()
+        cog._sticky_channels = {"999"}  # channel 456 は含まない
+
+        message = _make_message(channel_id=456)
+
+        with patch("src.cogs.sticky.async_session") as mock_session:
+            await cog.on_message(message)
+
+        # DB にアクセスしていないことを確認
+        mock_session.assert_not_called()
