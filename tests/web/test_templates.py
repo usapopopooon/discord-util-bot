@@ -22,6 +22,7 @@ from src.web.templates import (
     _breadcrumb,
     _nav,
     autoban_create_page,
+    autoban_edit_page,
     autoban_list_page,
     autoban_logs_page,
     autoban_settings_page,
@@ -2046,6 +2047,98 @@ class TestAutobanListPageSettingsLink:
         result = autoban_list_page([])
         assert "/autoban/settings" in result
         assert "Settings" in result
+
+
+class TestAutobanEditPage:
+    """autoban_edit_page テンプレートのテスト。"""
+
+    def _make_rule(self, **kwargs: object) -> object:
+        """テスト用 AutoBanRule を作成する。"""
+        from unittest.mock import MagicMock
+
+        defaults = {
+            "id": 1,
+            "guild_id": "123456789012345678",
+            "rule_type": "no_avatar",
+            "action": "ban",
+            "pattern": None,
+            "use_wildcard": False,
+            "threshold_hours": None,
+            "threshold_seconds": None,
+            "is_enabled": True,
+        }
+        defaults.update(kwargs)
+        rule = MagicMock()
+        for k, v in defaults.items():
+            setattr(rule, k, v)
+        return rule
+
+    def test_no_avatar_page(self) -> None:
+        """no_avatar ルールの編集ページ表示。"""
+        rule = self._make_rule(rule_type="no_avatar", action="ban")
+        result = autoban_edit_page(rule)
+        assert "Edit" in result
+        assert "No Avatar" in result
+        assert "Save" in result
+
+    def test_username_match_page(self) -> None:
+        """username_match ルールの編集ページにパターン入力がある。"""
+        rule = self._make_rule(
+            rule_type="username_match",
+            action="kick",
+            pattern="spam.*",
+            use_wildcard=True,
+        )
+        result = autoban_edit_page(rule)
+        assert "spam.*" in result
+        assert "pattern" in result.lower() or "Pattern" in result
+        assert "checked" in result
+
+    def test_account_age_page(self) -> None:
+        """account_age ルールの編集ページに threshold_hours 入力がある。"""
+        rule = self._make_rule(rule_type="account_age", threshold_hours=48)
+        result = autoban_edit_page(rule)
+        assert "48" in result
+        assert "threshold_hours" in result or "hours" in result.lower()
+
+    def test_threshold_seconds_page(self) -> None:
+        """role_acquired ルールの編集ページに threshold_seconds 入力がある。"""
+        rule = self._make_rule(rule_type="role_acquired", threshold_seconds=300)
+        result = autoban_edit_page(rule)
+        assert "300" in result
+        assert "threshold_seconds" in result or "seconds" in result.lower()
+
+    def test_action_selected(self) -> None:
+        """現在の action が選択済みになっている。"""
+        rule = self._make_rule(action="kick")
+        result = autoban_edit_page(rule)
+        assert "kick" in result
+        assert "selected" in result
+
+    def test_guild_name_displayed(self) -> None:
+        """guilds_map にある場合はギルド名が表示される。"""
+        rule = self._make_rule()
+        guilds = {"123456789012345678": "Test Server"}
+        result = autoban_edit_page(rule, guilds_map=guilds)
+        assert "Test Server" in result
+
+    def test_edit_link_in_list(self) -> None:
+        """autoban_list_page に Edit リンクが含まれる。"""
+        from unittest.mock import MagicMock
+
+        rule = MagicMock()
+        rule.id = 42
+        rule.guild_id = "123"
+        rule.rule_type = "no_avatar"
+        rule.action = "ban"
+        rule.pattern = None
+        rule.use_wildcard = False
+        rule.threshold_hours = None
+        rule.threshold_seconds = None
+        rule.is_enabled = True
+        result = autoban_list_page([rule])
+        assert "/autoban/42/edit" in result
+        assert "Edit" in result
 
 
 class TestDashboardTicketsCard:

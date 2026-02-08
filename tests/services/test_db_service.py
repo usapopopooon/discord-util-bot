@@ -76,6 +76,7 @@ from src.services.db_service import (
     remove_voice_session_member,
     toggle_autoban_rule,
     toggle_bump_reminder,
+    update_autoban_rule,
     update_bump_reminder_role,
     update_role_panel,
     update_sticky_message_id,
@@ -4591,6 +4592,141 @@ class TestAutobanConfigDbService:
         """Test getting all autoban configs when none exist."""
         configs = await get_all_autoban_configs(db_session)
         assert configs == []
+
+
+class TestUpdateAutobanRule:
+    """Tests for update_autoban_rule database operation."""
+
+    async def test_update_action(self, db_session: AsyncSession) -> None:
+        """action を更新できる。"""
+        rule = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="no_avatar", action="ban"
+        )
+        updated = await update_autoban_rule(db_session, rule, action="kick")
+        assert updated.action == "kick"
+
+    async def test_update_pattern(self, db_session: AsyncSession) -> None:
+        """pattern と use_wildcard を更新できる。"""
+        rule = await create_autoban_rule(
+            db_session,
+            guild_id="123",
+            rule_type="username_match",
+            action="ban",
+            pattern="spam",
+        )
+        updated = await update_autoban_rule(
+            db_session, rule, pattern="new_pattern", use_wildcard=True
+        )
+        assert updated.pattern == "new_pattern"
+        assert updated.use_wildcard is True
+
+    async def test_update_threshold_hours(self, db_session: AsyncSession) -> None:
+        """threshold_hours を更新できる。"""
+        rule = await create_autoban_rule(
+            db_session,
+            guild_id="123",
+            rule_type="account_age",
+            action="ban",
+            threshold_hours=24,
+        )
+        updated = await update_autoban_rule(db_session, rule, threshold_hours=48)
+        assert updated.threshold_hours == 48
+
+    async def test_update_threshold_seconds(self, db_session: AsyncSession) -> None:
+        """threshold_seconds を更新できる。"""
+        rule = await create_autoban_rule(
+            db_session,
+            guild_id="123",
+            rule_type="role_acquired",
+            action="ban",
+            threshold_seconds=60,
+        )
+        updated = await update_autoban_rule(db_session, rule, threshold_seconds=300)
+        assert updated.threshold_seconds == 300
+
+    async def test_none_fields_not_changed(self, db_session: AsyncSession) -> None:
+        """None のフィールドは変更しない。"""
+        rule = await create_autoban_rule(
+            db_session,
+            guild_id="123",
+            rule_type="username_match",
+            action="ban",
+            pattern="original",
+        )
+        updated = await update_autoban_rule(db_session, rule, action="kick")
+        assert updated.action == "kick"
+        assert updated.pattern == "original"
+
+    async def test_update_multiple_fields(self, db_session: AsyncSession) -> None:
+        """複数フィールドを同時に更新できる。"""
+        rule = await create_autoban_rule(
+            db_session,
+            guild_id="123",
+            rule_type="username_match",
+            action="ban",
+            pattern="old",
+        )
+        updated = await update_autoban_rule(
+            db_session,
+            rule,
+            action="kick",
+            pattern="new",
+            use_wildcard=True,
+        )
+        assert updated.action == "kick"
+        assert updated.pattern == "new"
+        assert updated.use_wildcard is True
+
+    async def test_update_no_fields_noop(self, db_session: AsyncSession) -> None:
+        """全てのフィールドが None の場合は何も変更しない。"""
+        rule = await create_autoban_rule(
+            db_session,
+            guild_id="123",
+            rule_type="no_avatar",
+            action="ban",
+        )
+        updated = await update_autoban_rule(db_session, rule)
+        assert updated.action == "ban"
+        assert updated.id == rule.id
+
+    async def test_update_returns_same_object(self, db_session: AsyncSession) -> None:
+        """更新後のオブジェクトは同一インスタンスを返す。"""
+        rule = await create_autoban_rule(
+            db_session,
+            guild_id="123",
+            rule_type="no_avatar",
+            action="ban",
+        )
+        updated = await update_autoban_rule(db_session, rule, action="kick")
+        assert updated is rule
+
+    async def test_update_persists_after_refresh(
+        self, db_session: AsyncSession
+    ) -> None:
+        """更新後に refresh しても値が保持されている。"""
+        rule = await create_autoban_rule(
+            db_session,
+            guild_id="123",
+            rule_type="account_age",
+            action="ban",
+            threshold_hours=24,
+        )
+        await update_autoban_rule(db_session, rule, threshold_hours=100)
+        await db_session.refresh(rule)
+        assert rule.threshold_hours == 100
+
+    async def test_update_use_wildcard_to_false(self, db_session: AsyncSession) -> None:
+        """use_wildcard を True から False に更新できる。"""
+        rule = await create_autoban_rule(
+            db_session,
+            guild_id="123",
+            rule_type="username_match",
+            action="ban",
+            pattern="test",
+            use_wildcard=True,
+        )
+        updated = await update_autoban_rule(db_session, rule, use_wildcard=False)
+        assert updated.use_wildcard is False
 
 
 class TestTicketNumberEdgeCases:

@@ -3012,16 +3012,18 @@ def autoban_list_page(
 
         row_parts.append(f"""
         <tr class="border-b border-gray-700">
-            <td class="py-3 px-4">{guild_display}</td>
-            <td class="py-3 px-4">{escape(rule.rule_type)}</td>
-            <td class="py-3 px-4">{escape(rule.action)}</td>
-            <td class="py-3 px-4 text-gray-400 text-sm">{details}</td>
-            <td class="py-3 px-4">
+            <td class="py-3 px-4 align-middle">{guild_display}</td>
+            <td class="py-3 px-4 align-middle">{escape(rule.rule_type)}</td>
+            <td class="py-3 px-4 align-middle">{escape(rule.action)}</td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">{details}</td>
+            <td class="py-3 px-4 align-middle">
                 <span class="{status_class}">{status}</span>
             </td>
-            <td class="py-3 px-4 text-gray-400 text-sm">{created}</td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created}</td>
             <td class="py-3 px-4 align-middle">
                 <div class="flex gap-2 items-center">
+                    <a href="/autoban/{rule.id}/edit"
+                       class="text-blue-400 hover:text-blue-300 text-sm">Edit</a>
                     <form method="POST" action="/autoban/{rule.id}/toggle">
                         {_csrf_field(csrf_token)}
                         <button type="submit"
@@ -3241,6 +3243,132 @@ def autoban_create_page(
     </script>
     """
     return _base("Create Autoban Rule", content)
+
+
+def autoban_edit_page(
+    rule: "AutoBanRule",
+    guilds_map: dict[str, str] | None = None,
+    csrf_token: str = "",
+) -> str:
+    """Autoban rule edit page template."""
+    if guilds_map is None:
+        guilds_map = {}
+
+    guild_name = guilds_map.get(rule.guild_id, rule.guild_id)
+    guild_display = f"{escape(guild_name)} ({escape(rule.guild_id)})"
+
+    ban_selected = " selected" if rule.action == "ban" else ""
+    kick_selected = " selected" if rule.action == "kick" else ""
+
+    # Rule-type-specific fields
+    type_fields = ""
+    if rule.rule_type == "username_match":
+        checked = " checked" if rule.use_wildcard else ""
+        type_fields = f"""
+                <div>
+                    <label class="block text-sm font-medium mb-1">Pattern</label>
+                    <input type="text" name="pattern"
+                           value="{escape(rule.pattern or "")}"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                </div>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" name="use_wildcard" value="on"{checked}
+                           class="rounded bg-gray-700 border-gray-600">
+                    <span class="text-sm">Use Wildcard (match pattern anywhere in username)</span>
+                </label>
+        """
+    elif rule.rule_type == "account_age":
+        val = rule.threshold_hours or ""
+        type_fields = f"""
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Threshold (hours, max 336 = 14 days)
+                    </label>
+                    <input type="number" name="threshold_hours"
+                           min="1" max="336" value="{val}"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                </div>
+        """
+    elif rule.rule_type in ("role_acquired", "vc_join", "message_post"):
+        val = rule.threshold_seconds or ""
+        type_fields = f"""
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Threshold (seconds after join, max 3600 = 1 hour)
+                    </label>
+                    <input type="number" name="threshold_seconds"
+                           min="1" max="3600" value="{val}"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                </div>
+        """
+
+    # Human-readable rule type label
+    type_labels = {
+        "username_match": "Username Match",
+        "account_age": "Account Age",
+        "no_avatar": "No Avatar",
+        "role_acquired": "Role Acquired (after join)",
+        "vc_join": "VC Join (after join)",
+        "message_post": "Message Post (after join)",
+    }
+    rule_type_label = type_labels.get(rule.rule_type, rule.rule_type)
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            f"Edit Autoban Rule #{rule.id}",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Autoban Rules", "/autoban"),
+                (f"Edit #{rule.id}", None),
+            ],
+        )
+    }
+        <div class="max-w-2xl">
+            <form method="POST" action="/autoban/{rule.id}/edit" class="space-y-6">
+                {_csrf_field(csrf_token)}
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Server</label>
+                    <div class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-400">
+                        {guild_display}
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Rule Type</label>
+                    <div class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-400">
+                        {escape(rule_type_label)}
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Action</label>
+                    <select name="action"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="ban"{ban_selected}>Ban</option>
+                        <option value="kick"{kick_selected}>Kick</option>
+                    </select>
+                </div>
+
+                {type_fields}
+
+                <div class="flex gap-3">
+                    <button type="submit"
+                            class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded transition-colors">
+                        Save Changes
+                    </button>
+                    <a href="/autoban"
+                       class="bg-gray-600 hover:bg-gray-700 px-6 py-2 rounded transition-colors">
+                        Cancel
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+    """
+    return _base(f"Edit Autoban Rule #{rule.id}", content)
 
 
 def autoban_logs_page(

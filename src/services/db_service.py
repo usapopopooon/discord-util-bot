@@ -1900,6 +1900,31 @@ async def toggle_autoban_rule(session: AsyncSession, rule_id: int) -> bool | Non
     return None
 
 
+async def update_autoban_rule(
+    session: AsyncSession,
+    rule: AutoBanRule,
+    *,
+    action: str | None = None,
+    pattern: str | None = None,
+    use_wildcard: bool | None = None,
+    threshold_hours: int | None = None,
+    threshold_seconds: int | None = None,
+) -> AutoBanRule:
+    """autoban ルールを更新する。None のフィールドは変更しない。"""
+    if action is not None:
+        rule.action = action
+    if pattern is not None:
+        rule.pattern = pattern
+    if use_wildcard is not None:
+        rule.use_wildcard = use_wildcard
+    if threshold_hours is not None:
+        rule.threshold_hours = threshold_hours
+    if threshold_seconds is not None:
+        rule.threshold_seconds = threshold_seconds
+    await session.commit()
+    return rule
+
+
 async def create_autoban_log(
     session: AsyncSession,
     guild_id: str,

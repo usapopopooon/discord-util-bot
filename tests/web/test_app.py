@@ -9725,6 +9725,35 @@ class TestCsrfValidationFailures:
         assert response.status_code == 302
         assert "/autoban/settings" in response.headers["location"]
 
+    async def test_autoban_edit_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+        db_session: AsyncSession,
+    ) -> None:
+        """autoban_edit の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        await self._login_client(client, admin_user)
+
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="no_avatar",
+            action="ban",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                f"/autoban/{rule.id}/edit",
+                data={"action": "kick", "csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert f"/autoban/{rule.id}/edit" in response.headers["location"]
+
 
 # ===========================================================================
 # クールダウンテスト (各エンドポイント)
@@ -10061,6 +10090,32 @@ class TestCooldownEnforcement:
         )
         assert response.status_code == 302
         assert "/autoban/settings" in response.headers["location"]
+
+    async def test_autoban_edit_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """autoban_edit のクールダウン。"""
+        from src.web.app import record_form_submit
+
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="no_avatar",
+            action="ban",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        record_form_submit("test@example.com", f"/autoban/{rule.id}/edit")
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={"action": "kick"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert f"/autoban/{rule.id}/edit" in response.headers["location"]
 
 
 # ===========================================================================
@@ -10713,7 +10768,7 @@ class TestAutobanRoutes:
         authenticated_client: AsyncClient,
         db_session: AsyncSession,
     ) -> None:
-        """guild_id が空の場合はリダイレクト (ハンドラ側でバリデーション)。"""
+        """guild_id が空の場合は 422 (FastAPI バリデーション)。"""
         response = await authenticated_client.post(
             "/autoban/settings",
             data={
@@ -10722,10 +10777,495 @@ class TestAutobanRoutes:
             },
             follow_redirects=False,
         )
-        assert response.status_code == 302
+        assert response.status_code == 422
 
         result = await db_session.execute(select(AutoBanConfig))
         assert list(result.scalars().all()) == []
+
+    # --- Edit ---
+
+    async def test_autoban_edit_get_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.get("/autoban/1/edit", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_autoban_edit_get_page(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """編集ページが表示される。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="username_match",
+            action="ban",
+            pattern="spammer",
+            use_wildcard=True,
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.get(f"/autoban/{rule.id}/edit")
+        assert response.status_code == 200
+        assert "Edit Autoban Rule" in response.text
+        assert "spammer" in response.text
+
+    async def test_autoban_edit_get_not_found(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """存在しないルールは /autoban にリダイレクト。"""
+        response = await authenticated_client.get(
+            "/autoban/99999/edit", follow_redirects=False
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/autoban"
+
+    async def test_autoban_edit_post_username_match(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """username_match ルールを更新できる。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="username_match",
+            action="ban",
+            pattern="old",
+            use_wildcard=False,
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={
+                "action": "kick",
+                "pattern": "new_pattern",
+                "use_wildcard": "on",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/autoban"
+
+        await db_session.refresh(rule)
+        assert rule.action == "kick"
+        assert rule.pattern == "new_pattern"
+        assert rule.use_wildcard is True
+
+    async def test_autoban_edit_post_account_age(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """account_age ルールを更新できる。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="account_age",
+            action="ban",
+            threshold_hours=24,
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={"action": "kick", "threshold_hours": "48"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(rule)
+        assert rule.action == "kick"
+        assert rule.threshold_hours == 48
+
+    async def test_autoban_edit_post_threshold_seconds(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """role_acquired ルールを更新できる。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="role_acquired",
+            action="ban",
+            threshold_seconds=30,
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={"action": "kick", "threshold_seconds": "60"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(rule)
+        assert rule.action == "kick"
+        assert rule.threshold_seconds == 60
+
+    async def test_autoban_edit_post_not_found(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """存在しないルールは /autoban にリダイレクト。"""
+        response = await authenticated_client.post(
+            "/autoban/99999/edit",
+            data={"action": "ban"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/autoban"
+
+    async def test_autoban_edit_post_invalid_action(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """不正な action はリダイレクト。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="no_avatar",
+            action="ban",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={"action": "invalid"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/edit" in response.headers["location"]
+
+    @pytest.mark.parametrize("pattern", ["", "   "])
+    async def test_autoban_edit_post_invalid_pattern(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+        pattern: str,
+    ) -> None:
+        """username_match で空/空白パターンはリダイレクト。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="username_match",
+            action="ban",
+            pattern="old",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={"action": "ban", "pattern": pattern},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/edit" in response.headers["location"]
+
+        await db_session.refresh(rule)
+        assert rule.pattern == "old"
+
+    @pytest.mark.parametrize("value", ["abc", "0", "337", "-1", ""])
+    async def test_autoban_edit_post_threshold_hours_invalid(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+        value: str,
+    ) -> None:
+        """account_age で不正な threshold_hours はリダイレクト。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="account_age",
+            action="ban",
+            threshold_hours=24,
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={"action": "ban", "threshold_hours": value},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/edit" in response.headers["location"]
+
+        await db_session.refresh(rule)
+        assert rule.threshold_hours == 24
+
+    @pytest.mark.parametrize("value", ["xyz", "0", "3601", "-5", ""])
+    async def test_autoban_edit_post_threshold_seconds_invalid(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+        value: str,
+    ) -> None:
+        """threshold_seconds で不正な値はリダイレクト。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="role_acquired",
+            action="ban",
+            threshold_seconds=60,
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={"action": "ban", "threshold_seconds": value},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/edit" in response.headers["location"]
+
+        await db_session.refresh(rule)
+        assert rule.threshold_seconds == 60
+
+    async def test_autoban_edit_post_threshold_hours_max_valid(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """account_age で 336 は有効な最大値。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="account_age",
+            action="ban",
+            threshold_hours=24,
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={"action": "ban", "threshold_hours": "336"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/autoban"
+
+        await db_session.refresh(rule)
+        assert rule.threshold_hours == 336
+
+    async def test_autoban_edit_post_threshold_seconds_max_valid(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """threshold_seconds で 3600 は有効な最大値。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="vc_join",
+            action="ban",
+            threshold_seconds=60,
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={"action": "ban", "threshold_seconds": "3600"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/autoban"
+
+        await db_session.refresh(rule)
+        assert rule.threshold_seconds == 3600
+
+    async def test_autoban_edit_post_no_avatar_only_action(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """no_avatar ルールは action のみ更新可能。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="no_avatar",
+            action="ban",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={"action": "kick"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/autoban"
+
+        await db_session.refresh(rule)
+        assert rule.action == "kick"
+
+    async def test_autoban_edit_post_use_wildcard_unchecked(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """use_wildcard のチェックを外すと False になる。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="username_match",
+            action="ban",
+            pattern="spam",
+            use_wildcard=True,
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={"action": "ban", "pattern": "spam"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/autoban"
+
+        await db_session.refresh(rule)
+        assert rule.use_wildcard is False
+
+    async def test_autoban_edit_post_disabled_rule(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """無効なルールも編集できる。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="no_avatar",
+            action="ban",
+            is_enabled=False,
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={"action": "kick"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/autoban"
+
+        await db_session.refresh(rule)
+        assert rule.action == "kick"
+        assert rule.is_enabled is False
+
+    @pytest.mark.parametrize(
+        ("rule_type", "seconds", "new_action", "new_seconds"),
+        [
+            ("message_post", 30, "kick", "120"),
+            ("vc_join", 600, "ban", "1800"),
+        ],
+    )
+    async def test_autoban_edit_post_threshold_seconds_rule(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+        rule_type: str,
+        seconds: int,
+        new_action: str,
+        new_seconds: str,
+    ) -> None:
+        """threshold_seconds 系ルールを更新できる。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type=rule_type,
+            action="ban",
+            threshold_seconds=seconds,
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={
+                "action": new_action,
+                "threshold_seconds": new_seconds,
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(rule)
+        assert rule.action == new_action
+        assert rule.threshold_seconds == int(new_seconds)
+
+    async def test_autoban_edit_post_pattern_stripped(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """pattern の前後の空白はストリップされる。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="username_match",
+            action="ban",
+            pattern="old",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={"action": "ban", "pattern": "  spammer  "},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/autoban"
+
+        await db_session.refresh(rule)
+        assert rule.pattern == "spammer"
+
+    async def test_autoban_edit_get_displays_current_values(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """GET 編集ページに現在の値がプリフィルされる。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="account_age",
+            action="kick",
+            threshold_hours=72,
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.get(f"/autoban/{rule.id}/edit")
+        assert response.status_code == 200
+        assert "72" in response.text
+        assert "kick" in response.text
+
+    async def test_autoban_edit_post_requires_auth(self, client: AsyncClient) -> None:
+        """POST 認証なしでは /login にリダイレクト。"""
+        response = await client.post(
+            "/autoban/1/edit",
+            data={"action": "ban"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
 
 
 # ===========================================================================

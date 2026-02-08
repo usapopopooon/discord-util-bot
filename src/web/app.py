@@ -70,6 +70,7 @@ from src.web.email_service import (
 )
 from src.web.templates import (
     autoban_create_page,
+    autoban_edit_page,
     autoban_list_page,
     autoban_logs_page,
     autoban_settings_page,
@@ -3093,6 +3094,100 @@ async def autoban_create_post(
         db.add(rule)
         await db.commit()
 
+        record_form_submit(user_email, path)
+
+    return RedirectResponse(url="/autoban", status_code=302)
+
+
+@app.get("/autoban/{rule_id}/edit", response_model=None)
+async def autoban_edit_get(
+    rule_id: int,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Autoban ルール編集フォーム。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    result = await db.execute(select(AutoBanRule).where(AutoBanRule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if not rule:
+        return RedirectResponse(url="/autoban", status_code=302)
+
+    guilds_map, _ = await _get_discord_guilds_and_channels(db)
+
+    return HTMLResponse(
+        content=autoban_edit_page(
+            rule=rule,
+            guilds_map=guilds_map,
+            csrf_token=generate_csrf_token(),
+        )
+    )
+
+
+@app.post("/autoban/{rule_id}/edit", response_model=None)
+async def autoban_edit_post(
+    request: Request,
+    rule_id: int,
+    action: Annotated[str, Form()] = "ban",
+    pattern: Annotated[str, Form()] = "",
+    use_wildcard: Annotated[str, Form()] = "",
+    threshold_hours: Annotated[str, Form()] = "",
+    threshold_seconds: Annotated[str, Form()] = "",
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Autoban ルールを更新する。"""
+    edit_url = f"/autoban/{rule_id}/edit"
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url=edit_url, status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url=edit_url, status_code=302)
+
+    if action not in ("ban", "kick"):
+        return RedirectResponse(url=edit_url, status_code=302)
+
+    async with get_resource_lock(f"autoban:edit:{rule_id}"):
+        result = await db.execute(select(AutoBanRule).where(AutoBanRule.id == rule_id))
+        rule = result.scalar_one_or_none()
+        if not rule:
+            return RedirectResponse(url="/autoban", status_code=302)
+
+        rule.action = action
+
+        if rule.rule_type == "username_match":
+            if not pattern.strip():
+                return RedirectResponse(url=edit_url, status_code=302)
+            rule.pattern = pattern.strip()
+            rule.use_wildcard = bool(use_wildcard)
+
+        elif rule.rule_type == "account_age":
+            try:
+                hours_int = int(threshold_hours)
+            except (ValueError, TypeError):
+                return RedirectResponse(url=edit_url, status_code=302)
+            if hours_int < 1 or hours_int > 336:
+                return RedirectResponse(url=edit_url, status_code=302)
+            rule.threshold_hours = hours_int
+
+        elif rule.rule_type in ("role_acquired", "vc_join", "message_post"):
+            try:
+                seconds_int = int(threshold_seconds)
+            except (ValueError, TypeError):
+                return RedirectResponse(url=edit_url, status_code=302)
+            if seconds_int < 1 or seconds_int > 3600:
+                return RedirectResponse(url=edit_url, status_code=302)
+            rule.threshold_seconds = seconds_int
+
+        await db.commit()
         record_form_submit(user_email, path)
 
     return RedirectResponse(url="/autoban", status_code=302)
