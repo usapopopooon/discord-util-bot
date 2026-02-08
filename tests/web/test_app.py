@@ -10713,7 +10713,7 @@ class TestAutobanRoutes:
         authenticated_client: AsyncClient,
         db_session: AsyncSession,
     ) -> None:
-        """guild_id が空の場合は 422 (FastAPI バリデーション)。"""
+        """guild_id が空の場合はリダイレクト (ハンドラ側でバリデーション)。"""
         response = await authenticated_client.post(
             "/autoban/settings",
             data={
@@ -10722,7 +10722,7 @@ class TestAutobanRoutes:
             },
             follow_redirects=False,
         )
-        assert response.status_code == 422
+        assert response.status_code == 302
 
         result = await db_session.execute(select(AutoBanConfig))
         assert list(result.scalars().all()) == []
