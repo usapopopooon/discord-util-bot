@@ -302,15 +302,27 @@ AutoBan ルールの設定。
 
 ```python
 class AutoBanRule(Base):
-    id: Mapped[int]                    # PK
-    guild_id: Mapped[str]              # Discord サーバー ID
-    rule_type: Mapped[str]             # "username" | "account_age" | "no_avatar"
-    pattern: Mapped[str | None]        # 正規表現 (username ルール用)
-    threshold_days: Mapped[int | None] # アカウント年齢閾値 (account_age ルール用)
-    action: Mapped[str]                # "ban" | "kick"
-    is_enabled: Mapped[bool]           # 有効/無効
-    log_channel_id: Mapped[str | None] # ログ送信先チャンネル ID
+    id: Mapped[int]                       # PK
+    guild_id: Mapped[str]                 # Discord サーバー ID
+    rule_type: Mapped[str]                # "username_match" | "account_age" | "no_avatar"
+                                          # | "role_acquired" | "vc_join" | "message_post"
+    is_enabled: Mapped[bool]              # 有効/無効
+    action: Mapped[str]                   # "ban" | "kick"
+    pattern: Mapped[str | None]           # マッチパターン (username_match 用)
+    use_wildcard: Mapped[bool]            # 部分一致 (username_match 用)
+    threshold_hours: Mapped[int | None]   # アカウント年齢閾値 (時間、account_age 用、最大 336)
+    threshold_seconds: Mapped[int | None] # JOIN後の閾値 (秒、role_acquired/vc_join/message_post 用、最大 3600)
     created_at: Mapped[datetime]
+    # relationship: logs -> AutoBanLog[]
+```
+
+### AutoBanConfig
+AutoBan のギルドごと設定 (ログチャンネル)。
+
+```python
+class AutoBanConfig(Base):
+    guild_id: Mapped[str]              # PK (1ギルド1設定)
+    log_channel_id: Mapped[str | None] # BAN/KICK ログ送信先チャンネル ID
 ```
 
 ### AutoBanLog
@@ -320,12 +332,13 @@ AutoBan 実行ログ。
 class AutoBanLog(Base):
     id: Mapped[int]                    # PK
     guild_id: Mapped[str]              # Discord サーバー ID
-    rule_id: Mapped[int]               # FK -> AutoBanRule
     user_id: Mapped[str]               # 対象ユーザー ID
     username: Mapped[str]              # 対象ユーザー名
-    action: Mapped[str]                # 実行されたアクション
+    rule_id: Mapped[int]               # FK -> AutoBanRule (CASCADE)
+    action_taken: Mapped[str]          # 実行されたアクション ("banned" | "kicked")
     reason: Mapped[str]                # 理由
     created_at: Mapped[datetime]
+    # relationship: rule -> AutoBanRule
 ```
 
 ### DiscordGuild
@@ -576,25 +589,42 @@ Created at: 2026-02-07 19:00
 ### 6. AutoBan 機能 (`autoban.py`)
 
 #### 概要
-新規メンバー参加時に設定されたルールに基づいて自動 BAN/キックを実行する。
+ルールに基づいてメンバーを自動 BAN/キックする。参加時チェック (username_match, account_age, no_avatar) と、参加後の行動チェック (role_acquired, vc_join, message_post) の2種類がある。
 
 #### ルールタイプ
-| タイプ | 説明 |
-|--------|------|
-| `username` | 正規表現でユーザー名をマッチ |
-| `account_age` | アカウント作成から N 日以内 |
-| `no_avatar` | デフォルトアバター (アバター未設定) |
+| タイプ | 説明 | イベント |
+|--------|------|---------|
+| `username_match` | ユーザー名パターンマッチ (完全一致/部分一致) | `on_member_join` |
+| `account_age` | アカウント作成から N 時間以内 (最大 336h = 14日) | `on_member_join` |
+| `no_avatar` | デフォルトアバター (アバター未設定) | `on_member_join` |
+| `role_acquired` | JOIN 後 N 秒以内にロール取得 (最大 3600s) | `on_member_update` |
+| `vc_join` | JOIN 後 N 秒以内に VC 参加 (最大 3600s) | `on_voice_state_update` |
+| `message_post` | JOIN 後 N 秒以内にメッセージ投稿 (最大 3600s) | `on_message` |
+
+#### イベントリスナー
+- `on_member_join`: username_match, account_age, no_avatar ルールを評価
+- `on_member_update`: `before.roles` vs `after.roles` でロール追加を検出 → role_acquired ルールを評価
+- `on_voice_state_update`: VC 新規参加 (チャンネル移動は対象外) → vc_join ルールを評価
+- `on_message`: メンバーのメッセージ投稿 → message_post ルールを評価
 
 #### フロー
-1. `on_member_join` でイベント検知
+1. イベント検知 (Bot は無視)
 2. ギルドの有効ルールを取得
-3. 各ルールの条件をチェック
-4. マッチ → BAN or キック実行
+3. 対象ルールタイプの条件をチェック
+4. マッチ → BAN or キック実行 (メンバー情報を事前保存)
 5. ログを DB に保存
-6. ログチャンネルが設定されていれば Embed を送信
+6. `AutoBanConfig` にログチャンネルが設定されていれば Embed を送信
+
+#### ログ Embed
+BAN/KICK 実行時、`AutoBanConfig.log_channel_id` にリッチ Embed を送信:
+- ユーザー情報 (名前、ID、アバター)
+- アクション (BANNED/KICKED)
+- 適用ルール (ID + タイプ)
+- 理由
+- アカウント作成日時、サーバー参加日時 (経過秒数付き)
 
 #### スラッシュコマンド
-- `/autoban add`: ルール追加 (タイプ・パターン・アクション等をモーダルで入力)
+- `/autoban add`: ルール追加 (タイプ・パターン・アクション・閾値等)
 - `/autoban remove`: ルール削除
 - `/autoban list`: ルール一覧表示
 - `/autoban logs`: 実行ログ表示
@@ -668,6 +698,7 @@ Bot オーナー/管理者用のメンテナンスコマンド。
 | `/autoban/{rule_id}/delete` | AutoBan ルール削除 (POST) |
 | `/autoban/{rule_id}/toggle` | AutoBan ルール有効/無効切替 (POST) |
 | `/autoban/logs` | AutoBan 実行ログ |
+| `/autoban/settings` | AutoBan 設定 (ログチャンネル) |
 | `/settings` | 設定画面 (パスワード変更等) |
 | `/settings/maintenance` | メンテナンス画面 (統計/クリーンアップ) |
 | `/forgot-password` | パスワードリセット |

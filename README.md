@@ -221,4 +221,4 @@ make typecheck  # 型チェック
 
 ## License
 
-MIT
+[MIT License](LICENSE.md)
