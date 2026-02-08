@@ -609,8 +609,8 @@ class TestXSSProtection:
         """ログインエラーで XSS がエスケープされる。"""
         result = login_page(error=malicious_input)
         # HTML tags should be escaped (< and > become &lt; and &gt;)
-        assert "<script>" not in result
-        assert "<img " not in result
+        assert "<script>alert" not in result
+        assert "<img src=" not in result
 
     @pytest.mark.parametrize(
         "malicious_input",
@@ -622,7 +622,7 @@ class TestXSSProtection:
     def test_dashboard_email_escapes_xss(self, malicious_input: str) -> None:
         """ダッシュボードのメールアドレスで XSS がエスケープされる。"""
         result = dashboard_page(email=malicious_input)
-        assert "<script>" not in result
+        assert "<script>alert" not in result
 
     @pytest.mark.parametrize(
         "malicious_input",
@@ -634,7 +634,7 @@ class TestXSSProtection:
     def test_settings_email_escapes_xss(self, malicious_input: str) -> None:
         """設定ページのメールアドレスで XSS がエスケープされる。"""
         result = settings_page(current_email=malicious_input)
-        assert "<script>" not in result
+        assert "<script>alert" not in result
 
     @pytest.mark.parametrize(
         "malicious_input",
@@ -2938,8 +2938,8 @@ class TestBanLogsPage:
             is_autoban=False,
         )
         result = ban_logs_page([log])
-        assert "<script>" not in result
-        assert "<img " not in result
+        assert "<script>alert" not in result
+        assert "<img src=" not in result
 
     def test_xss_escape_reason(self) -> None:
         """reason の XSS がエスケープされる。"""

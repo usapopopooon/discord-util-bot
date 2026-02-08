@@ -45,6 +45,21 @@ def _base(title: str, content: str) -> str:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{escape(title)} - Bot Admin</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+    function postAction(url, csrfToken, confirmMsg) {{
+        if (confirmMsg && !confirm(confirmMsg)) return;
+        const f = document.createElement('form');
+        f.method = 'POST';
+        f.action = url;
+        const i = document.createElement('input');
+        i.type = 'hidden';
+        i.name = 'csrf_token';
+        i.value = csrfToken;
+        f.appendChild(i);
+        document.body.appendChild(f);
+        f.submit();
+    }}
+    </script>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen">
     {content}
@@ -1020,15 +1035,8 @@ def lobbies_list_page(
             <td class="py-3 px-4 align-middle">{lobby.default_user_limit or "無制限"}</td>
             <td class="py-3 px-4 align-middle">{session_count}</td>
             <td class="py-3 px-4 align-middle">
-                <form method="POST" action="/lobbies/{lobby.id}/delete"
-                      onsubmit="return confirm('Delete this lobby?');"
-                      class="inline">
-                    {_csrf_field(csrf_token)}
-                    <button type="submit"
-                            class="text-red-400 hover:text-red-300 text-sm">
-                        Delete
-                    </button>
-                </form>
+                <a href="#" onclick="postAction('/lobbies/{lobby.id}/delete', '{csrf_token}', 'Delete this lobby?'); return false;"
+                   class="text-red-400 hover:text-red-300 text-sm">Delete</a>
             </td>
         </tr>
         """)
@@ -1163,15 +1171,8 @@ def sticky_list_page(
                 {color_display}
             </td>
             <td class="py-3 px-4 align-middle">
-                <form method="POST" action="/sticky/{sticky.channel_id}/delete"
-                      onsubmit="return confirm('Delete this sticky message?');"
-                      class="inline">
-                    {_csrf_field(csrf_token)}
-                    <button type="submit"
-                            class="text-red-400 hover:text-red-300 text-sm">
-                        Delete
-                    </button>
-                </form>
+                <a href="#" onclick="postAction('/sticky/{sticky.channel_id}/delete', '{csrf_token}', 'Delete this sticky message?'); return false;"
+                   class="text-red-400 hover:text-red-300 text-sm">Delete</a>
             </td>
         </tr>
         """)
@@ -1287,15 +1288,8 @@ def bump_list_page(
                 {format_datetime(config.created_at)}
             </td>
             <td class="py-3 px-4 align-middle">
-                <form method="POST" action="/bump/config/{config.guild_id}/delete"
-                      onsubmit="return confirm('Delete this bump config?');"
-                      class="inline">
-                    {_csrf_field(csrf_token)}
-                    <button type="submit"
-                            class="text-red-400 hover:text-red-300 text-sm">
-                        Delete
-                    </button>
-                </form>
+                <a href="#" onclick="postAction('/bump/config/{config.guild_id}/delete', '{csrf_token}', 'Delete this bump config?'); return false;"
+                   class="text-red-400 hover:text-red-300 text-sm">Delete</a>
             </td>
         </tr>
         """)
@@ -1327,24 +1321,11 @@ def bump_list_page(
             <td class="py-3 px-4 align-middle">
                 <span class="{status_class}">{status}</span>
             </td>
-            <td class="py-3 px-4 align-middle">
-                <div class="inline-flex gap-2 items-center">
-                    <form method="POST" action="/bump/reminder/{reminder.id}/toggle">
-                        {_csrf_field(csrf_token)}
-                        <button type="submit"
-                                class="text-blue-400 hover:text-blue-300 text-sm">
-                            Toggle
-                        </button>
-                    </form>
-                    <form method="POST" action="/bump/reminder/{reminder.id}/delete"
-                          onsubmit="return confirm('Delete this reminder?');">
-                        {_csrf_field(csrf_token)}
-                        <button type="submit"
-                                class="text-red-400 hover:text-red-300 text-sm">
-                            Delete
-                        </button>
-                    </form>
-                </div>
+            <td class="py-3 px-4 align-middle space-x-2">
+                <a href="#" onclick="postAction('/bump/reminder/{reminder.id}/toggle', '{csrf_token}'); return false;"
+                   class="text-blue-400 hover:text-blue-300 text-sm">Toggle</a>
+                <a href="#" onclick="postAction('/bump/reminder/{reminder.id}/delete', '{csrf_token}', 'Delete this reminder?'); return false;"
+                   class="text-red-400 hover:text-red-300 text-sm">Delete</a>
             </td>
         </tr>
         """)
@@ -1506,30 +1487,13 @@ def role_panels_list_page(
             <td class="py-3 px-4 align-middle">{channel_display}</td>
             <td class="py-3 px-4 align-middle text-sm">{len(items)} role(s)</td>
             <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created_at}</td>
-            <td class="py-3 px-4 align-middle">
-                <div class="inline-flex gap-2 items-center">
-                    <a href="/rolepanels/{panel.id}"
-                       class="text-blue-400 hover:text-blue-300 text-sm">
-                        Edit
-                    </a>
-                    <form method="POST" action="/rolepanels/{panel.id}/copy"
-                          class="inline-flex items-center">
-                        {_csrf_field(csrf_token)}
-                        <button type="submit"
-                                class="text-gray-400 hover:text-gray-200 text-sm">
-                            Copy
-                        </button>
-                    </form>
-                    <form method="POST" action="/rolepanels/{panel.id}/delete"
-                          onsubmit="return confirm('Delete this role panel?');"
-                          class="inline-flex items-center">
-                        {_csrf_field(csrf_token)}
-                        <button type="submit"
-                                class="text-red-400 hover:text-red-300 text-sm">
-                            Delete
-                        </button>
-                    </form>
-                </div>
+            <td class="py-3 px-4 align-middle space-x-2">
+                <a href="/rolepanels/{panel.id}"
+                   class="text-blue-400 hover:text-blue-300 text-sm">Edit</a>
+                <a href="#" onclick="postAction('/rolepanels/{panel.id}/copy', '{csrf_token}'); return false;"
+                   class="text-gray-400 hover:text-gray-200 text-sm">Copy</a>
+                <a href="#" onclick="postAction('/rolepanels/{panel.id}/delete', '{csrf_token}', 'Delete this role panel?'); return false;"
+                   class="text-red-400 hover:text-red-300 text-sm">Delete</a>
             </td>
         </tr>
         """)
@@ -2513,15 +2477,8 @@ def role_panel_detail_page(
             {label_cell}
             {style_cell}
             <td class="py-3 px-4 align-middle">
-                <form method="POST" action="/rolepanels/{panel.id}/items/{item.id}/delete"
-                      onsubmit="return confirm('Delete this role item?');"
-                      class="inline">
-                    {_csrf_field(csrf_token)}
-                    <button type="submit"
-                            class="text-red-400 hover:text-red-300 text-sm">
-                        Delete
-                    </button>
-                </form>
+                <a href="#" onclick="postAction('/rolepanels/{panel.id}/items/{item.id}/delete', '{csrf_token}', 'Delete this role item?'); return false;"
+                   class="text-red-400 hover:text-red-300 text-sm">Delete</a>
             </td>
         </tr>
         """)
@@ -3034,28 +2991,13 @@ def autoban_list_page(
                 <span class="{status_class}">{status}</span>
             </td>
             <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created}</td>
-            <td class="py-3 px-4 align-middle">
-                <div class="inline-flex gap-2 items-center">
-                    <a href="/autoban/{rule.id}/edit"
-                       class="text-blue-400 hover:text-blue-300 text-sm">Edit</a>
-                    <form method="POST" action="/autoban/{rule.id}/toggle"
-                          class="inline">
-                        {_csrf_field(csrf_token)}
-                        <button type="submit"
-                                class="text-blue-400 hover:text-blue-300 text-sm">
-                            Toggle
-                        </button>
-                    </form>
-                    <form method="POST" action="/autoban/{rule.id}/delete"
-                          class="inline"
-                          onsubmit="return confirm('Delete this autoban rule?');">
-                        {_csrf_field(csrf_token)}
-                        <button type="submit"
-                                class="text-red-400 hover:text-red-300 text-sm">
-                            Delete
-                        </button>
-                    </form>
-                </div>
+            <td class="py-3 px-4 align-middle space-x-2">
+                <a href="/autoban/{rule.id}/edit"
+                   class="text-blue-400 hover:text-blue-300 text-sm">Edit</a>
+                <a href="#" onclick="postAction('/autoban/{rule.id}/toggle', '{csrf_token}'); return false;"
+                   class="text-blue-400 hover:text-blue-300 text-sm">Toggle</a>
+                <a href="#" onclick="postAction('/autoban/{rule.id}/delete', '{csrf_token}', 'Delete this autoban rule?'); return false;"
+                   class="text-red-400 hover:text-red-300 text-sm">Delete</a>
             </td>
         </tr>
         """)
@@ -3710,20 +3652,11 @@ def ticket_list_page(
             </td>
             <td class="py-3 px-4 align-middle">{guild_display}</td>
             <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created}</td>
-            <td class="py-3 px-4 align-middle">
-                <div class="inline-flex gap-2 items-center">
-                    <a href="/tickets/{ticket.id}"
-                       class="text-blue-400 hover:text-blue-300 text-sm">View</a>
-                    <form method="POST" action="/tickets/{ticket.id}/delete"
-                          onsubmit="return confirm('Delete this ticket log?');"
-                          class="inline-flex items-center m-0">
-                        {_csrf_field(csrf_token)}
-                        <button type="submit"
-                                class="text-red-400 hover:text-red-300 text-sm">
-                            Delete
-                        </button>
-                    </form>
-                </div>
+            <td class="py-3 px-4 align-middle space-x-2">
+                <a href="/tickets/{ticket.id}"
+                   class="text-blue-400 hover:text-blue-300 text-sm">View</a>
+                <a href="#" onclick="postAction('/tickets/{ticket.id}/delete', '{csrf_token}', 'Delete this ticket log?'); return false;"
+                   class="text-red-400 hover:text-red-300 text-sm">Delete</a>
             </td>
         </tr>
         """)
@@ -4121,15 +4054,8 @@ def ticket_panels_list_page(
             <td class="py-3 px-4 align-middle text-sm">{posted}</td>
             <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created}</td>
             <td class="py-3 px-4 align-middle">
-                <form method="POST" action="/tickets/panels/{panel.id}/delete"
-                      onsubmit="return confirm('Delete this panel?');"
-                      class="inline">
-                    {_csrf_field(csrf_token)}
-                    <button type="submit"
-                            class="text-red-400 hover:text-red-300 text-sm">
-                        Delete
-                    </button>
-                </form>
+                <a href="#" onclick="postAction('/tickets/panels/{panel.id}/delete', '{csrf_token}', 'Delete this panel?'); return false;"
+                   class="text-red-400 hover:text-red-300 text-sm">Delete</a>
             </td>
         </tr>
         """)
