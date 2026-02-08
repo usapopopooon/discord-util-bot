@@ -7,6 +7,7 @@ import re
 import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 
 import emoji
 
@@ -22,7 +23,7 @@ _resource_locks: dict[str, tuple[asyncio.Lock, float]] = {}
 
 # ロッククリーンアップ間隔
 _LOCK_CLEANUP_INTERVAL = 600  # 10分
-_lock_last_cleanup_time = 0.0
+_lock_last_cleanup_time = float("-inf")
 
 # 未使用ロックの保持時間
 _LOCK_EXPIRY_TIME = 300  # 5分
@@ -34,7 +35,10 @@ def _cleanup_resource_locks() -> None:
     now = time.monotonic()
 
     # 10分ごとにクリーンアップ
-    if now - _lock_last_cleanup_time < _LOCK_CLEANUP_INTERVAL:
+    if (
+        _lock_last_cleanup_time > 0
+        and now - _lock_last_cleanup_time < _LOCK_CLEANUP_INTERVAL
+    ):
         return
 
     _lock_last_cleanup_time = now
@@ -200,10 +204,15 @@ def normalize_emoji(text: str) -> str:
 # =============================================================================
 
 
+@lru_cache(maxsize=4)
+def _make_timezone(offset: int) -> timezone:
+    """timezone オブジェクトをキャッシュして返す."""
+    return timezone(timedelta(hours=offset))
+
+
 def _get_timezone() -> timezone:
     """設定されたタイムゾーンオフセットから timezone オブジェクトを返す."""
-    offset = settings.timezone_offset
-    return timezone(timedelta(hours=offset))
+    return _make_timezone(settings.timezone_offset)
 
 
 def format_datetime(

@@ -134,6 +134,10 @@ class StickyEmbedModal(discord.ui.Modal, title="Sticky メッセージ設定 (Em
                 message_type="embed",
             )
 
+        # キャッシュに追加
+        if self.cog._sticky_channels is not None:
+            self.cog._sticky_channels.add(channel_id)
+
         # embed を投稿
         embed = self.cog._build_embed(title, description, color_int)
         await interaction.response.send_message(
@@ -229,6 +233,10 @@ class StickyTextModal(discord.ui.Modal, title="Sticky メッセージ設定 (テ
                 message_type="text",
             )
 
+        # キャッシュに追加
+        if self.cog._sticky_channels is not None:
+            self.cog._sticky_channels.add(channel_id)
+
         await interaction.response.send_message(
             "✅ Sticky メッセージ (テキスト) を設定しました。", ephemeral=True
         )
@@ -306,6 +314,9 @@ class StickyCog(commands.Cog):
         self.bot = bot
         # チャンネルごとの遅延再投稿タスクを管理
         self._pending_tasks: dict[str, asyncio.Task[None]] = {}
+        # sticky 設定済みチャンネル ID のインメモリキャッシュ
+        # None = 未ロード (フォールスルー), set = ロード済み (キャッシュ使用)
+        self._sticky_channels: set[str] | None = None
 
     async def cog_unload(self) -> None:
         """Cog がアンロードされる際に、保留中のタスクをキャンセルする。"""
@@ -326,6 +337,10 @@ class StickyCog(commands.Cog):
         if channel_id in self._pending_tasks:
             self._pending_tasks[channel_id].cancel()
             self._pending_tasks.pop(channel_id, None)
+
+        # キャッシュから削除
+        if self._sticky_channels is not None:
+            self._sticky_channels.discard(channel_id)
 
         # DB から削除
         async with async_session() as session:
@@ -374,6 +389,13 @@ class StickyCog(commands.Cog):
             return
 
         channel_id = str(message.channel.id)
+
+        # インメモリキャッシュで高速フィルタリング (DB アクセスゼロ)
+        if (
+            self._sticky_channels is not None
+            and channel_id not in self._sticky_channels
+        ):
+            return
 
         # sticky 設定を取得
         async with async_session() as session:
@@ -430,6 +452,8 @@ class StickyCog(commands.Cog):
                 "No message_id for sticky, removing config: channel=%s",
                 channel_id,
             )
+            if self._sticky_channels is not None:
+                self._sticky_channels.discard(channel_id)
             async with async_session() as session:
                 await delete_sticky_message(session, channel_id)
             return
@@ -449,6 +473,8 @@ class StickyCog(commands.Cog):
                     "Sticky message already deleted, removing config: channel=%s",
                     channel_id,
                 )
+                if self._sticky_channels is not None:
+                    self._sticky_channels.discard(channel_id)
                 async with async_session() as session:
                     await delete_sticky_message(session, channel_id)
                 return
@@ -459,6 +485,8 @@ class StickyCog(commands.Cog):
                     e,
                 )
                 # 取得・削除に失敗した場合も再投稿せず、DB からも削除
+                if self._sticky_channels is not None:
+                    self._sticky_channels.discard(channel_id)
                 async with async_session() as session:
                     await delete_sticky_message(session, channel_id)
                 return
@@ -582,6 +610,10 @@ class StickyCog(commands.Cog):
                         e,
                     )
 
+        # キャッシュから削除
+        if self._sticky_channels is not None:
+            self._sticky_channels.discard(channel_id)
+
         # DB から削除
         async with async_session() as session:
             await delete_sticky_message(session, channel_id)
@@ -640,11 +672,13 @@ class StickyCog(commands.Cog):
 
 async def setup(bot: commands.Bot) -> None:
     """Cog を Bot に登録する関数。"""
-    await bot.add_cog(StickyCog(bot))
+    cog = StickyCog(bot)
+    await bot.add_cog(cog)
 
-    # Bot 起動時に全ての sticky 設定をログ出力
+    # Bot 起動時に全ての sticky 設定をログ出力 + キャッシュ構築
     async with async_session() as session:
         stickies = await get_all_sticky_messages(session)
+        cog._sticky_channels = {s.channel_id for s in stickies}
         if stickies:
             logger.info(
                 "Loaded %d sticky message configurations",

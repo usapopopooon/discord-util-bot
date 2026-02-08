@@ -33,6 +33,7 @@ from src.services.db_service import (
     delete_lobby,
     delete_voice_session,
     delete_voice_sessions_by_guild,
+    get_all_lobbies,
     get_lobbies_by_guild,
     get_lobby_by_channel_id,
     get_voice_session,
@@ -139,6 +140,9 @@ class VoiceCog(commands.Cog):
         # 注意: Bot 再起動時にキャッシュは消えるが、DB にも保存されているため
         # _get_longest_member_from_db() で正確な順序を取得できる。
         self._join_times: dict[int, dict[int, float]] = {}
+        # ロビーチャンネル ID のインメモリキャッシュ
+        # None = 未ロード (フォールスルー), set = ロード済み (キャッシュ使用)
+        self._lobby_channel_ids: set[str] | None = None
 
     # ==========================================================================
     # イベントリスナー
@@ -208,12 +212,15 @@ class VoiceCog(commands.Cog):
         # メモリキャッシュの参加記録を削除
         self._cleanup_channel_cache(channel.id)
         # DB のレコードをクリーンアップ (存在しなくても安全)
+        channel_id_str = str(channel.id)
         async with async_session() as session:
-            await delete_voice_session(session, str(channel.id))
+            await delete_voice_session(session, channel_id_str)
             # ロビーとして登録されていた場合、そのレコードも削除
-            lobby = await get_lobby_by_channel_id(session, str(channel.id))
+            lobby = await get_lobby_by_channel_id(session, channel_id_str)
             if lobby:
                 await delete_lobby(session, lobby.id)
+                if self._lobby_channel_ids is not None:
+                    self._lobby_channel_ids.discard(channel_id_str)
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: discord.Guild) -> None:
@@ -449,6 +456,13 @@ class VoiceCog(commands.Cog):
           ユーザーごとのリソースロックにより、同一ユーザーの並行リクエストを
           シリアライズする。クールダウンと合わせて二重保護。
         """
+        # インメモリキャッシュで高速フィルタリング (DB アクセスゼロ)
+        if (
+            self._lobby_channel_ids is not None
+            and str(channel.id) not in self._lobby_channel_ids
+        ):
+            return
+
         # ユーザーごとのロックで並行リクエストをシリアライズ
         async with (
             get_resource_lock(f"vc_create:{member.id}"),
@@ -795,14 +809,19 @@ class VoiceCog(commands.Cog):
             return
 
         # --- DB にロビーとして登録 ---
+        lobby_channel_id_str = str(lobby_channel.id)
         async with async_session() as session:
             await create_lobby(
                 session,
                 guild_id=str(interaction.guild_id),
-                lobby_channel_id=str(lobby_channel.id),
+                lobby_channel_id=lobby_channel_id_str,
                 category_id=None,
                 default_user_limit=0,
             )
+
+        # キャッシュに追加
+        if self._lobby_channel_ids is not None:
+            self._lobby_channel_ids.add(lobby_channel_id_str)
 
         await interaction.response.send_message(
             f"ロビー **{lobby_channel.name}** を作成しました！\n"
@@ -855,4 +874,17 @@ class VoiceCog(commands.Cog):
 
 async def setup(bot: commands.Bot) -> None:
     """Cog を Bot に登録する関数。bot.load_extension() から呼ばれる。"""
-    await bot.add_cog(VoiceCog(bot))
+    cog = VoiceCog(bot)
+    await bot.add_cog(cog)
+
+    # ロビーチャンネル ID のキャッシュを構築
+    try:
+        async with async_session() as session:
+            lobbies = await get_all_lobbies(session)
+            cog._lobby_channel_ids = {lobby.lobby_channel_id for lobby in lobbies}
+        logger.info(
+            "Loaded %d lobby channel(s) into cache",
+            len(cog._lobby_channel_ids),
+        )
+    except Exception:
+        logger.critical("Failed to load lobby cache", exc_info=True)

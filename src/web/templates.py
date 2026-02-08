@@ -974,7 +974,7 @@ def lobbies_list_page(
                 return name
         return None
 
-    rows = ""
+    row_parts: list[str] = []
     for lobby in lobbies:
         session_count = len(lobby.sessions) if lobby.sessions else 0
         guild_name = guilds_map.get(lobby.guild_id)
@@ -1006,7 +1006,7 @@ def lobbies_list_page(
                 f"{escape(lobby.lobby_channel_id)}</span>"
             )
 
-        rows += f"""
+        row_parts.append(f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4">{lobby.id}</td>
             <td class="py-3 px-4">{guild_display}</td>
@@ -1024,7 +1024,8 @@ def lobbies_list_page(
                 </form>
             </td>
         </tr>
-        """
+        """)
+    rows = "".join(row_parts)
 
     if not lobbies:
         rows = """
@@ -1098,7 +1099,7 @@ def sticky_list_page(
                 return name
         return None
 
-    rows = ""
+    row_parts: list[str] = []
     for sticky in stickies:
         title_display = (
             escape(
@@ -1142,7 +1143,7 @@ def sticky_list_page(
                 f"{escape(sticky.channel_id)}</span>"
             )
 
-        rows += f"""
+        row_parts.append(f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4">{guild_display}</td>
             <td class="py-3 px-4">{channel_display}</td>
@@ -1165,7 +1166,8 @@ def sticky_list_page(
                 </form>
             </td>
         </tr>
-        """
+        """)
+    rows = "".join(row_parts)
 
     if not stickies:
         rows = """
@@ -1265,11 +1267,11 @@ def bump_list_page(
             )
         return f'<span class="font-mono text-yellow-400">{escape(channel_id)}</span>'
 
-    config_rows = ""
+    config_row_parts: list[str] = []
     for config in configs:
         guild_display = format_guild_display(config.guild_id)
         channel_display = format_channel_display(config.guild_id, config.channel_id)
-        config_rows += f"""
+        config_row_parts.append(f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4">{guild_display}</td>
             <td class="py-3 px-4">{channel_display}</td>
@@ -1287,7 +1289,8 @@ def bump_list_page(
                 </form>
             </td>
         </tr>
-        """
+        """)
+    config_rows = "".join(config_row_parts)
 
     if not configs:
         config_rows = """
@@ -1298,14 +1301,14 @@ def bump_list_page(
         </tr>
         """
 
-    reminder_rows = ""
+    reminder_row_parts: list[str] = []
     for reminder in reminders:
         status = "Enabled" if reminder.is_enabled else "Disabled"
         status_class = "text-green-400" if reminder.is_enabled else "text-gray-500"
         remind_at = format_datetime(reminder.remind_at)
         guild_display = format_guild_display(reminder.guild_id)
         channel_display = format_channel_display(reminder.guild_id, reminder.channel_id)
-        reminder_rows += f"""
+        reminder_row_parts.append(f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4">{reminder.id}</td>
             <td class="py-3 px-4">{guild_display}</td>
@@ -1335,7 +1338,8 @@ def bump_list_page(
                 </div>
             </td>
         </tr>
-        """
+        """)
+    reminder_rows = "".join(reminder_row_parts)
 
     if not reminders:
         reminder_rows = """
@@ -1431,7 +1435,7 @@ def role_panels_list_page(
                 return name
         return None
 
-    panel_rows = ""
+    panel_row_parts: list[str] = []
     for panel in panels:
         panel_type_badge = (
             '<span class="bg-blue-600 px-2 py-1 rounded text-xs">Button</span>'
@@ -1478,7 +1482,7 @@ def role_panels_list_page(
                 f"{escape(panel.channel_id)}</span>"
             )
 
-        panel_rows += f"""
+        panel_row_parts.append(f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4">
                 <a href="/rolepanels/{panel.id}"
@@ -1519,7 +1523,8 @@ def role_panels_list_page(
                 </div>
             </td>
         </tr>
-        """
+        """)
+    panel_rows = "".join(panel_row_parts)
 
     if not panels:
         panel_rows = """
@@ -2459,7 +2464,7 @@ def role_panel_detail_page(
         "danger": '<span class="text-red-400">Red</span>',
     }
 
-    items_rows = ""
+    items_row_parts: list[str] = []
     for item in items:
         label_display = escape(item.label) if item.label else "(no label)"
         style_display = style_display_map.get(
@@ -2483,7 +2488,7 @@ def role_panel_detail_page(
         style_cell = (
             f'<td class="py-3 px-4">{style_display}</td>' if is_button_type else ""
         )
-        items_rows += f"""
+        items_row_parts.append(f"""
         <tr class="border-b border-gray-700" data-item-id="{item.id}" draggable="true">
             <td class="py-3 px-2 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200">
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
@@ -2505,7 +2510,8 @@ def role_panel_detail_page(
                 </form>
             </td>
         </tr>
-        """
+        """)
+    items_rows = "".join(items_row_parts)
 
     col_count = 6 if is_button_type else 4
     if not items:
@@ -2970,7 +2976,7 @@ def autoban_list_page(
     if guilds_map is None:
         guilds_map = {}
 
-    rows = ""
+    row_parts: list[str] = []
     for rule in rules:
         guild_name = guilds_map.get(rule.guild_id)
         if guild_name:
@@ -2998,7 +3004,7 @@ def autoban_list_page(
         status_class = "text-green-400" if rule.is_enabled else "text-gray-500"
         created = format_datetime(rule.created_at)
 
-        rows += f"""
+        row_parts.append(f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4">{guild_display}</td>
             <td class="py-3 px-4">{escape(rule.rule_type)}</td>
@@ -3028,7 +3034,8 @@ def autoban_list_page(
                 </div>
             </td>
         </tr>
-        """
+        """)
+    rows = "".join(row_parts)
 
     if not rules:
         rows = """
@@ -3207,7 +3214,7 @@ def autoban_logs_page(
     if guilds_map is None:
         guilds_map = {}
 
-    rows = ""
+    row_parts: list[str] = []
     for log in logs:
         guild_name = guilds_map.get(log.guild_id)
         if guild_name:
@@ -3226,7 +3233,7 @@ def autoban_logs_page(
         )
         created = format_datetime(log.created_at)
 
-        rows += f"""
+        row_parts.append(f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4">{guild_display}</td>
             <td class="py-3 px-4 font-mono text-sm">{escape(log.user_id)}</td>
@@ -3238,7 +3245,8 @@ def autoban_logs_page(
             <td class="py-3 px-4 text-gray-400 text-sm">#{log.rule_id}</td>
             <td class="py-3 px-4 text-gray-400 text-sm">{created}</td>
         </tr>
-        """
+        """)
+    rows = "".join(row_parts)
 
     if not logs:
         rows = """
@@ -3299,7 +3307,7 @@ def ticket_list_page(
     if guilds_map is None:
         guilds_map = {}
 
-    rows = ""
+    row_parts: list[str] = []
     for ticket in tickets:
         guild_name = guilds_map.get(ticket.guild_id)
         if guild_name:
@@ -3322,7 +3330,7 @@ def ticket_list_page(
         status_class = status_colors.get(ticket.status, "text-gray-400")
         created = format_datetime(ticket.created_at)
 
-        rows += f"""
+        row_parts.append(f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4 align-middle font-mono">#{ticket.ticket_number}</td>
             <td class="py-3 px-4 align-middle">{escape(ticket.username)}</td>
@@ -3347,7 +3355,8 @@ def ticket_list_page(
                 </div>
             </td>
         </tr>
-        """
+        """)
+    rows = "".join(row_parts)
 
     if not tickets:
         rows = """
@@ -3359,11 +3368,12 @@ def ticket_list_page(
         """
 
     # Status filter options
-    filter_options = ""
+    filter_option_parts: list[str] = []
     for s in ["", "open", "claimed", "closed"]:
         selected = "selected" if s == status_filter else ""
         label = "All" if s == "" else s.capitalize()
-        filter_options += f'<option value="{s}" {selected}>{label}</option>'
+        filter_option_parts.append(f'<option value="{s}" {selected}>{label}</option>')
+    filter_options = "".join(filter_option_parts)
 
     content = f"""
     <div class="p-6">
@@ -3436,17 +3446,20 @@ def ticket_detail_page(
         try:
             answers = json_mod.loads(ticket.form_answers)
             if isinstance(answers, list):
-                form_answers_html = '<div class="mt-4"><h3 class="text-lg font-semibold mb-2">Form Answers</h3>'
+                form_answer_parts: list[str] = [
+                    '<div class="mt-4"><h3 class="text-lg font-semibold mb-2">Form Answers</h3>'
+                ]
                 for qa in answers:
                     q = escape(str(qa.get("question", "")))
                     a = escape(str(qa.get("answer", "")))
-                    form_answers_html += f"""
+                    form_answer_parts.append(f"""
                     <div class="bg-gray-700 rounded p-3 mb-2">
                         <div class="text-sm text-gray-400">{q}</div>
                         <div>{a}</div>
                     </div>
-                    """
-                form_answers_html += "</div>"
+                    """)
+                form_answer_parts.append("</div>")
+                form_answers_html = "".join(form_answer_parts)
         except (json_mod.JSONDecodeError, TypeError):
             pass
 
@@ -3558,13 +3571,13 @@ def ticket_panels_list_page(
                 return f"#{name}"
         return channel_id
 
-    rows = ""
+    row_parts: list[str] = []
     for panel in panels:
         guild_name = guilds_map.get(panel.guild_id, panel.guild_id)
         created = format_datetime(panel.created_at)
         posted = "Yes" if panel.message_id else "No"
 
-        rows += f"""
+        row_parts.append(f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4">
                 <a href="/tickets/panels/{panel.id}"
@@ -3587,7 +3600,8 @@ def ticket_panels_list_page(
                 </form>
             </td>
         </tr>
-        """
+        """)
+    rows = "".join(row_parts)
 
     if not panels:
         rows = """
@@ -3892,7 +3906,7 @@ def ticket_panel_detail_page(
         discord_confirm = "Post this panel to Discord?"
 
     # カテゴリボタン行
-    button_rows = ""
+    button_row_parts: list[str] = []
     style_options_map = {
         "primary": "Blue",
         "secondary": "Gray",
@@ -3900,12 +3914,15 @@ def ticket_panel_detail_page(
         "danger": "Red",
     }
     for assoc, cat_name in associations:
-        style_options = ""
+        style_option_parts: list[str] = []
         for val, label in style_options_map.items():
             selected = "selected" if assoc.button_style == val else ""
-            style_options += f'<option value="{val}" {selected}>{label}</option>'
+            style_option_parts.append(
+                f'<option value="{val}" {selected}>{label}</option>'
+            )
+        style_options = "".join(style_option_parts)
 
-        button_rows += f"""
+        button_row_parts.append(f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4 text-sm">{escape(cat_name)}</td>
             <td class="py-3 px-4">
@@ -3934,7 +3951,8 @@ def ticket_panel_detail_page(
                 </form>
             </td>
         </tr>
-        """
+        """)
+    button_rows = "".join(button_row_parts)
 
     if not associations:
         button_rows = """

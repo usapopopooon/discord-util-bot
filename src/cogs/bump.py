@@ -76,7 +76,7 @@ _bump_notification_cooldown_cache: dict[tuple[int, str, str], float] = {}
 
 # キャッシュクリーンアップ間隔
 _BUMP_CLEANUP_INTERVAL = 300  # 5分
-_bump_last_cleanup_time = 0.0
+_bump_last_cleanup_time = float("-inf")
 
 
 def _cleanup_bump_notification_cooldown_cache() -> None:
@@ -85,7 +85,10 @@ def _cleanup_bump_notification_cooldown_cache() -> None:
     now = time.monotonic()
 
     # 5分ごとにクリーンアップ
-    if now - _bump_last_cleanup_time < _BUMP_CLEANUP_INTERVAL:
+    if (
+        _bump_last_cleanup_time > 0
+        and now - _bump_last_cleanup_time < _BUMP_CLEANUP_INTERVAL
+    ):
         return
 
     _bump_last_cleanup_time = now
@@ -351,6 +354,9 @@ class BumpCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        # bump 設定済みギルド ID のインメモリキャッシュ
+        # None = 未ロード (フォールスルー), set = ロード済み (キャッシュ使用)
+        self._bump_guild_ids: set[str] | None = None
 
     async def cog_load(self) -> None:
         """Cog が読み込まれたときに呼ばれる。リマインダーチェックループを開始する。"""
@@ -378,6 +384,8 @@ class BumpCog(commands.Cog):
             # 削除されたチャンネルが監視チャンネルと一致する場合のみ削除
             if config and config.channel_id == channel_id:
                 await delete_bump_config(session, guild_id)
+                if self._bump_guild_ids is not None:
+                    self._bump_guild_ids.discard(guild_id)
                 # リマインダーも削除 (チャンネルが存在しないため送信不可)
                 count = await delete_bump_reminders_by_guild(session, guild_id)
                 logger.info(
@@ -396,6 +404,8 @@ class BumpCog(commands.Cog):
         async with async_session() as session:
             # 設定を削除
             await delete_bump_config(session, guild_id)
+            if self._bump_guild_ids is not None:
+                self._bump_guild_ids.discard(guild_id)
             # リマインダーを削除
             count = await delete_bump_reminders_by_guild(session, guild_id)
 
@@ -443,6 +453,12 @@ class BumpCog(commands.Cog):
         if message.author.id not in (DISBOARD_BOT_ID, DISSOKU_BOT_ID, DEBUG_USER_ID):
             return
 
+        guild_id = str(message.guild.id)
+
+        # インメモリキャッシュで高速フィルタリング (DB アクセスゼロ)
+        if self._bump_guild_ids is not None and guild_id not in self._bump_guild_ids:
+            return
+
         bot_name = "DISBOARD" if message.author.id == DISBOARD_BOT_ID else "ディス速報"
         logger.info(
             "Bump bot message received: bot=%s guild=%s channel=%s",
@@ -459,31 +475,10 @@ class BumpCog(commands.Cog):
             )
             return
 
-        guild_id = str(message.guild.id)
-
-        # このギルドの bump 監視設定を確認
-        async with async_session() as session:
-            config = await get_bump_config(session, guild_id)
-
-        # 設定がないか、設定されたチャンネルでなければ無視
-        if not config or config.channel_id != str(message.channel.id):
-            logger.info(
-                "Bump monitoring not configured for this channel: "
-                "guild=%s config_channel=%s message_channel=%s",
-                guild_id,
-                config.channel_id if config else None,
-                message.channel.id,
-            )
-            return
-
-        # bump 成功かどうかを判定
+        # bump 成功かどうかを判定 (DB 不要な判定を先に行う)
         service_name = self._detect_bump_success(message)
         if not service_name:
             return
-
-        logger.info(
-            "Bump success detected: service=%s guild=%s", service_name, guild_id
-        )
 
         # bump 実行者を取得
         user = self._get_bump_user(message)
@@ -497,13 +492,6 @@ class BumpCog(commands.Cog):
             )
             return
 
-        logger.info(
-            "Bump user identified: user=%s user_id=%s guild=%s",
-            user.name,
-            user.id,
-            guild_id,
-        )
-
         # Server Bumper ロールを持っているか確認
         if not self._has_target_role(user):
             logger.info(
@@ -515,9 +503,31 @@ class BumpCog(commands.Cog):
             )
             return
 
-        # リマインダーを DB に保存
+        # 1セッションで設定確認 + リマインダー保存
         remind_at = datetime.now(UTC) + timedelta(hours=REMINDER_HOURS)
         async with async_session() as session:
+            # このギルドの bump 監視設定を確認
+            config = await get_bump_config(session, guild_id)
+
+            # 設定がないか、設定されたチャンネルでなければ無視
+            if not config or config.channel_id != str(message.channel.id):
+                logger.info(
+                    "Bump monitoring not configured for this channel: "
+                    "guild=%s config_channel=%s message_channel=%s",
+                    guild_id,
+                    config.channel_id if config else None,
+                    message.channel.id,
+                )
+                return
+
+            logger.info(
+                "Bump success detected: service=%s guild=%s user=%s",
+                service_name,
+                guild_id,
+                user.name,
+            )
+
+            # リマインダーを DB に保存
             reminder = await upsert_bump_reminder(
                 session,
                 guild_id=guild_id,
@@ -854,6 +864,10 @@ class BumpCog(commands.Cog):
         async with async_session() as session:
             await upsert_bump_config(session, guild_id, channel_id)
 
+        # キャッシュに追加
+        if self._bump_guild_ids is not None:
+            self._bump_guild_ids.add(guild_id)
+
         # チャンネルの履歴から最近の bump を探す
         channel = interaction.channel
         recent_bump_info: str | None = None
@@ -1025,6 +1039,10 @@ class BumpCog(commands.Cog):
         async with async_session() as session:
             deleted = await delete_bump_config(session, guild_id)
 
+        # キャッシュから削除
+        if self._bump_guild_ids is not None:
+            self._bump_guild_ids.discard(guild_id)
+
         if deleted:
             embed = discord.Embed(
                 title="Bump 監視を停止しました",
@@ -1057,4 +1075,16 @@ async def setup(bot: commands.Bot) -> None:
     bot.add_view(BumpNotificationView("0", "DISBOARD", True))
     bot.add_view(BumpNotificationView("0", "ディス速報", True))
 
-    await bot.add_cog(BumpCog(bot))
+    cog = BumpCog(bot)
+    await bot.add_cog(cog)
+
+    # bump 設定済みギルド ID のキャッシュを構築
+    try:
+        async with async_session() as session:
+            from src.services.db_service import get_all_bump_configs
+
+            configs = await get_all_bump_configs(session)
+            cog._bump_guild_ids = {c.guild_id for c in configs}
+        logger.info("Bump guild cache loaded (%d guild(s))", len(cog._bump_guild_ids))
+    except Exception:
+        logger.critical("Failed to load bump guild cache", exc_info=True)
