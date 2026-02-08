@@ -39,7 +39,7 @@ Notes:
 
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import (
@@ -218,14 +218,9 @@ async def delete_lobbies_by_guild(session: AsyncSession, guild_id: str) -> int:
     Returns:
         削除したロビーの数
     """
-    result = await session.execute(select(Lobby).where(Lobby.guild_id == guild_id))
-    lobbies = list(result.scalars().all())
-    count = len(lobbies)
-    for lobby in lobbies:
-        await session.delete(lobby)
-    if count > 0:
-        await session.commit()
-    return count
+    result = await session.execute(delete(Lobby).where(Lobby.guild_id == guild_id))
+    await session.commit()
+    return int(result.rowcount)  # type: ignore[attr-defined]
 
 
 async def get_all_lobbies(session: AsyncSession) -> list[Lobby]:
@@ -418,7 +413,6 @@ async def update_voice_session(
     # SQLAlchemy はオブジェクトの変更を自動検知するので、
     # commit() だけで UPDATE 文が実行される
     await session.commit()
-    await session.refresh(voice_session)
     return voice_session
 
 
@@ -458,19 +452,16 @@ async def delete_voice_sessions_by_guild(session: AsyncSession, guild_id: str) -
     Returns:
         削除したセッションの数
     """
-    # Lobby 経由で該当ギルドの VoiceSession を取得
+    # Lobby 経由で該当ギルドの VoiceSession を削除 (サブクエリ使用)
     result = await session.execute(
-        select(VoiceSession)
-        .join(Lobby, VoiceSession.lobby_id == Lobby.id)
-        .where(Lobby.guild_id == guild_id)
+        delete(VoiceSession).where(
+            VoiceSession.lobby_id.in_(
+                select(Lobby.id).where(Lobby.guild_id == guild_id)
+            )
+        )
     )
-    voice_sessions = list(result.scalars().all())
-    count = len(voice_sessions)
-    for vs in voice_sessions:
-        await session.delete(vs)
-    if count > 0:
-        await session.commit()
-    return count
+    await session.commit()
+    return int(result.rowcount)  # type: ignore[attr-defined]
 
 
 # =============================================================================
@@ -638,7 +629,6 @@ async def upsert_bump_reminder(
         existing.channel_id = channel_id
         existing.remind_at = remind_at
         await session.commit()
-        await session.refresh(existing)
         return existing
 
     # 新規作成
@@ -834,7 +824,6 @@ async def upsert_bump_config(
     if existing:
         existing.channel_id = channel_id
         await session.commit()
-        await session.refresh(existing)
         return existing
 
     config = BumpConfig(guild_id=guild_id, channel_id=channel_id)
@@ -880,15 +869,10 @@ async def delete_bump_reminders_by_guild(session: AsyncSession, guild_id: str) -
         削除したリマインダーの数
     """
     result = await session.execute(
-        select(BumpReminder).where(BumpReminder.guild_id == guild_id)
+        delete(BumpReminder).where(BumpReminder.guild_id == guild_id)
     )
-    reminders = list(result.scalars().all())
-    count = len(reminders)
-    for reminder in reminders:
-        await session.delete(reminder)
-    if count > 0:
-        await session.commit()
-    return count
+    await session.commit()
+    return int(result.rowcount)  # type: ignore[attr-defined]
 
 
 async def get_all_bump_configs(session: AsyncSession) -> list[BumpConfig]:
@@ -967,7 +951,6 @@ async def create_sticky_message(
         existing.message_id = None  # 新規設定なのでリセット
         existing.last_posted_at = None
         await session.commit()
-        await session.refresh(existing)
         return existing
 
     sticky = StickyMessage(
@@ -1052,15 +1035,10 @@ async def delete_sticky_messages_by_guild(session: AsyncSession, guild_id: str) 
         削除した sticky メッセージの数
     """
     result = await session.execute(
-        select(StickyMessage).where(StickyMessage.guild_id == guild_id)
+        delete(StickyMessage).where(StickyMessage.guild_id == guild_id)
     )
-    stickies = list(result.scalars().all())
-    count = len(stickies)
-    for sticky in stickies:
-        await session.delete(sticky)
-    if count > 0:
-        await session.commit()
-    return count
+    await session.commit()
+    return int(result.rowcount)  # type: ignore[attr-defined]
 
 
 async def get_all_sticky_messages(
@@ -1259,7 +1237,6 @@ async def update_role_panel(
         panel.remove_reaction = remove_reaction
 
     await session.commit()
-    await session.refresh(panel)
     return panel
 
 
@@ -1301,15 +1278,10 @@ async def delete_role_panels_by_guild(session: AsyncSession, guild_id: str) -> i
         削除したロールパネルの数
     """
     result = await session.execute(
-        select(RolePanel).where(RolePanel.guild_id == guild_id)
+        delete(RolePanel).where(RolePanel.guild_id == guild_id)
     )
-    panels = list(result.scalars().all())
-    count = len(panels)
-    for panel in panels:
-        await session.delete(panel)
-    if count > 0:
-        await session.commit()
-    return count
+    await session.commit()
+    return int(result.rowcount)  # type: ignore[attr-defined]
 
 
 async def delete_role_panels_by_channel(session: AsyncSession, channel_id: str) -> int:
@@ -1326,15 +1298,10 @@ async def delete_role_panels_by_channel(session: AsyncSession, channel_id: str) 
         削除したロールパネルの数
     """
     result = await session.execute(
-        select(RolePanel).where(RolePanel.channel_id == channel_id)
+        delete(RolePanel).where(RolePanel.channel_id == channel_id)
     )
-    panels = list(result.scalars().all())
-    count = len(panels)
-    for panel in panels:
-        await session.delete(panel)
-    if count > 0:
-        await session.commit()
-    return count
+    await session.commit()
+    return int(result.rowcount)  # type: ignore[attr-defined]
 
 
 async def delete_role_panel_by_message_id(
@@ -1395,12 +1362,11 @@ async def add_role_panel_item(
     """
     # 現在の最大 position を取得
     result = await session.execute(
-        select(RolePanelItem)
-        .where(RolePanelItem.panel_id == panel_id)
-        .order_by(RolePanelItem.position.desc())
+        select(func.coalesce(func.max(RolePanelItem.position), -1)).where(
+            RolePanelItem.panel_id == panel_id
+        )
     )
-    items = list(result.scalars().all())
-    next_position = items[0].position + 1 if items else 0
+    next_position = result.scalar_one() + 1
 
     item = RolePanelItem(
         panel_id=panel_id,
@@ -1527,7 +1493,6 @@ async def upsert_discord_role(
         existing.color = color
         existing.position = position
         await session.commit()
-        await session.refresh(existing)
         return existing
 
     role = DiscordRole(
@@ -1588,14 +1553,10 @@ async def delete_discord_roles_by_guild(
         削除したレコード数
     """
     result = await session.execute(
-        select(DiscordRole).where(DiscordRole.guild_id == guild_id)
+        delete(DiscordRole).where(DiscordRole.guild_id == guild_id)
     )
-    roles = list(result.scalars().all())
-    count = len(roles)
-    for role in roles:
-        await session.delete(role)
     await session.commit()
-    return count
+    return int(result.rowcount)  # type: ignore[attr-defined]
 
 
 async def get_discord_roles_by_guild(
@@ -1657,7 +1618,6 @@ async def upsert_discord_guild(
         existing.icon_hash = icon_hash
         existing.member_count = member_count
         await session.commit()
-        await session.refresh(existing)
         return existing
 
     guild = DiscordGuild(
@@ -1759,7 +1719,6 @@ async def upsert_discord_channel(
         existing.position = position
         existing.category_id = category_id
         await session.commit()
-        await session.refresh(existing)
         return existing
 
     channel = DiscordChannel(
@@ -1821,14 +1780,10 @@ async def delete_discord_channels_by_guild(
         削除したレコード数
     """
     result = await session.execute(
-        select(DiscordChannel).where(DiscordChannel.guild_id == guild_id)
+        delete(DiscordChannel).where(DiscordChannel.guild_id == guild_id)
     )
-    channels = list(result.scalars().all())
-    count = len(channels)
-    for channel in channels:
-        await session.delete(channel)
     await session.commit()
-    return count
+    return int(result.rowcount)  # type: ignore[attr-defined]
 
 
 async def get_discord_channels_by_guild(
@@ -2138,7 +2093,6 @@ async def update_ticket_panel(
     if description is not None:
         panel.description = description
     await session.commit()
-    await session.refresh(panel)
     return panel
 
 
@@ -2180,12 +2134,11 @@ async def add_ticket_panel_category(
     """パネルにカテゴリを関連付ける。"""
     # 現在の最大 position を取得
     result = await session.execute(
-        select(TicketPanelCategory)
-        .where(TicketPanelCategory.panel_id == panel_id)
-        .order_by(TicketPanelCategory.position.desc())
+        select(func.coalesce(func.max(TicketPanelCategory.position), -1)).where(
+            TicketPanelCategory.panel_id == panel_id
+        )
     )
-    items = list(result.scalars().all())
-    next_position = items[0].position + 1 if items else 0
+    next_position = result.scalar_one() + 1
 
     assoc = TicketPanelCategory(
         panel_id=panel_id,
@@ -2351,5 +2304,4 @@ async def update_ticket_status(
     if channel_id is not _UNSET:
         ticket.channel_id = channel_id  # type: ignore[assignment]
     await session.commit()
-    await session.refresh(ticket)
     return ticket

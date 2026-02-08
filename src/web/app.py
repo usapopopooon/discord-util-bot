@@ -1,5 +1,6 @@
 """FastAPI web admin application."""
 
+import asyncio
 import logging
 import os
 import re
@@ -122,6 +123,19 @@ app = FastAPI(title="Bot Admin", docs_url=None, redoc_url=None, lifespan=lifespa
 # セキュリティヘッダーミドルウェア
 # =============================================================================
 
+# Content Security Policy (モジュール定数: リクエストごとの文字列構築を回避)
+_CSP_HEADER = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+    "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+    "img-src 'self' data: https:; "
+    "font-src 'self' https:; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """レスポンスにセキュリティヘッダーを追加するミドルウェア."""
@@ -144,17 +158,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # Content Security Policy
         # Tailwind CSS CDN と inline styles/scripts を許可
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
-            "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
-            "img-src 'self' data: https:; "
-            "font-src 'self' https:; "
-            "connect-src 'self'; "
-            "frame-ancestors 'none'; "
-            "base-uri 'self'; "
-            "form-action 'self'"
-        )
+        response.headers["Content-Security-Policy"] = _CSP_HEADER
 
         # キャッシュ制御 (機密データを含むページ)
         if request.url.path not in ["/health", "/favicon.ico"]:
@@ -268,6 +272,16 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
+async def hash_password_async(password: str) -> str:
+    """bcrypt をスレッドプールで実行してイベントループをブロックしない。"""
+    return await asyncio.to_thread(hash_password, password)
+
+
+async def verify_password_async(password: str, password_hash: str) -> bool:
+    """bcrypt 検証をスレッドプールで実行してイベントループをブロックしない。"""
+    return await asyncio.to_thread(verify_password, password, password_hash)
+
+
 # =============================================================================
 # データベースユーティリティ
 # =============================================================================
@@ -288,7 +302,7 @@ async def get_or_create_admin(db: AsyncSession) -> AdminUser | None:
         # 環境変数から初期管理者を作成（認証済みとして設定）
         admin = AdminUser(
             email=INIT_ADMIN_EMAIL,
-            password_hash=hash_password(INIT_ADMIN_PASSWORD),
+            password_hash=await hash_password_async(INIT_ADMIN_PASSWORD),
             email_verified=True,
             password_changed_at=datetime.now(UTC),
         )
@@ -530,7 +544,9 @@ async def login_post(
         )
 
     # 認証情報を検証 (メールアドレスは大文字小文字を区別)
-    if admin.email != email or not verify_password(password, admin.password_hash):
+    if admin.email != email or not await verify_password_async(
+        password, admin.password_hash
+    ):
         record_failed_attempt(client_ip)
         return HTMLResponse(
             content=login_page(
@@ -690,7 +706,7 @@ async def initial_setup_post(
         )
 
     # パスワードを更新
-    admin.password_hash = hash_password(new_password)
+    admin.password_hash = await hash_password_async(new_password)
     admin.password_changed_at = datetime.now(UTC)
 
     # メールアドレスを直接更新（SMTP 未設定のため認証スキップ）
@@ -983,7 +999,7 @@ async def reset_password_post(
         )
 
     # パスワードを更新し、リセットトークンをクリア
-    admin.password_hash = hash_password(new_password)
+    admin.password_hash = await hash_password_async(new_password)
     admin.password_changed_at = datetime.now(UTC)
     admin.reset_token = None
     admin.reset_token_expires_at = None
@@ -1280,7 +1296,7 @@ async def settings_password_post(
         )
 
     # パスワードを更新
-    admin.password_hash = hash_password(new_password)
+    admin.password_hash = await hash_password_async(new_password)
     admin.password_changed_at = datetime.now(UTC)
     await db.commit()
 

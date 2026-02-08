@@ -58,6 +58,9 @@ class RolePanelCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        # ロールパネル message_id のインメモリキャッシュ
+        # None = 未ロード (フォールスルー), set = ロード済み (キャッシュ使用)
+        self._panel_message_ids: set[str] | None = None
 
     async def cog_load(self) -> None:
         """Cog 読み込み時に永続 View を登録し、定期同期タスクを開始する。"""
@@ -70,19 +73,23 @@ class RolePanelCog(commands.Cog):
 
     async def _register_all_views(self) -> None:
         """DB から全てのボタン式パネルを読み込み、永続 View を登録する。"""
+        new_ids: set[str] = set()
+        button_count = 0
         async with async_session() as db_session:
             panels = await get_all_role_panels(db_session)
             for panel in panels:
+                # message_id をキャッシュに追加 (reaction パネル用)
+                if panel.message_id:
+                    new_ids.add(panel.message_id)
                 if panel.panel_type == "button":
                     items = await get_role_panel_items(db_session, panel.id)
                     view = RolePanelView(panel.id, items)
                     self.bot.add_view(view)
                     logger.debug("Registered role panel view for panel %d", panel.id)
+                    button_count += 1
 
-        logger.info(
-            "Loaded %d role panel views",
-            len([p for p in panels if p.panel_type == "button"]),
-        )
+        self._panel_message_ids = new_ids
+        logger.info("Loaded %d role panel views", button_count)
 
     @tasks.loop(seconds=60)
     async def _sync_views_task(self) -> None:
@@ -378,6 +385,13 @@ class RolePanelCog(commands.Cog):
         """リアクションイベントを処理する。"""
         # Bot 自身のリアクションは無視
         if payload.user_id == self.bot.user.id:  # type: ignore[union-attr]
+            return
+
+        # インメモリキャッシュで高速フィルタリング (DB アクセスゼロ)
+        if (
+            self._panel_message_ids is not None
+            and str(payload.message_id) not in self._panel_message_ids
+        ):
             return
 
         async with async_session() as db_session:
@@ -764,6 +778,16 @@ class RolePanelCog(commands.Cog):
         パネルメッセージが手動で削除された場合、DB に孤立レコードが残るのを防ぐ。
         """
         message_id = str(payload.message_id)
+
+        # インメモリキャッシュで高速フィルタリング
+        if (
+            self._panel_message_ids is not None
+            and message_id not in self._panel_message_ids
+        ):
+            return
+
+        if self._panel_message_ids is not None:
+            self._panel_message_ids.discard(message_id)
         async with async_session() as db_session:
             deleted = await delete_role_panel_by_message_id(db_session, message_id)
             if deleted:
