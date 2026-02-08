@@ -93,7 +93,10 @@
     "coro",
     "Xbot",
     "newservice",
-    "Upserting"
+    "Upserting",
+    "noopener",
+    "banlogs",
+    "banneduser"
   ],
   "ignorePaths": [
     ".venv",

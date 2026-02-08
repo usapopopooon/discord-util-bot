@@ -41,6 +41,7 @@ from src.database.models import (
     AutoBanConfig,
     AutoBanLog,
     AutoBanRule,
+    BanLog,
     BumpConfig,
     BumpReminder,
     DiscordChannel,
@@ -74,6 +75,7 @@ from src.web.templates import (
     autoban_list_page,
     autoban_logs_page,
     autoban_settings_page,
+    ban_logs_page,
     bump_list_page,
     dashboard_page,
     email_change_page,
@@ -3276,6 +3278,29 @@ async def autoban_logs_view(
 
     return HTMLResponse(
         content=autoban_logs_page(
+            logs,
+            guilds_map=guilds_map,
+        )
+    )
+
+
+@app.get("/banlogs", response_model=None)
+async def ban_logs_view(
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """BAN ログ一覧ページ。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    result = await db.execute(
+        select(BanLog).order_by(BanLog.created_at.desc()).limit(100)
+    )
+    logs = list(result.scalars().all())
+    guilds_map, _ = await _get_discord_guilds_and_channels(db)
+
+    return HTMLResponse(
+        content=ban_logs_page(
             logs,
             guilds_map=guilds_map,
         )

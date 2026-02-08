@@ -7,6 +7,7 @@ import pytest
 from src.database.models import (
     AutoBanLog,
     AutoBanRule,
+    BanLog,
     BumpConfig,
     BumpReminder,
     Lobby,
@@ -26,6 +27,7 @@ from src.web.templates import (
     autoban_list_page,
     autoban_logs_page,
     autoban_settings_page,
+    ban_logs_page,
     bump_list_page,
     dashboard_page,
     lobbies_list_page,
@@ -2822,3 +2824,143 @@ class TestTicketPanelDetailPage:
         )
         assert "&lt;script&gt;" in result
         assert "<script>bad" not in result
+
+
+# ===========================================================================
+# Ban Logs ページ
+# ===========================================================================
+
+
+class TestBanLogsPage:
+    """ban_logs_page テンプレートのテスト。"""
+
+    @pytest.mark.parametrize(
+        ("is_autoban", "expected_badge", "expected_class"),
+        [
+            (False, "Manual", "bg-gray-600"),
+            (True, "AutoBan", "bg-red-600"),
+        ],
+    )
+    def test_source_label(
+        self, is_autoban: bool, expected_badge: str, expected_class: str
+    ) -> None:
+        """AutoBan / Manual のバッジが正しく表示される。"""
+        log = BanLog(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            reason="Test reason",
+            is_autoban=is_autoban,
+        )
+        result = ban_logs_page([log])
+        assert expected_badge in result
+        assert expected_class in result
+        assert "testuser" in result
+
+    def test_ban_logs_page_empty(self) -> None:
+        """ログなしで空メッセージが表示される。"""
+        result = ban_logs_page([])
+        assert "No ban logs" in result
+
+    def test_ban_logs_page_reason_prefix_stripped(self) -> None:
+        """[Autoban] プレフィックスが reason から除去される。"""
+        log = BanLog(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="baduser",
+            reason="[Autoban] some reason",
+            is_autoban=True,
+        )
+        result = ban_logs_page([log])
+        assert "some reason" in result
+        assert "[Autoban]" not in result
+
+    def test_reason_none_shows_dash(self) -> None:
+        """reason が None の場合は '-' が表示される。"""
+        log = BanLog(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="user1",
+            reason=None,
+            is_autoban=False,
+        )
+        result = ban_logs_page([log])
+        assert ">-<" in result
+
+    def test_ban_logs_page_breadcrumbs(self) -> None:
+        """パンくずリストに Dashboard と Ban Logs が含まれる。"""
+        result = ban_logs_page([])
+        assert "Dashboard" in result
+        assert "Ban Logs" in result
+
+    def test_ban_logs_page_guild_name_displayed(self) -> None:
+        """guilds_map にギルド名がある場合に表示される。"""
+        log = BanLog(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="testuser",
+            reason="Test",
+            is_autoban=False,
+        )
+        result = ban_logs_page([log], guilds_map={"123": "My Server"})
+        assert "My Server" in result
+
+    def test_guild_id_shown_when_no_name(self) -> None:
+        """guilds_map にない guild_id は黄色で表示される。"""
+        log = BanLog(
+            id=1,
+            guild_id="999888777",
+            user_id="456",
+            username="testuser",
+            reason="Test",
+            is_autoban=False,
+        )
+        result = ban_logs_page([log], guilds_map={})
+        assert "999888777" in result
+        assert "text-yellow-400" in result
+
+    @pytest.mark.parametrize(
+        "field_value",
+        ["<script>alert('xss')</script>", '"><img src=x>'],
+    )
+    def test_xss_escape_username(self, field_value: str) -> None:
+        """username の XSS がエスケープされる。"""
+        log = BanLog(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username=field_value,
+            reason="Test",
+            is_autoban=False,
+        )
+        result = ban_logs_page([log])
+        assert "<script>" not in result
+        assert "<img " not in result
+
+    def test_xss_escape_reason(self) -> None:
+        """reason の XSS がエスケープされる。"""
+        log = BanLog(
+            id=1,
+            guild_id="123",
+            user_id="456",
+            username="user1",
+            reason="<script>alert('xss')</script>",
+            is_autoban=False,
+        )
+        result = ban_logs_page([log])
+        assert "&lt;script&gt;" in result
+        assert "<script>alert" not in result
+
+
+class TestDashboardBanLogsCard:
+    """ダッシュボードの Ban Logs カードのテスト。"""
+
+    def test_ban_logs_card_exists(self) -> None:
+        """ダッシュボードに Ban Logs カードが存在する。"""
+        result = dashboard_page()
+        assert "/banlogs" in result
+        assert "Ban Logs" in result

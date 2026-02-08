@@ -20,6 +20,7 @@ from src.services.db_service import (
     clear_bump_reminder,
     create_autoban_log,
     create_autoban_rule,
+    create_ban_log,
     create_lobby,
     create_role_panel,
     create_sticky_message,
@@ -55,6 +56,7 @@ from src.services.db_service import (
     get_autoban_logs_by_guild,
     get_autoban_rule,
     get_autoban_rules_by_guild,
+    get_ban_logs,
     get_bump_config,
     get_bump_reminder,
     get_discord_channels_by_guild,
@@ -5097,3 +5099,83 @@ class TestDueBumpRemindersEdgeCases:
         )
         result = await get_due_bump_reminders(db_session, datetime.now(UTC))
         assert len(result) == 1
+
+
+class TestBanLogOperations:
+    """Tests for ban log database operations."""
+
+    @pytest.mark.parametrize(
+        ("reason", "is_autoban", "expected_reason"),
+        [
+            ("Spamming", False, "Spamming"),
+            ("[Autoban] No avatar set", True, "[Autoban] No avatar set"),
+            (None, False, None),
+        ],
+        ids=["manual", "autoban", "no_reason"],
+    )
+    async def test_create_ban_log(
+        self,
+        db_session: AsyncSession,
+        reason: str | None,
+        is_autoban: bool,
+        expected_reason: str | None,
+    ) -> None:
+        """BAN ログを作成できる。"""
+        log = await create_ban_log(
+            db_session,
+            guild_id="123",
+            user_id="456",
+            username="banneduser",
+            reason=reason,
+            is_autoban=is_autoban,
+        )
+        assert log.id is not None
+        assert log.guild_id == "123"
+        assert log.reason == expected_reason
+        assert log.is_autoban is is_autoban
+        assert log.created_at is not None
+
+    async def test_get_ban_logs(self, db_session: AsyncSession) -> None:
+        """Test retrieving ban logs ordered by created_at desc."""
+        import asyncio
+
+        log1 = await create_ban_log(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            username="user1",
+            reason="First ban",
+        )
+        # Small delay to ensure different created_at timestamps
+        await asyncio.sleep(0.05)
+        log2 = await create_ban_log(
+            db_session,
+            guild_id="456",
+            user_id="u2",
+            username="user2",
+            reason="Second ban",
+        )
+
+        logs = await get_ban_logs(db_session)
+        assert len(logs) == 2
+        # Most recent first
+        assert logs[0].id == log2.id
+        assert logs[1].id == log1.id
+
+    async def test_get_ban_logs_respects_limit(self, db_session: AsyncSession) -> None:
+        """Test that get_ban_logs respects the limit parameter."""
+        for i in range(5):
+            await create_ban_log(
+                db_session,
+                guild_id="123",
+                user_id=f"u{i}",
+                username=f"user{i}",
+            )
+
+        logs = await get_ban_logs(db_session, limit=3)
+        assert len(logs) == 3
+
+    async def test_get_ban_logs_empty(self, db_session: AsyncSession) -> None:
+        """Test retrieving ban logs when none exist."""
+        logs = await get_ban_logs(db_session)
+        assert logs == []

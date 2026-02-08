@@ -46,6 +46,7 @@ from src.database.models import (
     AutoBanConfig,
     AutoBanLog,
     AutoBanRule,
+    BanLog,
     BumpConfig,
     BumpReminder,
     DiscordChannel,
@@ -2005,6 +2006,41 @@ async def upsert_autoban_config(
 async def get_all_autoban_configs(session: AsyncSession) -> list[AutoBanConfig]:
     """全 autoban 設定を取得する。"""
     result = await session.execute(select(AutoBanConfig))
+    return list(result.scalars().all())
+
+
+# =============================================================================
+# BanLog (BAN ログ) 操作
+# =============================================================================
+
+
+async def create_ban_log(
+    session: AsyncSession,
+    guild_id: str,
+    user_id: str,
+    username: str,
+    reason: str | None = None,
+    is_autoban: bool = False,
+) -> BanLog:
+    """BAN ログを作成する。"""
+    log = BanLog(
+        guild_id=guild_id,
+        user_id=user_id,
+        username=username,
+        reason=reason,
+        is_autoban=is_autoban,
+    )
+    session.add(log)
+    await session.commit()
+    await session.refresh(log)
+    return log
+
+
+async def get_ban_logs(session: AsyncSession, limit: int = 100) -> list[BanLog]:
+    """全 BAN ログを取得する (新しい順)。"""
+    result = await session.execute(
+        select(BanLog).order_by(BanLog.created_at.desc()).limit(limit)
+    )
     return list(result.scalars().all())
 
 

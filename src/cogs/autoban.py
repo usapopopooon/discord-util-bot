@@ -33,6 +33,7 @@ from src.database.models import AutoBanRule
 from src.services.db_service import (
     create_autoban_log,
     create_autoban_rule,
+    create_ban_log,
     delete_autoban_rule,
     get_autoban_config,
     get_autoban_logs_by_guild,
@@ -170,6 +171,34 @@ class AutoBanCog(commands.Cog):
             if matched:
                 await self._execute_action(member, rule, reason)
                 break
+
+    @commands.Cog.listener()
+    async def on_member_ban(self, guild: discord.Guild, user: discord.User) -> None:
+        """BAN イベントを検知して BAN ログを記録する。"""
+        reason: str | None = None
+        is_autoban = False
+        try:
+            ban_entry = await guild.fetch_ban(user)
+            reason = ban_entry.reason
+            if reason and reason.startswith("[Autoban]"):
+                is_autoban = True
+        except discord.NotFound:
+            pass
+        except discord.HTTPException as e:
+            logger.warning("Failed to fetch ban info: %s", e)
+
+        try:
+            async with async_session() as session:
+                await create_ban_log(
+                    session,
+                    guild_id=str(guild.id),
+                    user_id=str(user.id),
+                    username=user.name,
+                    reason=reason,
+                    is_autoban=is_autoban,
+                )
+        except Exception:
+            logger.exception("Failed to create ban log for user %s", user.id)
 
     # ==========================================================================
     # ルールチェック
@@ -353,7 +382,7 @@ class AutoBanCog(commands.Cog):
             return
 
         color = 0xFF0000 if action_taken == "banned" else 0xFFA500
-        title = f"User {action_taken.capitalize()}"
+        title = f"[AutoBan] User {action_taken.capitalize()}"
 
         embed = discord.Embed(
             title=title,

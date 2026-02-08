@@ -16,6 +16,7 @@ from src.database.models import (
     AutoBanConfig,
     AutoBanLog,
     AutoBanRule,
+    BanLog,
     BumpConfig,
     BumpReminder,
     DiscordChannel,
@@ -1406,6 +1407,70 @@ class TestAutoBanConfigModel:
         )
         found = result.scalar_one()
         assert found.log_channel_id is None
+
+
+class TestBanLogModel:
+    """BanLog モデルのテスト。"""
+
+    async def test_create_ban_log(self, db_session: AsyncSession) -> None:
+        """BanLog を作成できる。"""
+        log = BanLog(
+            guild_id=snowflake(),
+            user_id=snowflake(),
+            username="banned_user",
+            reason="Spamming",
+            is_autoban=False,
+        )
+        db_session.add(log)
+        await db_session.commit()
+
+        result = await db_session.execute(select(BanLog).where(BanLog.id == log.id))
+        found = result.scalar_one()
+        assert found.username == "banned_user"
+        assert found.reason == "Spamming"
+        assert found.is_autoban is False
+        assert found.created_at is not None
+
+    async def test_is_autoban_default(self, db_session: AsyncSession) -> None:
+        """is_autoban のデフォルト値は False。"""
+        log = BanLog(
+            guild_id=snowflake(),
+            user_id=snowflake(),
+            username="user1",
+        )
+        db_session.add(log)
+        await db_session.commit()
+        await db_session.refresh(log)
+        assert log.is_autoban is False
+
+    async def test_reason_nullable(self, db_session: AsyncSession) -> None:
+        """reason は None にできる。"""
+        log = BanLog(
+            guild_id=snowflake(),
+            user_id=snowflake(),
+            username="user1",
+            reason=None,
+        )
+        db_session.add(log)
+        await db_session.commit()
+        await db_session.refresh(log)
+        assert log.reason is None
+
+    async def test_repr(self, db_session: AsyncSession) -> None:
+        """__repr__ がエラーなく動作する。"""
+        log = BanLog(
+            guild_id="123",
+            user_id="456",
+            username="user1",
+            is_autoban=True,
+        )
+        db_session.add(log)
+        await db_session.commit()
+        await db_session.refresh(log)
+        text = repr(log)
+        assert "123" in text
+        assert "456" in text
+        assert "True" in text
 
 
 class TestAutoBanConstraints:

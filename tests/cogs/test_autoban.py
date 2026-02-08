@@ -966,8 +966,20 @@ class TestSendLogEmbed:
         )
 
     @pytest.mark.asyncio
-    async def test_sends_embed_to_channel(self) -> None:
-        """有効なチャンネルに Embed が送信される。"""
+    @pytest.mark.parametrize(
+        ("action", "expected_title", "expected_color"),
+        [
+            ("banned", "[AutoBan] User Banned", 0xFF0000),
+            ("kicked", "[AutoBan] User Kicked", 0xFFA500),
+        ],
+    )
+    async def test_embed_title_and_color(
+        self,
+        action: str,
+        expected_title: str,
+        expected_color: int,
+    ) -> None:
+        """アクションに応じた Embed タイトルと色が設定される。"""
         cog = _make_cog()
         ch = self._make_text_channel()
         guild = self._make_guild(channel_return=ch)
@@ -976,7 +988,7 @@ class TestSendLogEmbed:
         await self._call(
             cog,
             guild,
-            action_taken="banned",
+            action_taken=action,
             rule=_make_rule(rule_type="no_avatar"),
             reason="No avatar set",
             member_name="baduser",
@@ -990,26 +1002,8 @@ class TestSendLogEmbed:
         guild.get_channel.assert_called_once_with(100)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "User Banned"
-        assert embed.color.value == 0xFF0000
-
-    @pytest.mark.asyncio
-    async def test_kick_embed_color(self) -> None:
-        """KICK の場合はオレンジ色の Embed が送信される。"""
-        cog = _make_cog()
-        ch = self._make_text_channel()
-        guild = self._make_guild(channel_return=ch)
-
-        await self._call(
-            cog,
-            guild,
-            action_taken="kicked",
-            rule=_make_rule(rule_type="no_avatar", action="kick"),
-        )
-
-        embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "User Kicked"
-        assert embed.color.value == 0xFFA500
+        assert embed.title == expected_title
+        assert embed.color.value == expected_color
 
     @pytest.mark.asyncio
     async def test_channel_not_found(self) -> None:
@@ -1027,25 +1021,19 @@ class TestSendLogEmbed:
         await self._call(cog, guild)
 
     @pytest.mark.asyncio
-    async def test_forbidden_error_handled(self) -> None:
-        """権限不足の場合は例外が伝播しない。"""
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            discord.Forbidden(MagicMock(), "forbidden"),
+            discord.HTTPException(MagicMock(), "error"),
+        ],
+        ids=["forbidden", "http_exception"],
+    )
+    async def test_send_exception_handled(self, exc: Exception) -> None:
+        """送信時の例外が伝播しない。"""
         cog = _make_cog()
-        ch = self._make_text_channel(
-            side_effect=discord.Forbidden(MagicMock(), "forbidden")
-        )
+        ch = self._make_text_channel(side_effect=exc)
         guild = self._make_guild(channel_return=ch)
-        # 例外は発生しない
-        await self._call(cog, guild)
-
-    @pytest.mark.asyncio
-    async def test_http_exception_handled(self) -> None:
-        """HTTPException の場合は例外が伝播しない。"""
-        cog = _make_cog()
-        ch = self._make_text_channel(
-            side_effect=discord.HTTPException(MagicMock(), "error")
-        )
-        guild = self._make_guild(channel_return=ch)
-        # 例外は発生しない
         await self._call(cog, guild)
 
     @pytest.mark.asyncio
@@ -1207,3 +1195,203 @@ class TestExecuteActionWithLogChannel:
             )
             mock_send.assert_called_once()
             assert mock_send.call_args.kwargs["action_taken"] == "kicked"
+
+
+# ---------------------------------------------------------------------------
+# TestOnMemberBan: on_member_ban イベントのテスト
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_session() -> MagicMock:
+    """Create a mock async session context manager."""
+    mock_session = MagicMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=None)
+    return mock_session
+
+
+def _make_guild_and_user(
+    *,
+    guild_id: int = 789,
+    user_id: int = 12345,
+    user_name: str = "testuser",
+) -> tuple[MagicMock, MagicMock]:
+    """Create mock guild and user for on_member_ban tests."""
+    guild = MagicMock(spec=discord.Guild)
+    guild.id = guild_id
+    guild.name = "Test Server"
+    guild.fetch_ban = AsyncMock()
+    user = MagicMock(spec=discord.User)
+    user.id = user_id
+    user.name = user_name
+    return guild, user
+
+
+class TestOnMemberBan:
+    """on_member_ban イベントのテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_creates_log(self) -> None:
+        """BAN イベントで BanLog が作成される。"""
+        cog = _make_cog()
+        guild, user = _make_guild_and_user()
+        ban_entry = MagicMock()
+        ban_entry.reason = "Spam behavior"
+        guild.fetch_ban.return_value = ban_entry
+        mock_session = _make_mock_session()
+
+        with (
+            patch(
+                "src.cogs.autoban.async_session",
+                return_value=mock_session,
+            ),
+            patch(
+                "src.cogs.autoban.create_ban_log",
+                new_callable=AsyncMock,
+            ) as mock_create,
+        ):
+            await cog.on_member_ban(guild, user)
+            mock_create.assert_called_once_with(
+                mock_session,
+                guild_id="789",
+                user_id="12345",
+                username="testuser",
+                reason="Spam behavior",
+                is_autoban=False,
+            )
+
+    @pytest.mark.asyncio
+    async def test_autoban_detected(self) -> None:
+        """理由が [Autoban] で始まる場合 is_autoban=True。"""
+        cog = _make_cog()
+        guild, user = _make_guild_and_user()
+        ban_entry = MagicMock()
+        ban_entry.reason = "[Autoban] Username match"
+        guild.fetch_ban.return_value = ban_entry
+        mock_session = _make_mock_session()
+
+        with (
+            patch(
+                "src.cogs.autoban.async_session",
+                return_value=mock_session,
+            ),
+            patch(
+                "src.cogs.autoban.create_ban_log",
+                new_callable=AsyncMock,
+            ) as mock_create,
+        ):
+            await cog.on_member_ban(guild, user)
+            mock_create.assert_called_once_with(
+                mock_session,
+                guild_id="789",
+                user_id="12345",
+                username="testuser",
+                reason="[Autoban] Username match",
+                is_autoban=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_manual_ban(self) -> None:
+        """通常の理由では is_autoban=False。"""
+        cog = _make_cog()
+        guild, user = _make_guild_and_user()
+        ban_entry = MagicMock()
+        ban_entry.reason = "Manual ban by admin"
+        guild.fetch_ban.return_value = ban_entry
+        mock_session = _make_mock_session()
+
+        with (
+            patch(
+                "src.cogs.autoban.async_session",
+                return_value=mock_session,
+            ),
+            patch(
+                "src.cogs.autoban.create_ban_log",
+                new_callable=AsyncMock,
+            ) as mock_create,
+        ):
+            await cog.on_member_ban(guild, user)
+            call_kwargs = mock_create.call_args
+            assert call_kwargs.kwargs["is_autoban"] is False
+            assert call_kwargs.kwargs["reason"] == "Manual ban by admin"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            discord.HTTPException(MagicMock(), "error"),
+            discord.NotFound(MagicMock(), "not found"),
+        ],
+        ids=["http_exception", "not_found"],
+    )
+    async def test_fetch_ban_exception(self, exc: Exception) -> None:
+        """fetch_ban が例外を返してもログは作成される。"""
+        cog = _make_cog()
+        guild, user = _make_guild_and_user()
+        guild.fetch_ban = AsyncMock(side_effect=exc)
+        mock_session = _make_mock_session()
+
+        with (
+            patch(
+                "src.cogs.autoban.async_session",
+                return_value=mock_session,
+            ),
+            patch(
+                "src.cogs.autoban.create_ban_log",
+                new_callable=AsyncMock,
+            ) as mock_create,
+        ):
+            await cog.on_member_ban(guild, user)
+            mock_create.assert_called_once()
+            call_kwargs = mock_create.call_args
+            assert call_kwargs.kwargs["reason"] is None
+            assert call_kwargs.kwargs["is_autoban"] is False
+
+    @pytest.mark.asyncio
+    async def test_create_ban_log_exception_handled(self) -> None:
+        """create_ban_log が例外を出しても伝播しない。"""
+        cog = _make_cog()
+        guild, user = _make_guild_and_user()
+        ban_entry = MagicMock()
+        ban_entry.reason = "Spam"
+        guild.fetch_ban.return_value = ban_entry
+        mock_session = _make_mock_session()
+
+        with (
+            patch(
+                "src.cogs.autoban.async_session",
+                return_value=mock_session,
+            ),
+            patch(
+                "src.cogs.autoban.create_ban_log",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("DB error"),
+            ),
+        ):
+            # 例外は伝播しない
+            await cog.on_member_ban(guild, user)
+
+    @pytest.mark.asyncio
+    async def test_reason_none_from_ban_entry(self) -> None:
+        """ban_entry.reason が None の場合も正しく処理される。"""
+        cog = _make_cog()
+        guild, user = _make_guild_and_user()
+        ban_entry = MagicMock()
+        ban_entry.reason = None
+        guild.fetch_ban.return_value = ban_entry
+        mock_session = _make_mock_session()
+
+        with (
+            patch(
+                "src.cogs.autoban.async_session",
+                return_value=mock_session,
+            ),
+            patch(
+                "src.cogs.autoban.create_ban_log",
+                new_callable=AsyncMock,
+            ) as mock_create,
+        ):
+            await cog.on_member_ban(guild, user)
+            call_kwargs = mock_create.call_args
+            assert call_kwargs.kwargs["reason"] is None
+            assert call_kwargs.kwargs["is_autoban"] is False

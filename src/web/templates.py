@@ -1,5 +1,6 @@
 """HTML templates using f-strings and Tailwind CSS."""
 
+import re
 from html import escape
 from typing import TYPE_CHECKING
 
@@ -9,6 +10,7 @@ if TYPE_CHECKING:
     from src.database.models import (
         AutoBanLog,
         AutoBanRule,
+        BanLog,
         BumpConfig,
         BumpReminder,
         Lobby,
@@ -360,6 +362,10 @@ def dashboard_page(email: str = "Admin") -> str:
             <a href="/autoban" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
                 <h2 class="text-lg font-semibold mb-2">Autoban</h2>
                 <p class="text-gray-400 text-sm">Manage autoban rules and logs</p>
+            </a>
+            <a href="/banlogs" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
+                <h2 class="text-lg font-semibold mb-2">Ban Logs</h2>
+                <p class="text-gray-400 text-sm">View all ban logs</p>
             </a>
             <a href="/tickets" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
                 <h2 class="text-lg font-semibold mb-2">Tickets</h2>
@@ -1008,11 +1014,11 @@ def lobbies_list_page(
 
         row_parts.append(f"""
         <tr class="border-b border-gray-700">
-            <td class="py-3 px-4">{lobby.id}</td>
-            <td class="py-3 px-4">{guild_display}</td>
-            <td class="py-3 px-4">{channel_display}</td>
-            <td class="py-3 px-4">{lobby.default_user_limit or "無制限"}</td>
-            <td class="py-3 px-4">{session_count}</td>
+            <td class="py-3 px-4 align-middle">{lobby.id}</td>
+            <td class="py-3 px-4 align-middle">{guild_display}</td>
+            <td class="py-3 px-4 align-middle">{channel_display}</td>
+            <td class="py-3 px-4 align-middle">{lobby.default_user_limit or "無制限"}</td>
+            <td class="py-3 px-4 align-middle">{session_count}</td>
             <td class="py-3 px-4 align-middle">
                 <form method="POST" action="/lobbies/{lobby.id}/delete"
                       onsubmit="return confirm('Delete this lobby?');">
@@ -1145,13 +1151,13 @@ def sticky_list_page(
 
         row_parts.append(f"""
         <tr class="border-b border-gray-700">
-            <td class="py-3 px-4">{guild_display}</td>
-            <td class="py-3 px-4">{channel_display}</td>
-            <td class="py-3 px-4">{title_display}</td>
-            <td class="py-3 px-4 text-gray-400 text-sm">{desc_display}</td>
-            <td class="py-3 px-4">{escape(sticky.message_type)}</td>
-            <td class="py-3 px-4">{sticky.cooldown_seconds}s</td>
-            <td class="py-3 px-4">
+            <td class="py-3 px-4 align-middle">{guild_display}</td>
+            <td class="py-3 px-4 align-middle">{channel_display}</td>
+            <td class="py-3 px-4 align-middle">{title_display}</td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">{desc_display}</td>
+            <td class="py-3 px-4 align-middle">{escape(sticky.message_type)}</td>
+            <td class="py-3 px-4 align-middle">{sticky.cooldown_seconds}s</td>
+            <td class="py-3 px-4 align-middle">
                 <span class="inline-block w-4 h-4 rounded" style="background-color: {color_display if sticky.color else "transparent"}"></span>
                 {color_display}
             </td>
@@ -1273,9 +1279,9 @@ def bump_list_page(
         channel_display = format_channel_display(config.guild_id, config.channel_id)
         config_row_parts.append(f"""
         <tr class="border-b border-gray-700">
-            <td class="py-3 px-4">{guild_display}</td>
-            <td class="py-3 px-4">{channel_display}</td>
-            <td class="py-3 px-4 text-gray-400 text-sm">
+            <td class="py-3 px-4 align-middle">{guild_display}</td>
+            <td class="py-3 px-4 align-middle">{channel_display}</td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">
                 {format_datetime(config.created_at)}
             </td>
             <td class="py-3 px-4 align-middle">
@@ -1310,12 +1316,12 @@ def bump_list_page(
         channel_display = format_channel_display(reminder.guild_id, reminder.channel_id)
         reminder_row_parts.append(f"""
         <tr class="border-b border-gray-700">
-            <td class="py-3 px-4">{reminder.id}</td>
-            <td class="py-3 px-4">{guild_display}</td>
-            <td class="py-3 px-4">{escape(reminder.service_name)}</td>
-            <td class="py-3 px-4">{channel_display}</td>
-            <td class="py-3 px-4 text-gray-400 text-sm">{remind_at}</td>
-            <td class="py-3 px-4">
+            <td class="py-3 px-4 align-middle">{reminder.id}</td>
+            <td class="py-3 px-4 align-middle">{guild_display}</td>
+            <td class="py-3 px-4 align-middle">{escape(reminder.service_name)}</td>
+            <td class="py-3 px-4 align-middle">{channel_display}</td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">{remind_at}</td>
+            <td class="py-3 px-4 align-middle">
                 <span class="{status_class}">{status}</span>
             </td>
             <td class="py-3 px-4 align-middle">
@@ -1484,19 +1490,19 @@ def role_panels_list_page(
 
         panel_row_parts.append(f"""
         <tr class="border-b border-gray-700">
-            <td class="py-3 px-4">
+            <td class="py-3 px-4 align-middle">
                 <a href="/rolepanels/{panel.id}"
                    class="font-medium text-blue-400 hover:text-blue-300">
                     {escape(panel.title)}
                 </a>
             </td>
-            <td class="py-3 px-4 whitespace-nowrap">
+            <td class="py-3 px-4 align-middle whitespace-nowrap">
                 {panel_type_badge}{remove_reaction_badge}
             </td>
-            <td class="py-3 px-4">{guild_display}</td>
-            <td class="py-3 px-4">{channel_display}</td>
-            <td class="py-3 px-4 text-sm">{len(items)} role(s)</td>
-            <td class="py-3 px-4 text-gray-400 text-sm">{created_at}</td>
+            <td class="py-3 px-4 align-middle">{guild_display}</td>
+            <td class="py-3 px-4 align-middle">{channel_display}</td>
+            <td class="py-3 px-4 align-middle text-sm">{len(items)} role(s)</td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created_at}</td>
             <td class="py-3 px-4 align-middle">
                 <div class="flex gap-2 items-center">
                     <a href="/rolepanels/{panel.id}"
@@ -2483,20 +2489,24 @@ def role_panel_detail_page(
             role_id_display = f'<span class="font-mono">{escape(item.role_id)}</span>'
 
         label_cell = (
-            f'<td class="py-3 px-4">{label_display}</td>' if is_button_type else ""
+            f'<td class="py-3 px-4 align-middle">{label_display}</td>'
+            if is_button_type
+            else ""
         )
         style_cell = (
-            f'<td class="py-3 px-4">{style_display}</td>' if is_button_type else ""
+            f'<td class="py-3 px-4 align-middle">{style_display}</td>'
+            if is_button_type
+            else ""
         )
         items_row_parts.append(f"""
         <tr class="border-b border-gray-700" data-item-id="{item.id}" draggable="true">
-            <td class="py-3 px-2 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200">
+            <td class="py-3 px-2 align-middle cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-200">
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                     <path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm-6 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
                 </svg>
             </td>
-            <td class="py-3 px-4 text-xl">{escape(item.emoji)}</td>
-            <td class="py-3 px-4">{role_id_display}</td>
+            <td class="py-3 px-4 align-middle text-xl">{escape(item.emoji)}</td>
+            <td class="py-3 px-4 align-middle">{role_id_display}</td>
             {label_cell}
             {style_cell}
             <td class="py-3 px-4 align-middle">
@@ -3024,7 +3034,8 @@ def autoban_list_page(
                 <div class="flex gap-2 items-center">
                     <a href="/autoban/{rule.id}/edit"
                        class="text-blue-400 hover:text-blue-300 text-sm">Edit</a>
-                    <form method="POST" action="/autoban/{rule.id}/toggle">
+                    <form method="POST" action="/autoban/{rule.id}/toggle"
+                          class="inline">
                         {_csrf_field(csrf_token)}
                         <button type="submit"
                                 class="text-blue-400 hover:text-blue-300 text-sm">
@@ -3032,6 +3043,7 @@ def autoban_list_page(
                         </button>
                     </form>
                     <form method="POST" action="/autoban/{rule.id}/delete"
+                          class="inline"
                           onsubmit="return confirm('Delete this autoban rule?');">
                         {_csrf_field(csrf_token)}
                         <button type="submit"
@@ -3400,15 +3412,15 @@ def autoban_logs_page(
 
         row_parts.append(f"""
         <tr class="border-b border-gray-700">
-            <td class="py-3 px-4">{guild_display}</td>
-            <td class="py-3 px-4 font-mono text-sm">{escape(log.user_id)}</td>
-            <td class="py-3 px-4">{escape(log.username)}</td>
-            <td class="py-3 px-4">
+            <td class="py-3 px-4 align-middle">{guild_display}</td>
+            <td class="py-3 px-4 align-middle font-mono text-sm">{escape(log.user_id)}</td>
+            <td class="py-3 px-4 align-middle">{escape(log.username)}</td>
+            <td class="py-3 px-4 align-middle">
                 <span class="{action_class}">{escape(log.action_taken)}</span>
             </td>
-            <td class="py-3 px-4 text-gray-400 text-sm">{escape(log.reason)}</td>
-            <td class="py-3 px-4 text-gray-400 text-sm">#{log.rule_id}</td>
-            <td class="py-3 px-4 text-gray-400 text-sm">{created}</td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">{escape(log.reason)}</td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">#{log.rule_id}</td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created}</td>
         </tr>
         """)
     rows = "".join(row_parts)
@@ -3455,6 +3467,95 @@ def autoban_logs_page(
     </div>
     """
     return _base("Autoban Logs", content)
+
+
+def ban_logs_page(
+    logs: list["BanLog"],
+    guilds_map: dict[str, str] | None = None,
+) -> str:
+    """Ban logs page template."""
+    if guilds_map is None:
+        guilds_map = {}
+
+    row_parts: list[str] = []
+    for log in logs:
+        guild_name = guilds_map.get(log.guild_id)
+        if guild_name:
+            guild_display = (
+                f'<span class="font-medium">{escape(guild_name)}</span>'
+                f'<br><span class="font-mono text-xs text-gray-500">'
+                f"{escape(log.guild_id)}</span>"
+            )
+        else:
+            guild_display = (
+                f'<span class="font-mono text-yellow-400">{escape(log.guild_id)}</span>'
+            )
+
+        # Source label
+        if log.is_autoban:
+            source_html = '<span class="bg-red-600 text-white text-xs px-2 py-0.5 rounded">AutoBan</span>'
+        else:
+            source_html = '<span class="bg-gray-600 text-gray-300 text-xs px-2 py-0.5 rounded">Manual</span>'
+
+        # Reason display: strip [Autoban] prefix if present
+        reason_display = log.reason or "-"
+        if reason_display.startswith("[Autoban] "):
+            reason_display = reason_display[len("[Autoban] ") :]
+
+        created = format_datetime(log.created_at)
+
+        row_parts.append(f"""
+        <tr class="border-b border-gray-700">
+            <td class="py-3 px-4 align-middle">{guild_display}</td>
+            <td class="py-3 px-4 align-middle font-mono text-sm">{escape(log.user_id)}</td>
+            <td class="py-3 px-4 align-middle">{escape(log.username)}</td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">{escape(reason_display)}</td>
+            <td class="py-3 px-4 align-middle">{source_html}</td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created}</td>
+        </tr>
+        """)
+    rows = "".join(row_parts)
+
+    if not logs:
+        rows = """
+        <tr>
+            <td colspan="6" class="py-8 text-center text-gray-500">
+                No ban logs
+            </td>
+        </tr>
+        """
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            "Ban Logs",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Ban Logs", None),
+            ],
+        )
+    }
+        <div class="bg-gray-800 rounded-lg overflow-hidden overflow-x-auto">
+            <table class="w-full">
+                <thead class="bg-gray-700">
+                    <tr>
+                        <th class="py-3 px-4 text-left">Server</th>
+                        <th class="py-3 px-4 text-left">User ID</th>
+                        <th class="py-3 px-4 text-left">Username</th>
+                        <th class="py-3 px-4 text-left">Reason</th>
+                        <th class="py-3 px-4 text-left">Source</th>
+                        <th class="py-3 px-4 text-left">Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    """
+    return _base("Ban Logs", content)
 
 
 def autoban_settings_page(
@@ -3687,6 +3788,171 @@ def ticket_list_page(
     return _base("Tickets", content)
 
 
+# --- Discord-like transcript rendering ---
+
+_DISCORD_AVATAR_COLORS = [
+    "#5865F2",
+    "#57F287",
+    "#EB459E",
+    "#ED4245",
+    "#FAA61A",
+    "#9B59B6",
+    "#1ABC9C",
+    "#E91E63",
+    "#3498DB",
+    "#2ECC71",
+]
+
+_TRANSCRIPT_MSG_RE = re.compile(
+    r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (.+?): (.+)$"
+)
+_TRANSCRIPT_SYS_RE = re.compile(r"^===.*===$")
+_TRANSCRIPT_META_RE = re.compile(r"^(Created by|Created at): (.+)$")
+
+
+def _discord_avatar_color(username: str) -> str:
+    """Get a consistent avatar color based on username hash."""
+    return _DISCORD_AVATAR_COLORS[hash(username) % len(_DISCORD_AVATAR_COLORS)]
+
+
+def _format_discord_content(content: str) -> str:
+    """Format message content with styled attachments and stickers."""
+    att_match = re.search(r"\[Attachments?: (.+?)\]", content)
+    stk_match = re.search(r"\[Stickers?: (.+?)\]", content)
+
+    main = content
+    if att_match:
+        main = main.replace(att_match.group(0), "").strip()
+    if stk_match:
+        main = main.replace(stk_match.group(0), "").strip()
+
+    parts: list[str] = []
+    if main:
+        parts.append(escape(main))
+
+    if att_match:
+        for url in att_match.group(1).split(", "):
+            eu = escape(url.strip())
+            parts.append(
+                f'<div style="margin-top:4px;">'
+                f'<a href="{eu}" target="_blank" rel="noopener" '
+                f'style="color:#00a8fc;font-size:13px;">'
+                f"\U0001f4ce {eu}</a></div>"
+            )
+
+    if stk_match:
+        parts.append(
+            f'<div style="margin-top:4px;color:#949ba4;font-size:13px;">'
+            f"\U0001f3f7\ufe0f {escape(stk_match.group(1))}</div>"
+        )
+
+    return "".join(parts) if parts else escape(content)
+
+
+def _render_discord_transcript(transcript: str) -> str:
+    """Render transcript as Discord dark mode chat UI."""
+    lines = transcript.split("\n")
+    parts: list[str] = []
+
+    parts.append(
+        "<style>"
+        ".dc-msg:hover{background-color:#2e3035}"
+        ".dc-msg .dc-ts{display:none}"
+        ".dc-msg:hover .dc-ts{display:inline}"
+        ".dc-chat::-webkit-scrollbar{width:8px}"
+        ".dc-chat::-webkit-scrollbar-track{background:#2b2d31}"
+        ".dc-chat::-webkit-scrollbar-thumb{background:#1a1b1e;border-radius:4px}"
+        "</style>"
+    )
+
+    parts.append(
+        '<div class="mt-6">'
+        '<h3 class="text-lg font-semibold mb-2">Transcript</h3>'
+        '<div class="dc-chat" style="background-color:#313338;border-radius:8px;padding:8px 0;max-height:600px;overflow-y:auto;">'
+    )
+
+    prev_user: str | None = None
+    has_messages = False
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        # System lines (=== ... ===)
+        if _TRANSCRIPT_SYS_RE.match(line):
+            prev_user = None
+            parts.append(
+                '<div style="text-align:center;padding:4px 16px;'
+                f'color:#949ba4;font-size:12px;">{escape(line)}</div>'
+            )
+            continue
+
+        # Meta lines (Created by/at)
+        if _TRANSCRIPT_META_RE.match(line):
+            parts.append(
+                '<div style="text-align:center;padding:2px 16px;'
+                f'color:#949ba4;font-size:12px;">{escape(line)}</div>'
+            )
+            continue
+
+        # Chat messages
+        m = _TRANSCRIPT_MSG_RE.match(line)
+        if m:
+            ts, username, content = m.groups()
+            color = _discord_avatar_color(username)
+            initial = escape(username[0].upper()) if username else "?"
+            content_html = _format_discord_content(content)
+            short_ts = escape(ts.split(" ")[1][:5])
+
+            if username == prev_user:
+                # Continuation message (compact, with hover timestamp)
+                parts.append(
+                    '<div class="dc-msg" style="padding:2px 16px 2px 72px;position:relative;line-height:1.375;">'
+                    '<span class="dc-ts" style="position:absolute;left:0;width:72px;text-align:center;'
+                    f'font-size:11px;color:#949ba4;line-height:22px;">{short_ts}</span>'
+                    f'<span style="color:#dbdee1;font-size:14px;">{content_html}</span>'
+                    "</div>"
+                )
+            else:
+                # New message group with avatar
+                prev_user = username
+                mt = "margin-top:16px;" if has_messages else ""
+                has_messages = True
+                parts.append(
+                    f'<div class="dc-msg" style="padding:4px 16px;display:flex;{mt}">'
+                    # Avatar circle
+                    f'<div style="width:40px;height:40px;border-radius:50%;background-color:{color};'
+                    f"display:flex;align-items:center;justify-content:center;flex-shrink:0;"
+                    f'margin-right:16px;margin-top:2px;">'
+                    f'<span style="color:white;font-weight:600;font-size:16px;">{initial}</span></div>'
+                    # Username + timestamp + content
+                    f'<div style="min-width:0;flex:1;">'
+                    f'<div><span style="color:{color};font-weight:600;font-size:14px;margin-right:8px;">'
+                    f"{escape(username)}</span>"
+                    f'<span style="color:#949ba4;font-size:12px;">{escape(ts)}</span></div>'
+                    f'<div style="color:#dbdee1;font-size:14px;line-height:1.375;'
+                    f'word-wrap:break-word;overflow-wrap:break-word;">'
+                    f"{content_html}</div></div></div>"
+                )
+            continue
+
+        # Fallback for unrecognized lines
+        prev_user = None
+        style = (
+            "color:#f38ba8;font-style:italic;"
+            if line.startswith("[Failed to fetch")
+            else "color:#949ba4;"
+        )
+        parts.append(
+            f'<div style="padding:4px 16px 4px 72px;font-size:13px;{style}">'
+            f"{escape(line)}</div>"
+        )
+
+    parts.append("</div></div>")
+    return "".join(parts)
+
+
 def ticket_detail_page(
     ticket: "Ticket",
     category_name: str = "",
@@ -3732,12 +3998,7 @@ def ticket_detail_page(
     # トランスクリプト
     transcript_html = ""
     if ticket.transcript:
-        transcript_html = f"""
-        <div class="mt-6">
-            <h3 class="text-lg font-semibold mb-2">Transcript</h3>
-            <pre class="bg-gray-700 rounded p-4 overflow-x-auto text-sm text-gray-300 whitespace-pre-wrap">{escape(ticket.transcript)}</pre>
-        </div>
-        """
+        transcript_html = _render_discord_transcript(ticket.transcript)
     elif ticket.status != "closed":
         transcript_html = """
         <div class="mt-6">
@@ -3845,16 +4106,16 @@ def ticket_panels_list_page(
 
         row_parts.append(f"""
         <tr class="border-b border-gray-700">
-            <td class="py-3 px-4">
+            <td class="py-3 px-4 align-middle">
                 <a href="/tickets/panels/{panel.id}"
                    class="font-medium text-blue-400 hover:text-blue-300">
                     {escape(panel.title)}
                 </a>
             </td>
-            <td class="py-3 px-4 text-sm">{escape(guild_name)}</td>
-            <td class="py-3 px-4 text-sm">{escape(get_channel_name(panel.guild_id, panel.channel_id))}</td>
-            <td class="py-3 px-4 text-sm">{posted}</td>
-            <td class="py-3 px-4 text-gray-400 text-sm">{created}</td>
+            <td class="py-3 px-4 align-middle text-sm">{escape(guild_name)}</td>
+            <td class="py-3 px-4 align-middle text-sm">{escape(get_channel_name(panel.guild_id, panel.channel_id))}</td>
+            <td class="py-3 px-4 align-middle text-sm">{posted}</td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created}</td>
             <td class="py-3 px-4 align-middle">
                 <form method="POST" action="/tickets/panels/{panel.id}/delete"
                       onsubmit="return confirm('Delete this panel?');">
@@ -4190,8 +4451,8 @@ def ticket_panel_detail_page(
 
         button_row_parts.append(f"""
         <tr class="border-b border-gray-700">
-            <td class="py-3 px-4 text-sm">{escape(cat_name)}</td>
-            <td class="py-3 px-4">
+            <td class="py-3 px-4 align-middle text-sm">{escape(cat_name)}</td>
+            <td class="py-3 px-4 align-middle">
                 <form method="POST"
                       action="/tickets/panels/{panel.id}/buttons/{assoc.id}/edit"
                       class="flex gap-2 items-center flex-wrap">

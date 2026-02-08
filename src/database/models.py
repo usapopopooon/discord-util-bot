@@ -1240,6 +1240,45 @@ class AutoBanLog(Base):
         )
 
 
+class BanLog(Base):
+    """BAN ログテーブル。
+
+    Discord 上の全ての BAN (AutoBan + 手動) を記録する。
+
+    Attributes:
+        id (int): 自動採番の主キー。
+        guild_id (str): Discord サーバーの ID。インデックス付き。
+        user_id (str): BAN されたユーザーの ID。
+        username (str): BAN 時のユーザー名。
+        reason (str | None): BAN 理由 (なしの場合 None)。
+        is_autoban (bool): AutoBan による BAN かどうか。
+        created_at (datetime): 実行日時 (UTC)。
+
+    Notes:
+        - テーブル名: ``ban_logs``
+        - AutoBan / 手動 BAN を問わず全ての BAN を記録
+    """
+
+    __tablename__ = "ban_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    username: Mapped[str] = mapped_column(String, nullable=False)
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_autoban: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return (
+            f"<BanLog(id={self.id}, guild_id={self.guild_id}, "
+            f"user_id={self.user_id}, is_autoban={self.is_autoban})>"
+        )
+
+
 class TicketCategory(Base):
     """チケットカテゴリ設定テーブル。
 

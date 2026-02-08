@@ -16,6 +16,7 @@ from src.database.models import (
     AutoBanConfig,
     AutoBanLog,
     AutoBanRule,
+    BanLog,
     BumpConfig,
     BumpReminder,
     DiscordChannel,
@@ -11269,6 +11270,55 @@ class TestAutobanRoutes:
 
 
 # ===========================================================================
+# BAN ログルート
+# ===========================================================================
+
+
+class TestBanLogRoutes:
+    """/banlogs ルートのテスト。"""
+
+    async def test_banlogs_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.get("/banlogs", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_banlogs_page(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """データがある場合は一覧が表示される。"""
+        log = BanLog(
+            guild_id="123456789012345678",
+            user_id="999888777",
+            username="banneduser",
+            reason="Spamming",
+            is_autoban=False,
+        )
+        db_session.add(log)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/banlogs")
+        assert response.status_code == 200
+        assert "banneduser" in response.text
+        assert "Spamming" in response.text
+
+    async def test_banlogs_empty(self, authenticated_client: AsyncClient) -> None:
+        """ログがない場合は空メッセージが表示される。"""
+        response = await authenticated_client.get("/banlogs")
+        assert response.status_code == 200
+        assert "No ban logs" in response.text
+
+    async def test_dashboard_shows_ban_logs_link(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """ダッシュボードに Ban Logs リンクが表示される。"""
+        response = await authenticated_client.get("/dashboard")
+        assert response.status_code == 200
+        assert "/banlogs" in response.text
+        assert "Ban Logs" in response.text
+
+
+# ===========================================================================
 # チケットルート
 # ===========================================================================
 
@@ -11854,7 +11904,7 @@ class TestTicketDetailExtra:
             category_id=cat.id,
             ticket_number=10,
             status="closed",
-            transcript="=== Ticket #10 ===\n[10:00] user: Hello",
+            transcript="=== Ticket #10 ===\n[2025-01-01 10:00:00] user: Hello",
         )
         db_session.add(ticket)
         await db_session.commit()
