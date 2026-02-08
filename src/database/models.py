@@ -49,7 +49,21 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    mapped_column,
+    relationship,
+    validates,
+)
+
+
+def _validate_discord_id(value: str, field_name: str) -> str:
+    """Discord ID (数字文字列) のバリデーション。"""
+    if not isinstance(value, str) or not value.isdigit():
+        msg = f"{field_name} must be a digit string, got: {value!r}"
+        raise ValueError(msg)
+    return value
 
 
 class Base(DeclarativeBase):
@@ -243,6 +257,10 @@ class Lobby(Base):
         "VoiceSession", back_populates="lobby", cascade="all, delete-orphan"
     )
 
+    @validates("guild_id", "lobby_channel_id")
+    def _validate_ids(self, key: str, value: str) -> str:
+        return _validate_discord_id(value, key)
+
     def __repr__(self) -> str:
         """デバッグ用の文字列表現。print() や logger で表示される。"""
         return (
@@ -335,6 +353,17 @@ class VoiceSession(Base):
     # --- リレーション ---
     # この VC セッションが属する親ロビー。lobby.sessions の逆方向
     lobby: Mapped["Lobby"] = relationship("Lobby", back_populates="sessions")
+
+    @validates("channel_id", "owner_id")
+    def _validate_ids(self, key: str, value: str) -> str:
+        return _validate_discord_id(value, key)
+
+    @validates("user_limit")
+    def _validate_user_limit(self, _key: str, value: int) -> int:
+        if value < 0:
+            msg = f"user_limit must be >= 0, got: {value}"
+            raise ValueError(msg)
+        return value
 
     def __repr__(self) -> str:
         """デバッグ用の文字列表現。"""
@@ -613,6 +642,20 @@ class StickyMessage(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
 
+    @validates("color")
+    def _validate_color(self, _key: str, value: int | None) -> int | None:
+        if value is not None and not (0 <= value <= 0xFFFFFF):
+            msg = f"color must be 0-0xFFFFFF, got: {value}"
+            raise ValueError(msg)
+        return value
+
+    @validates("cooldown_seconds")
+    def _validate_cooldown(self, _key: str, value: int) -> int:
+        if value < 0:
+            msg = f"cooldown_seconds must be >= 0, got: {value}"
+            raise ValueError(msg)
+        return value
+
     def __repr__(self) -> str:
         """デバッグ用の文字列表現。"""
         return (
@@ -717,6 +760,20 @@ class RolePanel(Base):
     items: Mapped[list["RolePanelItem"]] = relationship(
         "RolePanelItem", back_populates="panel", cascade="all, delete-orphan"
     )
+
+    @validates("color")
+    def _validate_color(self, _key: str, value: int | None) -> int | None:
+        if value is not None and not (0 <= value <= 0xFFFFFF):
+            msg = f"color must be 0-0xFFFFFF, got: {value}"
+            raise ValueError(msg)
+        return value
+
+    @validates("panel_type")
+    def _validate_panel_type(self, _key: str, value: str) -> str:
+        if value not in ("button", "reaction"):
+            msg = f"panel_type must be 'button' or 'reaction', got: {value!r}"
+            raise ValueError(msg)
+        return value
 
     def __repr__(self) -> str:
         """デバッグ用の文字列表現。"""
@@ -1018,6 +1075,14 @@ class RolePanelItem(Base):
     # このアイテムが属する親パネル
     panel: Mapped["RolePanel"] = relationship("RolePanel", back_populates="items")
 
+    @validates("style")
+    def _validate_style(self, _key: str, value: str) -> str:
+        allowed = ("primary", "secondary", "success", "danger")
+        if value not in allowed:
+            msg = f"style must be one of {allowed}, got: {value!r}"
+            raise ValueError(msg)
+        return value
+
     def __repr__(self) -> str:
         """デバッグ用の文字列表現。"""
         return (
@@ -1067,6 +1132,21 @@ class AutoBanRule(Base):
     logs: Mapped[list["AutoBanLog"]] = relationship(
         "AutoBanLog", back_populates="rule", cascade="all, delete-orphan"
     )
+
+    @validates("rule_type")
+    def _validate_rule_type(self, _key: str, value: str) -> str:
+        allowed = ("username_match", "account_age", "no_avatar")
+        if value not in allowed:
+            msg = f"rule_type must be one of {allowed}, got: {value!r}"
+            raise ValueError(msg)
+        return value
+
+    @validates("action")
+    def _validate_action(self, _key: str, value: str) -> str:
+        if value not in ("ban", "kick"):
+            msg = f"action must be 'ban' or 'kick', got: {value!r}"
+            raise ValueError(msg)
+        return value
 
     def __repr__(self) -> str:
         """デバッグ用の文字列表現。"""
@@ -1334,6 +1414,14 @@ class Ticket(Base):
     category: Mapped["TicketCategory"] = relationship(
         "TicketCategory", back_populates="tickets"
     )
+
+    @validates("status")
+    def _validate_status(self, _key: str, value: str) -> str:
+        allowed = ("open", "claimed", "closed")
+        if value not in allowed:
+            msg = f"status must be one of {allowed}, got: {value!r}"
+            raise ValueError(msg)
+        return value
 
     def __repr__(self) -> str:
         """デバッグ用の文字列表現。"""

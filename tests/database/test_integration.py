@@ -10,6 +10,7 @@ from faker import Faker
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.database.models import Lobby
 from src.services.db_service import (
     add_role_panel_item,
     add_voice_session_member,
@@ -17,6 +18,8 @@ from src.services.db_service import (
     create_lobby,
     create_role_panel,
     create_sticky_message,
+    create_ticket,
+    create_ticket_category,
     create_voice_session,
     delete_bump_config,
     delete_bump_reminders_by_guild,
@@ -42,6 +45,7 @@ from src.services.db_service import (
     get_due_bump_reminders,
     get_lobbies_by_guild,
     get_lobby_by_channel_id,
+    get_next_ticket_number,
     get_role_panel,
     get_role_panel_by_message_id,
     get_role_panel_item_by_emoji,
@@ -49,12 +53,14 @@ from src.services.db_service import (
     get_role_panels_by_channel,
     get_role_panels_by_guild,
     get_sticky_message,
+    get_ticket,
     get_voice_session,
     get_voice_session_members_ordered,
     remove_role_panel_item,
     remove_voice_session_member,
     toggle_bump_reminder,
     update_role_panel,
+    update_ticket_status,
     update_voice_session,
     upsert_bump_config,
     upsert_bump_reminder,
@@ -1987,3 +1993,740 @@ class TestGuildRemovalCleanup:
         all_stickies = await get_all_sticky_messages(db_session)
         guild_b_stickies = [s for s in all_stickies if s.guild_id == guild_b]
         assert len(guild_b_stickies) == 1
+
+
+# =============================================================================
+# セッションエラーリカバリテスト
+# =============================================================================
+
+
+class TestSessionRecoveryAfterError:
+    """セッションのエラーリカバリテスト。"""
+
+    async def test_session_usable_after_rollback(
+        self, db_session: AsyncSession
+    ) -> None:
+        """IntegrityError 発生後にロールバックしてからセッションを再利用できる。"""
+        guild_id = snowflake()
+        channel_id = snowflake()
+
+        # 正常にロビーを作成
+        await create_lobby(
+            db_session,
+            guild_id=guild_id,
+            lobby_channel_id=channel_id,
+        )
+
+        # 重複 lobby_channel_id で IntegrityError を発生させる
+        with pytest.raises(IntegrityError):
+            duplicate = Lobby(
+                guild_id=guild_id,
+                lobby_channel_id=channel_id,
+            )
+            db_session.add(duplicate)
+            await db_session.flush()
+
+        # ロールバック
+        await db_session.rollback()
+
+        # ロールバック後にセッションが再利用できることを確認
+        new_lobby = await create_lobby(
+            db_session,
+            guild_id=guild_id,
+            lobby_channel_id=snowflake(),
+        )
+        assert new_lobby.id is not None
+
+    async def test_rollback_does_not_persist_data(
+        self, db_session: AsyncSession
+    ) -> None:
+        """フラッシュ済みデータはロールバックで破棄される。"""
+        guild_id = snowflake()
+        channel_id_1 = snowflake()
+        channel_id_dup = snowflake()
+
+        # ロビーを追加してフラッシュ（まだコミットしない）
+        lobby = Lobby(
+            guild_id=guild_id,
+            lobby_channel_id=channel_id_1,
+        )
+        db_session.add(lobby)
+        await db_session.flush()
+
+        # 重複ロビーで IntegrityError を発生させる
+        # 同じ lobby_channel_id で重複させるために channel_id_dup を使う
+        lobby_ok = Lobby(
+            guild_id=guild_id,
+            lobby_channel_id=channel_id_dup,
+        )
+        db_session.add(lobby_ok)
+        await db_session.flush()
+
+        # 同じ channel で重複を狙う
+        with pytest.raises(IntegrityError):
+            dup = Lobby(
+                guild_id=guild_id,
+                lobby_channel_id=channel_id_dup,
+            )
+            db_session.add(dup)
+            await db_session.flush()
+
+        # ロールバック
+        await db_session.rollback()
+
+        # フラッシュ済みの lobby もロールバックで破棄されている
+        found = await get_lobby_by_channel_id(db_session, channel_id_1)
+        assert found is None
+
+    async def test_multiple_errors_same_session(self, db_session: AsyncSession) -> None:
+        """複数回エラー→ロールバックを繰り返した後も正常に操作できる。"""
+        guild_id = snowflake()
+        channel_1 = snowflake()
+        channel_2 = snowflake()
+
+        # 1回目のエラー: 同じ lobby_channel_id を2回 add → flush で重複
+        lobby1 = Lobby(guild_id=guild_id, lobby_channel_id=channel_1)
+        db_session.add(lobby1)
+        await db_session.flush()
+        with pytest.raises(IntegrityError):
+            dup1 = Lobby(guild_id=guild_id, lobby_channel_id=channel_1)
+            db_session.add(dup1)
+            await db_session.flush()
+        await db_session.rollback()
+
+        # 2回目のエラー: 別のチャンネルで同様の重複
+        lobby2 = Lobby(guild_id=guild_id, lobby_channel_id=channel_2)
+        db_session.add(lobby2)
+        await db_session.flush()
+        with pytest.raises(IntegrityError):
+            dup2 = Lobby(guild_id=guild_id, lobby_channel_id=channel_2)
+            db_session.add(dup2)
+            await db_session.flush()
+        await db_session.rollback()
+
+        # 2回のロールバック後に正常な挿入が成功する
+        new_lobby = await create_lobby(
+            db_session,
+            guild_id=guild_id,
+            lobby_channel_id=snowflake(),
+        )
+        assert new_lobby.id is not None
+
+
+# =============================================================================
+# チケットライフサイクルテスト
+# =============================================================================
+
+
+class TestTicketLifecycle:
+    """チケットの作成→クレーム→クローズのライフサイクルテスト。"""
+
+    async def test_create_claim_close_lifecycle(self, db_session: AsyncSession) -> None:
+        """チケット作成→担当者割り当て→クローズの一連フローを検証する。"""
+        guild_id = snowflake()
+
+        # カテゴリ作成
+        category = await create_ticket_category(
+            db_session,
+            guild_id=guild_id,
+            name="General Support",
+            staff_role_id=snowflake(),
+        )
+
+        # チケット作成
+        channel_id = snowflake()
+        ticket = await create_ticket(
+            db_session,
+            guild_id=guild_id,
+            user_id=snowflake(),
+            username="testuser",
+            category_id=category.id,
+            channel_id=channel_id,
+            ticket_number=1,
+        )
+        assert ticket.status == "open"
+        assert ticket.channel_id == channel_id
+        assert ticket.claimed_by is None
+        assert ticket.closed_by is None
+        assert ticket.transcript is None
+        assert ticket.closed_at is None
+
+        # 担当者割り当て (claimed)
+        staff_name = "staff_user"
+        ticket = await update_ticket_status(
+            db_session,
+            ticket,
+            status="claimed",
+            claimed_by=staff_name,
+        )
+        assert ticket.status == "claimed"
+        assert ticket.claimed_by == staff_name
+        assert ticket.channel_id == channel_id  # channel_id は変わらない
+
+        # クローズ
+        closed_at = datetime.now(UTC)
+        transcript_text = "User: Hello\nStaff: How can I help?"
+        ticket = await update_ticket_status(
+            db_session,
+            ticket,
+            status="closed",
+            closed_by=staff_name,
+            transcript=transcript_text,
+            closed_at=closed_at,
+            channel_id=None,
+        )
+        assert ticket.status == "closed"
+        assert ticket.closed_by == staff_name
+        assert ticket.transcript == transcript_text
+        assert ticket.closed_at is not None
+        assert ticket.channel_id is None
+
+    async def test_ticket_number_auto_increment(self, db_session: AsyncSession) -> None:
+        """同一ギルドで3件のチケット作成後、次の番号が4になる。"""
+        guild_id = snowflake()
+
+        category = await create_ticket_category(
+            db_session,
+            guild_id=guild_id,
+            name="Support",
+            staff_role_id=snowflake(),
+        )
+
+        # 3件のチケットを作成
+        for i in range(1, 4):
+            await create_ticket(
+                db_session,
+                guild_id=guild_id,
+                user_id=snowflake(),
+                username=f"user{i}",
+                category_id=category.id,
+                channel_id=snowflake(),
+                ticket_number=i,
+            )
+
+        next_num = await get_next_ticket_number(db_session, guild_id)
+        assert next_num == 4
+
+    async def test_ticket_number_empty_guild_returns_1(
+        self, db_session: AsyncSession
+    ) -> None:
+        """チケットが存在しないギルドでは次の番号が1になる。"""
+        guild_id = snowflake()
+        next_num = await get_next_ticket_number(db_session, guild_id)
+        assert next_num == 1
+
+    async def test_update_ticket_channel_id_to_none(
+        self, db_session: AsyncSession
+    ) -> None:
+        """channel_id を明示的に None に更新できる。"""
+        guild_id = snowflake()
+        channel_id = snowflake()
+
+        category = await create_ticket_category(
+            db_session,
+            guild_id=guild_id,
+            name="Support",
+            staff_role_id=snowflake(),
+        )
+
+        ticket = await create_ticket(
+            db_session,
+            guild_id=guild_id,
+            user_id=snowflake(),
+            username="testuser",
+            category_id=category.id,
+            channel_id=channel_id,
+            ticket_number=1,
+        )
+        assert ticket.channel_id == channel_id
+
+        # channel_id を None に更新
+        ticket = await update_ticket_status(
+            db_session,
+            ticket,
+            channel_id=None,
+        )
+        assert ticket.channel_id is None
+
+        # DB から再取得して確認
+        reloaded = await get_ticket(db_session, ticket.id)
+        assert reloaded is not None
+        assert reloaded.channel_id is None
+
+    async def test_update_ticket_preserves_unset_fields(
+        self, db_session: AsyncSession
+    ) -> None:
+        """status のみ更新した場合、channel_id は変更されない。"""
+        guild_id = snowflake()
+        channel_id = snowflake()
+
+        category = await create_ticket_category(
+            db_session,
+            guild_id=guild_id,
+            name="Support",
+            staff_role_id=snowflake(),
+        )
+
+        ticket = await create_ticket(
+            db_session,
+            guild_id=guild_id,
+            user_id=snowflake(),
+            username="testuser",
+            category_id=category.id,
+            channel_id=channel_id,
+            ticket_number=1,
+        )
+
+        # status のみ更新（channel_id は _UNSET のまま）
+        ticket = await update_ticket_status(
+            db_session,
+            ticket,
+            status="claimed",
+            claimed_by="staff",
+        )
+
+        # channel_id は元の値のまま
+        assert ticket.status == "claimed"
+        assert ticket.channel_id == channel_id
+
+        # DB から再取得して確認
+        reloaded = await get_ticket(db_session, ticket.id)
+        assert reloaded is not None
+        assert reloaded.channel_id == channel_id
+
+
+# =============================================================================
+# エッジケーステスト（追加）
+# =============================================================================
+
+
+class TestTicketNumberEdgeCases:
+    """チケット番号のエッジケーステスト。"""
+
+    async def test_same_ticket_number_different_guilds(
+        self, db_session: AsyncSession
+    ) -> None:
+        """異なるギルドで同じチケット番号を使用できる。"""
+        g1, g2 = snowflake(), snowflake()
+
+        cat1 = await create_ticket_category(
+            db_session, guild_id=g1, name="Support", staff_role_id=snowflake()
+        )
+        cat2 = await create_ticket_category(
+            db_session, guild_id=g2, name="Support", staff_role_id=snowflake()
+        )
+
+        # 両ギルドで ticket_number=1
+        t1 = await create_ticket(
+            db_session,
+            guild_id=g1,
+            user_id=snowflake(),
+            username="user1",
+            category_id=cat1.id,
+            channel_id=snowflake(),
+            ticket_number=1,
+        )
+        t2 = await create_ticket(
+            db_session,
+            guild_id=g2,
+            user_id=snowflake(),
+            username="user2",
+            category_id=cat2.id,
+            channel_id=snowflake(),
+            ticket_number=1,
+        )
+
+        assert t1.ticket_number == 1
+        assert t2.ticket_number == 1
+        assert t1.guild_id != t2.guild_id
+
+    async def test_ticket_number_after_closed_tickets(
+        self, db_session: AsyncSession
+    ) -> None:
+        """クローズ済みチケットがあっても次の番号は最大値+1。"""
+        guild_id = snowflake()
+        cat = await create_ticket_category(
+            db_session, guild_id=guild_id, name="Support", staff_role_id=snowflake()
+        )
+
+        # 3件作成して全部クローズ
+        for i in range(1, 4):
+            ticket = await create_ticket(
+                db_session,
+                guild_id=guild_id,
+                user_id=snowflake(),
+                username=f"user{i}",
+                category_id=cat.id,
+                channel_id=snowflake(),
+                ticket_number=i,
+            )
+            await update_ticket_status(
+                db_session,
+                ticket,
+                status="closed",
+                closed_by="staff",
+                closed_at=datetime.now(UTC),
+                channel_id=None,
+            )
+
+        next_num = await get_next_ticket_number(db_session, guild_id)
+        assert next_num == 4
+
+
+class TestVoiceSessionMemberEdgeCases:
+    """VoiceSession メンバーのエッジケーステスト。"""
+
+    async def test_duplicate_member_returns_existing(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同じメンバーを2回追加すると既存のレコードが返される。"""
+        lobby = await create_lobby(
+            db_session, guild_id=snowflake(), lobby_channel_id=snowflake()
+        )
+        vs = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=snowflake(),
+            owner_id=snowflake(),
+            name="test",
+        )
+
+        member_id = snowflake()
+        m1 = await add_voice_session_member(db_session, vs.id, member_id)
+        m2 = await add_voice_session_member(db_session, vs.id, member_id)
+
+        # 同じレコードが返される
+        assert m1.id == m2.id
+
+        # メンバーは1人だけ
+        members = await get_voice_session_members_ordered(db_session, vs.id)
+        assert len(members) == 1
+
+    async def test_remove_nonexistent_member_returns_false(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないメンバーの削除は False を返す。"""
+        lobby = await create_lobby(
+            db_session, guild_id=snowflake(), lobby_channel_id=snowflake()
+        )
+        vs = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=snowflake(),
+            owner_id=snowflake(),
+            name="test",
+        )
+
+        result = await remove_voice_session_member(db_session, vs.id, snowflake())
+        assert result is False
+
+    async def test_members_ordered_empty_session(
+        self, db_session: AsyncSession
+    ) -> None:
+        """メンバーのいないセッションで空リストが返る。"""
+        lobby = await create_lobby(
+            db_session, guild_id=snowflake(), lobby_channel_id=snowflake()
+        )
+        vs = await create_voice_session(
+            db_session,
+            lobby_id=lobby.id,
+            channel_id=snowflake(),
+            owner_id=snowflake(),
+            name="test",
+        )
+
+        members = await get_voice_session_members_ordered(db_session, vs.id)
+        assert members == []
+
+
+class TestBumpReminderEdgeCases:
+    """Bump リマインダーのエッジケーステスト。"""
+
+    async def test_upsert_updates_remind_at(self, db_session: AsyncSession) -> None:
+        """同じギルド・サービスの upsert は remind_at を更新する。"""
+        guild_id = snowflake()
+        channel_id = snowflake()
+        original_time = datetime.now(UTC) + timedelta(hours=1)
+        new_time = datetime.now(UTC) + timedelta(hours=3)
+
+        r1 = await upsert_bump_reminder(
+            db_session,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            service_name="disboard",
+            remind_at=original_time,
+        )
+
+        r2 = await upsert_bump_reminder(
+            db_session,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            service_name="disboard",
+            remind_at=new_time,
+        )
+
+        assert r1.id == r2.id  # 同じレコード
+        fetched = await get_bump_reminder(db_session, guild_id, "disboard")
+        assert fetched is not None
+        # remind_at が更新されている
+        assert abs((fetched.remind_at - new_time).total_seconds()) < 1
+
+    async def test_clear_already_cleared_reminder(
+        self, db_session: AsyncSession
+    ) -> None:
+        """既に cleared のリマインダーを再度 clear しても成功する。"""
+        guild_id = snowflake()
+        reminder = await upsert_bump_reminder(
+            db_session,
+            guild_id=guild_id,
+            channel_id=snowflake(),
+            service_name="disboard",
+            remind_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+
+        # 1回目のクリア
+        assert await clear_bump_reminder(db_session, reminder.id) is True
+        fetched = await get_bump_reminder(db_session, guild_id, "disboard")
+        assert fetched is not None
+        assert fetched.remind_at is None
+
+        # 2回目のクリア（既に None）
+        assert await clear_bump_reminder(db_session, reminder.id) is True
+
+    async def test_toggle_nonexistent_reminder_creates_disabled(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないリマインダーの toggle は無効状態で新規作成する。"""
+        guild_id = snowflake()
+        result = await toggle_bump_reminder(db_session, guild_id, "newservice")
+        assert result is False  # 新規作成時は無効 (is_enabled=False)
+
+        # 確認: レコードが作成されている
+        reminder = await get_bump_reminder(db_session, guild_id, "newservice")
+        assert reminder is not None
+        assert reminder.is_enabled is False
+
+    async def test_due_reminders_excludes_cleared(
+        self, db_session: AsyncSession
+    ) -> None:
+        """remind_at が None のリマインダーは due リストに含まれない。"""
+        guild_id = snowflake()
+        reminder = await upsert_bump_reminder(
+            db_session,
+            guild_id=guild_id,
+            channel_id=snowflake(),
+            service_name="disboard",
+            remind_at=datetime.now(UTC) - timedelta(hours=1),
+        )
+
+        # クリア前は due に含まれる
+        due = await get_due_bump_reminders(db_session, datetime.now(UTC))
+        assert any(r.id == reminder.id for r in due)
+
+        # クリア後は due に含まれない
+        await clear_bump_reminder(db_session, reminder.id)
+        due = await get_due_bump_reminders(db_session, datetime.now(UTC))
+        assert not any(r.id == reminder.id for r in due)
+
+
+class TestRolePanelItemEdgeCases:
+    """RolePanel アイテムのエッジケーステスト。"""
+
+    async def test_remove_nonexistent_emoji_returns_false(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない絵文字の削除は False を返す。"""
+        panel = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Test",
+        )
+
+        result = await remove_role_panel_item(db_session, panel.id, "🎵")
+        assert result is False
+
+    async def test_get_items_from_nonexistent_panel(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないパネルのアイテム取得は空リスト。"""
+        items = await get_role_panel_items(db_session, 999999)
+        assert items == []
+
+    async def test_item_emoji_lookup_wrong_panel(
+        self, db_session: AsyncSession
+    ) -> None:
+        """別のパネルの絵文字は見つからない。"""
+        panel1 = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Panel 1",
+        )
+        panel2 = await create_role_panel(
+            db_session,
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Panel 2",
+        )
+
+        await add_role_panel_item(
+            db_session, panel_id=panel1.id, role_id=snowflake(), emoji="🎮"
+        )
+
+        # panel2 から panel1 の絵文字を検索 → None
+        result = await get_role_panel_item_by_emoji(db_session, panel2.id, "🎮")
+        assert result is None
+
+
+class TestStickyMessageEdgeCases:
+    """Sticky メッセージのエッジケーステスト。"""
+
+    async def test_delete_nonexistent_returns_false(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないチャンネルの Sticky 削除は False を返す。"""
+        result = await delete_sticky_message(db_session, snowflake())
+        assert result is False
+
+    async def test_upsert_preserves_channel_across_guilds(
+        self, db_session: AsyncSession
+    ) -> None:
+        """異なるギルドで同じチャンネルID の Sticky は上書きされる。"""
+        channel_id = snowflake()
+        g1 = snowflake()
+        g2 = snowflake()
+
+        await create_sticky_message(
+            db_session,
+            channel_id=channel_id,
+            guild_id=g1,
+            title="Guild 1 Sticky",
+            description="First",
+        )
+
+        # 同じ channel_id で別ギルドから upsert
+        await create_sticky_message(
+            db_session,
+            channel_id=channel_id,
+            guild_id=g2,
+            title="Guild 2 Sticky",
+            description="Second",
+        )
+
+        # 最後の upsert が反映される
+        fetched = await get_sticky_message(db_session, channel_id)
+        assert fetched is not None
+        assert fetched.title == "Guild 2 Sticky"
+        assert fetched.guild_id == g2
+
+
+class TestBulkDeletionEdgeCases:
+    """一括削除のエッジケーステスト。"""
+
+    async def test_bulk_delete_empty_guild_returns_zero(
+        self, db_session: AsyncSession
+    ) -> None:
+        """データのないギルドの一括削除は 0 を返す。"""
+        empty_guild = snowflake()
+
+        assert await delete_voice_sessions_by_guild(db_session, empty_guild) == 0
+        assert await delete_lobbies_by_guild(db_session, empty_guild) == 0
+        assert await delete_bump_reminders_by_guild(db_session, empty_guild) == 0
+        assert await delete_sticky_messages_by_guild(db_session, empty_guild) == 0
+
+    async def test_delete_config_nonexistent_returns_false(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない BumpConfig の削除は False を返す。"""
+        result = await delete_bump_config(db_session, snowflake())
+        assert result is False
+
+    async def test_bulk_delete_does_not_affect_other_guilds(
+        self, db_session: AsyncSession
+    ) -> None:
+        """一括削除は他のギルドに影響しない。"""
+        g1, g2 = snowflake(), snowflake()
+
+        # 両ギルドにロビーを作成
+        for gid in [g1, g2]:
+            lobby = await create_lobby(
+                db_session, guild_id=gid, lobby_channel_id=snowflake()
+            )
+            await create_voice_session(
+                db_session,
+                lobby_id=lobby.id,
+                channel_id=snowflake(),
+                owner_id=snowflake(),
+                name="test",
+            )
+
+        # g1 のセッションのみ削除
+        count = await delete_voice_sessions_by_guild(db_session, g1)
+        assert count == 1
+
+        # g2 のセッションは残っている
+        all_sessions = await get_all_voice_sessions(db_session)
+        assert len(all_sessions) == 1
+        assert all_sessions[0].lobby.guild_id == g2
+
+
+class TestUpsertIdempotency:
+    """Upsert の冪等性テスト。"""
+
+    async def test_bump_config_upsert_updates_channel(
+        self, db_session: AsyncSession
+    ) -> None:
+        """BumpConfig の upsert は channel_id を更新する。"""
+        guild_id = snowflake()
+        ch1 = snowflake()
+        ch2 = snowflake()
+
+        await upsert_bump_config(db_session, guild_id=guild_id, channel_id=ch1)
+        config1 = await get_bump_config(db_session, guild_id)
+        assert config1 is not None
+        assert config1.channel_id == ch1
+
+        # 同じ guild_id で upsert
+        await upsert_bump_config(db_session, guild_id=guild_id, channel_id=ch2)
+        config2 = await get_bump_config(db_session, guild_id)
+        assert config2 is not None
+        assert config2.channel_id == ch2
+
+    async def test_discord_guild_upsert_updates_name(
+        self, db_session: AsyncSession
+    ) -> None:
+        """DiscordGuild の upsert はギルド名を更新する。"""
+        guild_id = snowflake()
+
+        await upsert_discord_guild(db_session, guild_id=guild_id, guild_name="Original")
+        await upsert_discord_guild(db_session, guild_id=guild_id, guild_name="Renamed")
+
+        guilds = await get_all_discord_guilds(db_session)
+        matching = [g for g in guilds if g.guild_id == guild_id]
+        assert len(matching) == 1
+        assert matching[0].guild_name == "Renamed"
+
+    async def test_discord_guild_upsert_updates_icon_hash(
+        self, db_session: AsyncSession
+    ) -> None:
+        """DiscordGuild の upsert は icon_hash を更新する。"""
+        guild_id = snowflake()
+
+        await upsert_discord_guild(
+            db_session, guild_id=guild_id, guild_name="Test", icon_hash=None
+        )
+        await upsert_discord_guild(
+            db_session,
+            guild_id=guild_id,
+            guild_name="Test",
+            icon_hash="abc123def456",
+        )
+
+        guilds = await get_all_discord_guilds(db_session)
+        matching = [g for g in guilds if g.guild_id == guild_id]
+        assert len(matching) == 1
+        assert matching[0].icon_hash == "abc123def456"

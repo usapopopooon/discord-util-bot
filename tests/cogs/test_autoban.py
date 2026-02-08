@@ -605,3 +605,270 @@ class TestSetup:
         bot.add_cog = AsyncMock()
         await setup(bot)
         bot.add_cog.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Edge Case Tests: Account Age Boundary
+# ---------------------------------------------------------------------------
+
+
+class TestAccountAgeBoundary:
+    """Account age boundary condition tests (strict < comparison)."""
+
+    def test_account_exactly_at_threshold_no_match(self) -> None:
+        """Account age == threshold should NOT match (strict <)."""
+        cog = _make_cog()
+        rule = _make_rule(
+            rule_type="account_age",
+            threshold_hours=24,
+            pattern=None,
+        )
+        member = _make_member(created_at=datetime.now(UTC) - timedelta(hours=24))
+        matched, reason = cog._check_account_age(rule, member)
+        assert matched is False
+        assert reason == ""
+
+    def test_account_one_second_under_threshold_matches(self) -> None:
+        """Account age just under threshold should match."""
+        cog = _make_cog()
+        rule = _make_rule(
+            rule_type="account_age",
+            threshold_hours=24,
+            pattern=None,
+        )
+        member = _make_member(
+            created_at=datetime.now(UTC) - timedelta(hours=24) + timedelta(seconds=1)
+        )
+        matched, reason = cog._check_account_age(rule, member)
+        assert matched is True
+        assert "less than threshold" in reason
+
+
+# ---------------------------------------------------------------------------
+# Edge Case Tests: Username Match with Special Characters
+# ---------------------------------------------------------------------------
+
+
+class TestUsernameMatchSpecialChars:
+    """Username matching treats patterns as literal strings, not regex."""
+
+    def test_pattern_with_regex_special_chars_literal(self) -> None:
+        """Regex special chars like [ ] are treated as literal substring."""
+        cog = _make_cog()
+        rule = _make_rule(pattern="user[bot]", use_wildcard=True)
+        member = _make_member(name="user[bot]test")
+        matched, reason = cog._check_username_match(rule, member)
+        assert matched is True
+        assert "wildcard match" in reason
+
+    def test_pattern_with_dots_literal(self) -> None:
+        """Dot is NOT treated as regex wildcard; it must match literally."""
+        cog = _make_cog()
+        rule = _make_rule(pattern="spam.bot", use_wildcard=True)
+        member = _make_member(name="spamXbot")
+        matched, reason = cog._check_username_match(rule, member)
+        assert matched is False
+        assert reason == ""
+
+
+# ---------------------------------------------------------------------------
+# Edge Case Tests: First Match Wins (break behavior)
+# ---------------------------------------------------------------------------
+
+
+class TestFirstMatchWins:
+    """Verify the loop breaks on first match and disabled rules are filtered."""
+
+    @pytest.mark.asyncio
+    async def test_disabled_rule_not_returned_by_db(self) -> None:
+        """DB function returns only enabled rules; disabled rules never reach cog."""
+        cog = _make_cog()
+        member = _make_member(name="spammer")
+        enabled_rule = _make_rule(
+            rule_id=1, action="ban", pattern="spammer", is_enabled=True
+        )
+        with (
+            patch(
+                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                return_value=[enabled_rule],
+            ),
+            patch("src.cogs.autoban.create_autoban_log", new_callable=AsyncMock),
+        ):
+            await cog.on_member_join(member)
+            member.guild.ban.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_first_match_breaks_no_second_action(self) -> None:
+        """When member matches two rules, only the first rule's action runs."""
+        cog = _make_cog()
+        member = _make_member(name="spammer", avatar=None)
+        rule1 = _make_rule(
+            rule_id=1,
+            rule_type="username_match",
+            action="kick",
+            pattern="spammer",
+        )
+        rule2 = _make_rule(
+            rule_id=2,
+            rule_type="no_avatar",
+            action="ban",
+            pattern=None,
+        )
+        with (
+            patch(
+                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                return_value=[rule1, rule2],
+            ),
+            patch("src.cogs.autoban.create_autoban_log", new_callable=AsyncMock),
+        ):
+            await cog.on_member_join(member)
+            member.guild.kick.assert_called_once()
+            member.guild.ban.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Additional Edge Case Tests
+# ---------------------------------------------------------------------------
+
+
+class TestUsernameMatchEdgeCases:
+    """ユーザー名マッチングの追加エッジケーステスト。"""
+
+    def test_empty_pattern_no_match(self) -> None:
+        """空文字パターンはマッチしない。"""
+        cog = _make_cog()
+        rule = _make_rule(pattern="")
+        member = _make_member(name="testuser")
+        matched, _ = cog._check_username_match(rule, member)
+        assert not matched
+
+    def test_unicode_pattern_exact_match(self) -> None:
+        """日本語パターンの完全一致。"""
+        cog = _make_cog()
+        rule = _make_rule(pattern="スパマー")
+        member = _make_member(name="スパマー")
+        matched, reason = cog._check_username_match(rule, member)
+        assert matched is True
+        assert "exact match" in reason
+
+    def test_unicode_pattern_wildcard_match(self) -> None:
+        """日本語パターンのワイルドカード一致。"""
+        cog = _make_cog()
+        rule = _make_rule(pattern="スパム", use_wildcard=True)
+        member = _make_member(name="テストスパム送信者123")
+        matched, reason = cog._check_username_match(rule, member)
+        assert matched is True
+        assert "wildcard match" in reason
+
+    def test_unicode_pattern_no_match(self) -> None:
+        """日本語パターンが一致しない場合。"""
+        cog = _make_cog()
+        rule = _make_rule(pattern="スパム", use_wildcard=True)
+        member = _make_member(name="正常ユーザー")
+        matched, _ = cog._check_username_match(rule, member)
+        assert matched is False
+
+    def test_whitespace_pattern_no_match_without_wildcard(self) -> None:
+        """スペースパターンは完全一致でのみマッチ。"""
+        cog = _make_cog()
+        rule = _make_rule(pattern="  ", use_wildcard=False)
+        member = _make_member(name="user  name")
+        matched, _ = cog._check_username_match(rule, member)
+        assert matched is False
+
+    def test_identical_name_case_variants(self) -> None:
+        """大文字小文字の異なる複数のバリエーション。"""
+        cog = _make_cog()
+        rule = _make_rule(pattern="SpAmMeR")
+        for name in ["spammer", "SPAMMER", "Spammer", "sPaMMeR"]:
+            member = _make_member(name=name)
+            matched, _ = cog._check_username_match(rule, member)
+            assert matched is True
+
+
+class TestAccountAgeEdgeCases:
+    """アカウント年齢チェックの追加エッジケーステスト。"""
+
+    def test_account_created_just_now(self) -> None:
+        """作成されたばかりのアカウント (0秒) は閾値があればマッチ。"""
+        cog = _make_cog()
+        rule = _make_rule(
+            rule_type="account_age",
+            threshold_hours=1,
+            pattern=None,
+        )
+        member = _make_member(created_at=datetime.now(UTC))
+        matched, reason = cog._check_account_age(rule, member)
+        assert matched is True
+        assert "less than threshold" in reason
+
+    def test_threshold_hours_zero_returns_false(self) -> None:
+        """threshold_hours = 0 は falsy なのでマッチしない。"""
+        cog = _make_cog()
+        rule = _make_rule(
+            rule_type="account_age",
+            threshold_hours=0,
+            pattern=None,
+        )
+        member = _make_member(created_at=datetime.now(UTC))
+        matched, _ = cog._check_account_age(rule, member)
+        assert matched is False
+
+    def test_max_threshold_hours(self) -> None:
+        """最大閾値 (336時間 = 14日) で新しいアカウントにマッチ。"""
+        cog = _make_cog()
+        rule = _make_rule(
+            rule_type="account_age",
+            threshold_hours=336,
+            pattern=None,
+        )
+        member = _make_member(created_at=datetime.now(UTC) - timedelta(days=13))
+        matched, _ = cog._check_account_age(rule, member)
+        assert matched is True
+
+
+class TestOnMemberJoinEdgeCases:
+    """on_member_join の追加エッジケーステスト。"""
+
+    @pytest.mark.asyncio
+    async def test_multiple_non_matching_rules(self) -> None:
+        """複数のルール全てマッチしない場合はアクションなし。"""
+        cog = _make_cog()
+        member = _make_member(
+            name="gooduser",
+            created_at=datetime.now(UTC) - timedelta(days=365),
+        )
+        rule1 = _make_rule(rule_id=1, pattern="baduser")
+        rule2 = _make_rule(
+            rule_id=2, rule_type="account_age", threshold_hours=24, pattern=None
+        )
+        rule3 = _make_rule(rule_id=3, rule_type="no_avatar", pattern=None)
+        with patch(
+            "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+            return_value=[rule1, rule2, rule3],
+        ):
+            await cog.on_member_join(member)
+            member.guild.ban.assert_not_called()
+            member.guild.kick.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_log_creation_failure_propagates_after_ban(self) -> None:
+        """ログ作成失敗時、BAN は実行されるがエラーが伝播する。"""
+        cog = _make_cog()
+        member = _make_member(name="spammer")
+        rule = _make_rule(action="ban", pattern="spammer")
+        with (
+            patch(
+                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                return_value=[rule],
+            ),
+            patch(
+                "src.cogs.autoban.create_autoban_log",
+                new_callable=AsyncMock,
+                side_effect=Exception("DB error"),
+            ),
+        ):
+            with pytest.raises(Exception, match="DB error"):
+                await cog.on_member_join(member)
+            # BAN は実行されている
+            member.guild.ban.assert_called_once()

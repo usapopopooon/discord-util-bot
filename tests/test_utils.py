@@ -737,3 +737,293 @@ class TestFormatDatetime:
         dt = datetime(2026, 2, 7, 10, 30, 45, tzinfo=UTC)
         # デフォルトは秒なし
         assert format_datetime(dt) == "2026-02-07 10:30"
+
+
+# =============================================================================
+# Edge Case Tests
+# =============================================================================
+
+
+class TestFormatDatetimeEdgeCases:
+    """format_datetime 関数のエッジケーステスト。"""
+
+    def test_naive_datetime_does_not_raise(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """タイムゾーン情報のない naive datetime でも例外が発生しない。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", 0)
+        dt = datetime(2026, 1, 1, 12, 0)
+        result = format_datetime(dt)
+        assert isinstance(result, str)
+
+    def test_extreme_positive_offset_14(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """極端な正のオフセット (+14)。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", 14)
+        dt = datetime(2026, 2, 7, 23, 30, tzinfo=UTC)
+        assert format_datetime(dt) == "2026-02-08 13:30"
+
+    def test_extreme_negative_offset_12(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """極端な負のオフセット (-12)。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", -12)
+        dt = datetime(2026, 2, 8, 10, 0, tzinfo=UTC)
+        assert format_datetime(dt) == "2026-02-07 22:00"
+
+    def test_midnight_boundary_crossing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """オフセットで深夜をまたぐケース。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", 1)
+        dt = datetime(2026, 2, 7, 23, 30, tzinfo=UTC)
+        assert format_datetime(dt) == "2026-02-08 00:30"
+
+
+class TestEmojiEdgeCases:
+    """絵文字関連のエッジケーステスト。"""
+
+    def test_skin_tone_modifier_emoji_valid(self) -> None:
+        """スキントーン修飾子付き絵文字は有効。"""
+        assert is_valid_emoji("👋🏽") is True
+
+    @pytest.mark.parametrize(
+        "emoji_str",
+        ["⚓️", "✨️", "👨‍💻", "1️⃣", "🇯🇵"],
+    )
+    def test_normalize_then_validate_round_trip(self, emoji_str: str) -> None:
+        """normalize_emoji 後の絵文字が is_valid_emoji で有効と判定される。"""
+        assert is_valid_emoji(normalize_emoji(emoji_str)) is True
+
+
+class TestResourceLockEdgeCases:
+    """リソースロックのエッジケーステスト。"""
+
+    @pytest.mark.asyncio
+    async def test_locked_lock_not_cleaned_up(self) -> None:
+        """ロック中のエントリはクリーンアップで削除されない。"""
+        import src.utils as utils_module
+
+        key = "test:edge:locked_cleanup"
+        lock = get_resource_lock(key)
+
+        async with lock:
+            # アクセス時刻を古くする (5分以上前)
+            old_time = time.monotonic() - 400
+            _resource_locks[key] = (lock, old_time)
+
+            # クリーンアップを強制実行 (_lock_last_cleanup_time を 0 に設定)
+            utils_module._lock_last_cleanup_time = 0.0
+            _cleanup_resource_locks()
+
+            # ロック中のためクリーンアップされない
+            assert key in _resource_locks
+
+
+class TestNormalizeEmojiEdgeCases:
+    """normalize_emoji 関数のエッジケーステスト。"""
+
+    def test_normalize_empty_string_returns_empty(self) -> None:
+        """空文字の normalize_emoji は空文字を返す。"""
+        assert normalize_emoji("") == ""
+
+    def test_normalize_flag_emoji(self) -> None:
+        """国旗絵文字の normalize。"""
+        result = normalize_emoji("🇯🇵")
+        assert is_valid_emoji(result) is True
+
+    def test_normalize_skin_tone_emoji(self) -> None:
+        """スキントーン修飾子付き絵文字の normalize。"""
+        result = normalize_emoji("👋🏽")
+        assert is_valid_emoji(result) is True
+
+    def test_normalize_keycap_removes_vs16(self) -> None:
+        """Keycap 絵文字の VS16 が除去される。"""
+        result = normalize_emoji("1️⃣")
+        assert "\ufe0f" not in result
+
+    def test_normalize_non_emoji_text_unchanged(self) -> None:
+        """絵文字でないテキストはそのまま返される (NFC正規化のみ)。"""
+        import unicodedata
+
+        result = normalize_emoji("hello")
+        assert result == unicodedata.normalize("NFC", "hello")
+
+
+# =============================================================================
+# Additional Edge Case Tests
+# =============================================================================
+
+
+class TestIsValidEmojiAdditionalEdgeCases:
+    """is_valid_emoji 関数の追加エッジケーステスト。"""
+
+    def test_family_emoji_zwj_sequence_valid(self) -> None:
+        """家族 ZWJ シーケンス絵文字は有効。"""
+        assert is_valid_emoji("👨‍👩‍👧‍👦") is True
+
+    def test_skin_tone_variations(self) -> None:
+        """各種スキントーン修飾子付き絵文字は有効。"""
+        assert is_valid_emoji("👋🏻") is True  # light
+        assert is_valid_emoji("👋🏼") is True  # medium-light
+        assert is_valid_emoji("👋🏽") is True  # medium
+        assert is_valid_emoji("👋🏾") is True  # medium-dark
+        assert is_valid_emoji("👋🏿") is True  # dark
+
+    def test_whitespace_only_invalid(self) -> None:
+        """空白文字のみは無効。"""
+        assert is_valid_emoji(" ") is False
+        assert is_valid_emoji("  ") is False
+
+    def test_multiple_emojis_invalid(self) -> None:
+        """複数の絵文字は無効 (1つだけ有効)。"""
+        assert is_valid_emoji("😀😀") is False
+        assert is_valid_emoji("🎮🎵") is False
+
+    def test_emoji_with_space_invalid(self) -> None:
+        """絵文字 + 空白は無効。"""
+        assert is_valid_emoji("😀 ") is False
+        assert is_valid_emoji(" 😀") is False
+
+    def test_animated_custom_emoji_valid(self) -> None:
+        """アニメーションカスタム絵文字は有効。"""
+        assert is_valid_emoji("<a:dance:123456789012345678>") is True
+
+    def test_custom_emoji_with_underscore_valid(self) -> None:
+        """アンダースコア付きカスタム絵文字は有効。"""
+        assert is_valid_emoji("<:my_emoji:123456789>") is True
+
+    def test_custom_emoji_missing_id_invalid(self) -> None:
+        """IDなしカスタム絵文字は無効。"""
+        assert is_valid_emoji("<:name:>") is False
+
+    def test_custom_emoji_non_numeric_id_invalid(self) -> None:
+        """IDが数字でないカスタム絵文字は無効。"""
+        assert is_valid_emoji("<:name:abc>") is False
+
+    def test_star_with_and_without_vs16(self) -> None:
+        """星絵文字は VS16 の有無に関わらず有効。"""
+        assert is_valid_emoji("⭐") is True  # without VS16
+        assert is_valid_emoji("⭐️") is True  # with VS16
+
+    def test_heart_variations_valid(self) -> None:
+        """ハート系絵文字のバリエーション。"""
+        assert is_valid_emoji("❤") is True
+        assert is_valid_emoji("❤️") is True
+        assert is_valid_emoji("💜") is True
+        assert is_valid_emoji("💙") is True
+
+
+class TestFormatDatetimeAdditionalEdgeCases:
+    """format_datetime 関数の追加エッジケーステスト。"""
+
+    def test_empty_format_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """空のフォーマット文字列。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", 0)
+        dt = datetime(2026, 2, 7, 10, 30, 0, tzinfo=UTC)
+        assert format_datetime(dt, "") == ""
+
+    def test_year_only_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """年のみのフォーマット。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", 0)
+        dt = datetime(2026, 2, 7, 10, 30, 0, tzinfo=UTC)
+        assert format_datetime(dt, "%Y") == "2026"
+
+    def test_offset_crosses_year_boundary(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """オフセットで年境界をまたぐケース。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", 9)
+        dt = datetime(2025, 12, 31, 20, 0, 0, tzinfo=UTC)
+        result = format_datetime(dt)
+        assert result == "2026-01-01 05:00"
+
+    def test_none_with_empty_fallback(self) -> None:
+        """None で空文字のフォールバック。"""
+        assert format_datetime(None, fallback="") == ""
+
+    def test_half_hour_offset_not_supported_but_works(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """整数以外のオフセットは設定上使わないが、関数自体はintを受ける。"""
+        import src.config
+
+        monkeypatch.setattr(src.config.settings, "timezone_offset", 5)
+        dt = datetime(2026, 2, 7, 0, 0, 0, tzinfo=UTC)
+        assert format_datetime(dt) == "2026-02-07 05:00"
+
+
+class TestResourceLockCleanupEdgeCases:
+    """リソースロッククリーンアップの追加エッジケーステスト。"""
+
+    def test_cleanup_with_many_locks(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """多数のロックがある場合でもクリーンアップが正常に動作する。"""
+        import src.utils as utils_module
+
+        # 100個のロックを作成
+        for i in range(100):
+            get_resource_lock(f"test:many:{i}")
+
+        assert get_resource_lock_count() == 100
+
+        # 全てのロックを古くする
+        old_time = time.monotonic() - 400
+        for key in list(_resource_locks.keys()):
+            lock, _ = _resource_locks[key]
+            _resource_locks[key] = (lock, old_time)
+
+        # クリーンアップを強制実行
+        monkeypatch.setattr(utils_module, "_lock_last_cleanup_time", 0.0)
+        _cleanup_resource_locks()
+
+        # 全て削除される
+        assert get_resource_lock_count() == 0
+
+    def test_lock_returned_after_cleanup_is_new_instance(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """クリーンアップ後に同じキーで取得したロックは新しいインスタンス。"""
+        import src.utils as utils_module
+
+        key = "test:recreate"
+        old_lock = get_resource_lock(key)
+
+        # ロックを古くしてクリーンアップ
+        old_time = time.monotonic() - 400
+        _resource_locks[key] = (old_lock, old_time)
+        monkeypatch.setattr(utils_module, "_lock_last_cleanup_time", 0.0)
+        _cleanup_resource_locks()
+
+        # 新しいロックを取得
+        new_lock = get_resource_lock(key)
+        assert new_lock is not old_lock
+
+    def test_cleanup_just_under_boundary_not_expired(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """有効期限ぎりぎり手前のロックは削除されない (> で比較)。"""
+        import src.utils as utils_module
+
+        key = "test:boundary"
+        get_resource_lock(key)
+
+        # _LOCK_EXPIRY_TIME (300秒) より少し短い期間前に設定
+        # (time.monotonic() の進行を考慮して余裕を持たせる)
+        boundary_time = time.monotonic() - 299
+        lock, _ = _resource_locks[key]
+        _resource_locks[key] = (lock, boundary_time)
+
+        monkeypatch.setattr(utils_module, "_lock_last_cleanup_time", 0.0)
+        _cleanup_resource_locks()
+
+        # 300秒未満なので削除されない
+        assert key in _resource_locks

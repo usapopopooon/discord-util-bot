@@ -2339,3 +2339,474 @@ class TestOnGuildRemove:
         await cog.on_guild_remove(guild)
 
         mock_delete_by_guild.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# エッジケーステスト: _delayed_repost
+# ---------------------------------------------------------------------------
+
+
+class TestDelayedRepostEdgeCases:
+    """_delayed_repost のエッジケーステスト。"""
+
+    async def test_repost_text_type_sends_plain_text(self) -> None:
+        """テキストタイプの場合は content= でプレーンテキストを送信する。"""
+        cog = _make_cog()
+        channel = MagicMock()
+        channel.send = AsyncMock(return_value=MagicMock(id=1234567890))
+        channel.fetch_message = AsyncMock(return_value=MagicMock(delete=AsyncMock()))
+
+        sticky = _make_sticky(message_type="text", description="Hello")
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.update_sticky_message_id",
+                new_callable=AsyncMock,
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        # content="Hello" で送信されている（embed ではない）
+        channel.send.assert_called_once_with("Hello")
+
+    async def test_repost_embed_type_sends_embed(self) -> None:
+        """Embed タイプの場合は embed= で送信する。"""
+        cog = _make_cog()
+        channel = MagicMock()
+        channel.send = AsyncMock(return_value=MagicMock(id=1234567890))
+        channel.fetch_message = AsyncMock(return_value=MagicMock(delete=AsyncMock()))
+
+        sticky = _make_sticky(
+            message_type="embed",
+            title="T",
+            description="D",
+            color=0xFF0000,
+        )
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.update_sticky_message_id",
+                new_callable=AsyncMock,
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        # embed= キーワード引数で送信されている
+        channel.send.assert_called_once()
+        call_kwargs = channel.send.call_args[1]
+        assert "embed" in call_kwargs
+        embed = call_kwargs["embed"]
+        assert embed.title == "T"
+        assert embed.description == "D"
+
+    async def test_repost_old_message_not_found_deletes_sticky(self) -> None:
+        """古いメッセージが NotFound の場合、DB から sticky を削除し再投稿しない。"""
+        cog = _make_cog()
+        channel = MagicMock()
+        channel.send = AsyncMock()
+        channel.fetch_message = AsyncMock(side_effect=discord.NotFound(MagicMock(), ""))
+
+        sticky = _make_sticky(message_id="999")
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.delete_sticky_message",
+                new_callable=AsyncMock,
+            ) as mock_delete,
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        # DB から削除される
+        mock_delete.assert_called_once()
+        # 再投稿はされない
+        channel.send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# エッジケーステスト: on_message デバウンス
+# ---------------------------------------------------------------------------
+
+
+class TestOnMessageDebounce:
+    """on_message のデバウンス関連エッジケーステスト。"""
+
+    async def test_rapid_messages_cancel_old_tasks(self) -> None:
+        """3 連続メッセージで前のタスクがキャンセルされ、最後の 1 つだけ残る。"""
+        cog = _make_cog()
+        message = _make_message()
+
+        sticky = _make_sticky(cooldown_seconds=5)
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+        ):
+            await cog.on_message(message)
+            task1 = cog._pending_tasks["456"]
+
+            await cog.on_message(message)
+            task2 = cog._pending_tasks["456"]
+
+            await cog.on_message(message)
+            task3 = cog._pending_tasks["456"]
+
+        # 前の 2 つはキャンセルされている
+        assert task1.cancelled()
+        assert task2.cancelled()
+        # 最後の 1 つだけが残っている
+        assert "456" in cog._pending_tasks
+        assert cog._pending_tasks["456"] is task3
+        # クリーンアップ
+        task3.cancel()
+
+    async def test_http_exception_on_fetch_removes_sticky(self) -> None:
+        """fetch_message で HTTPException が発生した場合、DB から sticky を削除する。"""
+        cog = _make_cog()
+        channel = MagicMock()
+        channel.send = AsyncMock()
+        channel.fetch_message = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "")
+        )
+
+        sticky = _make_sticky(message_id="999")
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.delete_sticky_message",
+                new_callable=AsyncMock,
+            ) as mock_delete,
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        # DB から削除される
+        mock_delete.assert_called_once()
+        # 再投稿はされない
+        channel.send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# エッジケーステスト: StickyEmbedModal カラーパース
+# ---------------------------------------------------------------------------
+
+
+class TestColorParsingEdgeCases:
+    """StickyEmbedModal の色パースのエッジケーステスト。"""
+
+    async def test_color_black_000000_lstrip_edge(self) -> None:
+        """'000000' は lstrip('#').lstrip('0x') で空文字になり ValueError になる。
+
+        lstrip('0x') は文字集合 {'0', 'x'} の各文字を先頭から除去するため、
+        '000000' の全ての '0' が除去されて空文字 '' になり、
+        int('', 16) が ValueError を発生させる。これは既知の挙動を文書化する。
+        """
+        cog = _make_cog()
+        modal = StickyEmbedModal(cog)
+        interaction = _make_interaction()
+
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = "000000"
+        modal.delay._value = "5"
+
+        await modal.on_submit(interaction)
+
+        # ValueError がキャッチされてエラーメッセージが送信される
+        call_args = interaction.response.send_message.call_args
+        assert "無効な色形式" in call_args[0][0]
+
+    async def test_invalid_hex_rejected(self) -> None:
+        """'gg0000' のような無効な 16 進数はエラーメッセージを返す。"""
+        cog = _make_cog()
+        modal = StickyEmbedModal(cog)
+        interaction = _make_interaction()
+
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = "gg0000"
+        modal.delay._value = "5"
+
+        await modal.on_submit(interaction)
+
+        # ValueError がキャッチされてエラーメッセージが送信される
+        call_args = interaction.response.send_message.call_args
+        assert "無効な色形式" in call_args[0][0]
+
+
+# ---------------------------------------------------------------------------
+# Additional Edge Case Tests
+# ---------------------------------------------------------------------------
+
+
+class TestStickyEmbedModalEdgeCases:
+    """StickyEmbedModal の追加エッジケーステスト。"""
+
+    async def test_delay_zero_clamped_to_one(self) -> None:
+        """delay = 0 は 1 にクランプされる。"""
+        cog = _make_cog()
+        modal = StickyEmbedModal(cog)
+        interaction = _make_interaction()
+
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = ""
+        modal.delay._value = "0"
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch("src.cogs.sticky.create_sticky_message", new_callable=AsyncMock),
+            patch("src.cogs.sticky.update_sticky_message_id", new_callable=AsyncMock),
+        ):
+            await modal.on_submit(interaction)
+
+        interaction.response.send_message.assert_called_once()
+        call_args = interaction.response.send_message.call_args
+        # エラーメッセージではないことを確認
+        assert "無効" not in str(call_args)
+
+    async def test_delay_exceeds_max_clamped_to_3600(self) -> None:
+        """delay > 3600 は 3600 にクランプされる。"""
+        cog = _make_cog()
+        modal = StickyEmbedModal(cog)
+        interaction = _make_interaction()
+
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = ""
+        modal.delay._value = "9999"
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch("src.cogs.sticky.create_sticky_message", new_callable=AsyncMock),
+            patch("src.cogs.sticky.update_sticky_message_id", new_callable=AsyncMock),
+        ):
+            await modal.on_submit(interaction)
+
+        interaction.response.send_message.assert_called_once()
+        call_args = interaction.response.send_message.call_args
+        assert "無効" not in str(call_args)
+
+    async def test_delay_float_rejected(self) -> None:
+        """delay に小数値はエラー。"""
+        cog = _make_cog()
+        modal = StickyEmbedModal(cog)
+        interaction = _make_interaction()
+
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = ""
+        modal.delay._value = "5.5"
+
+        await modal.on_submit(interaction)
+
+        call_args = interaction.response.send_message.call_args
+        assert "無効な遅延値" in call_args[0][0]
+
+    async def test_no_guild_returns_error(self) -> None:
+        """guild なしの interaction はエラーメッセージを返す。"""
+        cog = _make_cog()
+        modal = StickyEmbedModal(cog)
+        interaction = _make_interaction()
+        interaction.guild = None
+
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = ""
+        modal.delay._value = "5"
+
+        await modal.on_submit(interaction)
+
+        call_args = interaction.response.send_message.call_args
+        assert "サーバー内" in call_args[0][0]
+
+    async def test_color_with_hash_prefix(self) -> None:
+        """色に # プレフィックスを付けても正常にパースされる。"""
+        cog = _make_cog()
+        modal = StickyEmbedModal(cog)
+        interaction = _make_interaction()
+
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = "#FF0000"
+        modal.delay._value = "5"
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch("src.cogs.sticky.create_sticky_message", new_callable=AsyncMock),
+            patch("src.cogs.sticky.update_sticky_message_id", new_callable=AsyncMock),
+        ):
+            await modal.on_submit(interaction)
+
+        interaction.response.send_message.assert_called_once()
+        call_args = interaction.response.send_message.call_args
+        assert "無効な色形式" not in str(call_args)
+
+    async def test_color_with_0x_prefix(self) -> None:
+        """色に 0x プレフィックスを付けても正常にパースされる。"""
+        cog = _make_cog()
+        modal = StickyEmbedModal(cog)
+        interaction = _make_interaction()
+
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = "0xFF0000"
+        modal.delay._value = "5"
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch("src.cogs.sticky.create_sticky_message", new_callable=AsyncMock),
+            patch("src.cogs.sticky.update_sticky_message_id", new_callable=AsyncMock),
+        ):
+            await modal.on_submit(interaction)
+
+        interaction.response.send_message.assert_called_once()
+        call_args = interaction.response.send_message.call_args
+        assert "無効な色形式" not in str(call_args)
+
+
+class TestOnMessageEdgeCases:
+    """on_message リスナーの追加エッジケーステスト。"""
+
+    async def test_no_sticky_config_no_repost(self) -> None:
+        """sticky 設定がないチャンネルでは再投稿しない。"""
+        cog = _make_cog()
+        message = _make_message(author_id=12345)
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch("src.cogs.sticky.get_sticky_message", return_value=None),
+        ):
+            await cog.on_message(message)
+
+        channel_id = str(message.channel.id)
+        assert channel_id not in cog._pending_tasks
+
+    async def test_no_guild_no_repost(self) -> None:
+        """DM メッセージでは sticky 処理をスキップ。"""
+        cog = _make_cog()
+        message = _make_message(author_id=12345)
+        message.guild = None
+
+        with patch("src.cogs.sticky.get_sticky_message") as mock_get:
+            await cog.on_message(message)
+
+        mock_get.assert_not_called()
+
+    async def test_pending_task_cancelled_on_new_message(self) -> None:
+        """新しいメッセージで既存のペンディングタスクがキャンセルされる。"""
+        cog = _make_cog()
+        message = _make_message(author_id=12345)
+        channel_id = str(message.channel.id)
+
+        # 既存のタスクを作成
+        existing_task = asyncio.create_task(asyncio.sleep(100))
+        cog._pending_tasks[channel_id] = existing_task
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+        sticky = _make_sticky()
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch("src.cogs.sticky.get_sticky_message", return_value=sticky),
+        ):
+            await cog.on_message(message)
+
+        # 既存のタスクがキャンセルされた
+        assert existing_task.cancelled()
+        # 新しいタスクが作成された
+        assert channel_id in cog._pending_tasks
+        assert cog._pending_tasks[channel_id] is not existing_task
+
+
+class TestBuildEmbedEdgeCases:
+    """_build_embed メソッドの追加エッジケーステスト。"""
+
+    def test_empty_title_allowed(self) -> None:
+        """空タイトルの embed が作成できる。"""
+        cog = _make_cog()
+        embed = cog._build_embed("", "Description", None)
+        assert embed.title == ""
+        assert embed.description == "Description"
+
+    def test_long_description(self) -> None:
+        """長い description の embed が作成できる。"""
+        cog = _make_cog()
+        long_desc = "A" * 4000
+        embed = cog._build_embed("Title", long_desc, None)
+        assert len(embed.description) == 4000
+
+    def test_color_zero_falls_back_to_default(self) -> None:
+        """color = 0 は falsy なのでデフォルト色が使われる。"""
+        cog = _make_cog()
+        embed = cog._build_embed("Title", "Description", 0)
+        # 0 is falsy → `color or DEFAULT_COLOR` → DEFAULT_COLOR (0x5865F2)
+        assert embed.color == discord.Color(0x5865F2)

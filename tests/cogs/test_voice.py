@@ -3210,3 +3210,329 @@ class TestOnGuildRemove:
 
         # セッションが先に削除される
         assert call_order == ["sessions", "lobbies"]
+
+
+# ===========================================================================
+# _get_longest_member — 追加エッジケース
+# ===========================================================================
+
+
+class TestGetLongestMemberEdgeCases:
+    """Edge case tests for _get_longest_member."""
+
+    async def test_all_bots_returns_none(self) -> None:
+        """Channel with only bot members returns None."""
+        cog = _make_cog()
+        bot1 = _make_member(1001, bot=True)
+        bot2 = _make_member(1002, bot=True)
+        channel = _make_channel(100, [bot1, bot2])
+        channel.guild = MagicMock()
+        channel.guild.get_member = lambda _uid: None
+
+        voice_session = _make_voice_session()
+
+        mock_session = AsyncMock()
+        with patch(
+            "src.cogs.voice.get_voice_session_members_ordered",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            result = await cog._get_longest_member(
+                mock_session, voice_session, channel, exclude_id=99999
+            )
+            assert result is None
+
+    async def test_owner_only_human_returns_none(self) -> None:
+        """Owner is the only human and is excluded — returns None."""
+        cog = _make_cog()
+        owner = _make_member(12345)
+        bot1 = _make_member(1001, bot=True)
+        channel = _make_channel(100, [owner, bot1])
+        channel.guild = MagicMock()
+        channel.guild.get_member = lambda uid: owner if uid == 12345 else None
+
+        voice_session = _make_voice_session(owner_id="12345")
+
+        mock_session = AsyncMock()
+        with patch(
+            "src.cogs.voice.get_voice_session_members_ordered",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            result = await cog._get_longest_member(
+                mock_session, voice_session, channel, exclude_id=12345
+            )
+            assert result is None
+
+    async def test_db_member_not_in_channel_skipped(self) -> None:
+        """DB member who left the channel is skipped; present member returned."""
+        cog = _make_cog()
+        m222 = _make_member(222)
+        # Only member 222 is in the channel (111 has left)
+        channel = _make_channel(100, [m222])
+        channel.guild = MagicMock()
+        channel.guild.get_member = lambda uid: m222 if uid == 222 else None
+
+        voice_session = _make_voice_session()
+
+        # DB returns 111 first (joined earlier), then 222
+        mock_db_member1 = MagicMock()
+        mock_db_member1.user_id = "111"
+        mock_db_member2 = MagicMock()
+        mock_db_member2.user_id = "222"
+
+        mock_session = AsyncMock()
+        with patch(
+            "src.cogs.voice.get_voice_session_members_ordered",
+            new_callable=AsyncMock,
+            return_value=[mock_db_member1, mock_db_member2],
+        ):
+            result = await cog._get_longest_member(
+                mock_session, voice_session, channel, exclude_id=99999
+            )
+            # 111 is not in the channel, so 222 should be returned
+            assert result is m222
+
+
+# ===========================================================================
+# VC 作成クールダウン — 境界テスト
+# ===========================================================================
+
+
+class TestVcCooldownBoundary:
+    """Boundary tests for VC create cooldown."""
+
+    def test_cooldown_exact_boundary_active(self) -> None:
+        """Just before cooldown expires — still active."""
+        user_id = 42
+        record_vc_create_cooldown(user_id)
+
+        # Capture the recorded time
+        from src.cogs.voice import _vc_create_cooldown_cache
+
+        recorded_time = _vc_create_cooldown_cache[user_id]
+
+        fake_now = recorded_time + VC_CREATE_COOLDOWN_SECONDS - 0.001
+        with patch("src.cogs.voice.time") as mock_time:
+            mock_time.monotonic.return_value = fake_now
+            on_cooldown, remaining = is_vc_create_on_cooldown(user_id)
+
+        assert on_cooldown is True
+        assert remaining > 0
+
+    def test_cooldown_just_expired(self) -> None:
+        """Just after cooldown expires — no longer active."""
+        user_id = 43
+        record_vc_create_cooldown(user_id)
+
+        from src.cogs.voice import _vc_create_cooldown_cache
+
+        recorded_time = _vc_create_cooldown_cache[user_id]
+
+        fake_now = recorded_time + VC_CREATE_COOLDOWN_SECONDS + 0.001
+        with patch("src.cogs.voice.time") as mock_time:
+            mock_time.monotonic.return_value = fake_now
+            on_cooldown, remaining = is_vc_create_on_cooldown(user_id)
+
+        assert on_cooldown is False
+        assert remaining == 0.0
+
+
+# ===========================================================================
+# _record_join_to_db / _remove_join_from_db — セッション不在ガード
+# ===========================================================================
+
+
+class TestRecordJoinLeaveGuard:
+    """_record_join_to_db / _remove_join_from_db are no-ops when no session."""
+
+    async def test_record_join_no_session_noop(self) -> None:
+        """_record_join_to_db does nothing when get_voice_session returns None."""
+        cog = _make_cog()
+
+        mock_factory, mock_session = _mock_async_session()
+        with (
+            patch("src.cogs.voice.async_session", mock_factory),
+            patch(
+                "src.cogs.voice.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "src.cogs.voice.add_voice_session_member",
+                new_callable=AsyncMock,
+            ) as mock_add,
+        ):
+            await cog._record_join_to_db(channel_id=12345, user_id=67890)
+            mock_add.assert_not_awaited()
+
+    async def test_remove_join_no_session_noop(self) -> None:
+        """_remove_join_from_db does nothing when get_voice_session returns None."""
+        cog = _make_cog()
+
+        mock_factory, mock_session = _mock_async_session()
+        with (
+            patch("src.cogs.voice.async_session", mock_factory),
+            patch(
+                "src.cogs.voice.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "src.cogs.voice.remove_voice_session_member",
+                new_callable=AsyncMock,
+            ) as mock_remove,
+        ):
+            await cog._remove_join_from_db(channel_id=12345, user_id=67890)
+            mock_remove.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Additional Edge Case Tests
+# ---------------------------------------------------------------------------
+
+
+class TestVcCreateCooldownEdgeCases:
+    """VC 作成クールダウンの追加エッジケーステスト。"""
+
+    def test_first_check_not_on_cooldown(self) -> None:
+        """最初のチェックはクールダウン中ではない。"""
+        on_cooldown, remaining = is_vc_create_on_cooldown(1)
+        assert on_cooldown is False
+        assert remaining == 0.0
+
+    def test_after_record_is_on_cooldown(self) -> None:
+        """record 後は即座にクールダウン中。"""
+        record_vc_create_cooldown(1)
+        on_cooldown, remaining = is_vc_create_on_cooldown(1)
+        assert on_cooldown is True
+        assert remaining > 0
+
+    def test_different_users_independent(self) -> None:
+        """異なるユーザーのクールダウンは独立。"""
+        record_vc_create_cooldown(1)
+        on_cooldown, _ = is_vc_create_on_cooldown(2)
+        assert on_cooldown is False
+
+    def test_remaining_decreases(self) -> None:
+        """残り時間が VC_CREATE_COOLDOWN_SECONDS 以下。"""
+        record_vc_create_cooldown(1)
+        on_cooldown, remaining = is_vc_create_on_cooldown(1)
+        assert on_cooldown is True
+        assert 0 < remaining <= VC_CREATE_COOLDOWN_SECONDS
+
+    def test_clear_cache_resets_cooldown(self) -> None:
+        """キャッシュクリア後はクールダウンリセット。"""
+        record_vc_create_cooldown(1)
+        clear_vc_create_cooldown_cache()
+        on_cooldown, _ = is_vc_create_on_cooldown(1)
+        assert on_cooldown is False
+
+
+class TestRecordJoinCacheEdgeCases:
+    """_record_join_cache の追加エッジケーステスト。"""
+
+    def test_same_channel_many_members(self) -> None:
+        """1つのチャンネルに多数のメンバーを記録。"""
+        cog = _make_cog()
+        for i in range(50):
+            cog._record_join_cache(100, i)
+        assert len(cog._join_times[100]) == 50
+
+    def test_many_channels_one_member(self) -> None:
+        """多数のチャンネルに1メンバーずつ記録。"""
+        cog = _make_cog()
+        for i in range(50):
+            cog._record_join_cache(i, 1)
+        assert len(cog._join_times) == 50
+
+
+class TestGetLongestMemberAdditionalEdgeCases:
+    """_get_longest_member の追加エッジケーステスト。"""
+
+    async def test_no_db_members_falls_back_to_channel(self) -> None:
+        """DB にメンバーがいない場合はチャンネルメンバーにフォールバックする。"""
+        cog = _make_cog()
+        m1 = _make_member(1)
+        channel = _make_channel(100, [m1])
+        channel.guild = MagicMock()
+        voice_session = _make_voice_session()
+
+        mock_session = AsyncMock()
+        with patch(
+            "src.cogs.voice.get_voice_session_members_ordered",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            result = await cog._get_longest_member(
+                mock_session, voice_session, channel, exclude_id=999
+            )
+            # DB が空でもチャンネルメンバーからフォールバック
+            assert result == m1
+
+    async def test_no_db_members_no_channel_members_returns_none(self) -> None:
+        """DB もチャンネルにもメンバーがいない場合は None を返す。"""
+        cog = _make_cog()
+        channel = _make_channel(100, [])
+        channel.guild = MagicMock()
+        voice_session = _make_voice_session()
+
+        mock_session = AsyncMock()
+        with patch(
+            "src.cogs.voice.get_voice_session_members_ordered",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            result = await cog._get_longest_member(
+                mock_session, voice_session, channel, exclude_id=999
+            )
+            assert result is None
+
+    async def test_all_members_excluded_returns_none(self) -> None:
+        """全メンバーが除外対象の場合は None を返す。"""
+        cog = _make_cog()
+        m1 = _make_member(1)
+        channel = _make_channel(100, [m1])
+        channel.guild = MagicMock()
+        channel.guild.get_member = lambda uid: m1 if uid == 1 else None
+        voice_session = _make_voice_session()
+
+        mock_db_member = MagicMock()
+        mock_db_member.user_id = "1"
+
+        mock_session = AsyncMock()
+        with patch(
+            "src.cogs.voice.get_voice_session_members_ordered",
+            new_callable=AsyncMock,
+            return_value=[mock_db_member],
+        ):
+            result = await cog._get_longest_member(
+                mock_session, voice_session, channel, exclude_id=1
+            )
+            assert result is None
+
+    async def test_member_left_guild_skipped(self) -> None:
+        """ギルドを離脱したメンバーはスキップされる。"""
+        cog = _make_cog()
+        m2 = _make_member(2)
+        channel = _make_channel(100, [m2])
+        channel.guild = MagicMock()
+        # user_id=1 は guild.get_member で None (離脱)
+        channel.guild.get_member = lambda uid: m2 if uid == 2 else None
+        voice_session = _make_voice_session()
+
+        mock_db_member1 = MagicMock()
+        mock_db_member1.user_id = "1"
+        mock_db_member2 = MagicMock()
+        mock_db_member2.user_id = "2"
+
+        mock_session = AsyncMock()
+        with patch(
+            "src.cogs.voice.get_voice_session_members_ordered",
+            new_callable=AsyncMock,
+            return_value=[mock_db_member1, mock_db_member2],
+        ):
+            result = await cog._get_longest_member(
+                mock_session, voice_session, channel, exclude_id=999
+            )
+            assert result is m2

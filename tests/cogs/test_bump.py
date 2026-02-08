@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
@@ -3277,3 +3278,326 @@ class TestBumpNotificationCooldownAutoCleanup:
 
         # エントリはまだ残っている
         assert (12345, "67890", "DISBOARD") in _bump_notification_cooldown_cache
+
+
+# ---------------------------------------------------------------------------
+# Cooldown 境界値テスト
+# ---------------------------------------------------------------------------
+
+
+class TestBumpCooldownBoundary:
+    """Bump 通知クールダウンの境界値テスト."""
+
+    def test_cooldown_exact_boundary_still_active(self) -> None:
+        """クールダウン期間のちょうど手前 (0.001秒残り) はまだクールダウン中."""
+        import time
+
+        user_id = 11111
+        guild_id = "22222"
+        svc = "DISBOARD"
+
+        # クールダウン期間の0.001秒手前に設定
+        _bump_notification_cooldown_cache[(user_id, guild_id, svc)] = (
+            time.monotonic() - BUMP_NOTIFICATION_COOLDOWN_SECONDS + 0.001
+        )
+
+        result = is_bump_notification_on_cooldown(user_id, guild_id, svc)
+        assert result is True
+
+    def test_cooldown_just_expired(self) -> None:
+        """クールダウン期間を0.001秒超過したらクールダウン解除."""
+        import time
+
+        user_id = 11111
+        guild_id = "22222"
+        svc = "DISBOARD"
+
+        # クールダウン期間の0.001秒超過に設定
+        _bump_notification_cooldown_cache[(user_id, guild_id, svc)] = (
+            time.monotonic() - BUMP_NOTIFICATION_COOLDOWN_SECONDS - 0.001
+        )
+
+        result = is_bump_notification_on_cooldown(user_id, guild_id, svc)
+        assert result is False
+
+        # キャッシュが再記録されていることを確認
+        key = (user_id, guild_id, svc)
+        assert key in _bump_notification_cooldown_cache
+        # 再記録された値は現在時刻に近い (1秒以内)
+        assert time.monotonic() - _bump_notification_cooldown_cache[key] < 1.0
+
+    def test_cleanup_keeps_active_removes_expired(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """クリーンアップで期限切れエントリは削除、アクティブは保持."""
+        import time
+
+        import src.cogs.bump as bump_module
+
+        # 期限切れエントリ (400秒前 > _BUMP_CLEANUP_INTERVAL=300秒)
+        expired_key = (11111, "22222", "DISBOARD")
+        _bump_notification_cooldown_cache[expired_key] = time.monotonic() - 400
+
+        # アクティブなエントリ (今)
+        active_key = (33333, "44444", "ディス速報")
+        _bump_notification_cooldown_cache[active_key] = time.monotonic()
+
+        # 最終クリーンアップ時刻を 0 にしてクリーンアップを強制
+        monkeypatch.setattr(bump_module, "_bump_last_cleanup_time", 0)
+
+        _cleanup_bump_notification_cooldown_cache()
+
+        # 期限切れエントリは削除される
+        assert expired_key not in _bump_notification_cooldown_cache
+        # アクティブなエントリは残る
+        assert active_key in _bump_notification_cooldown_cache
+
+
+# ---------------------------------------------------------------------------
+# Bump 検知エッジケーステスト
+# ---------------------------------------------------------------------------
+
+
+class TestBumpDetectionEdgeCases:
+    """Bump 検知のエッジケーステスト."""
+
+    def test_keyword_in_title_not_description_ignored(self) -> None:
+        """DISBOARD: title にキーワードがあっても description になければ検知しない."""
+        cog = _make_cog()
+        message = _make_message(
+            author_id=DISBOARD_BOT_ID,
+            channel_id=456,
+            embed_title=f"サーバーの{DISBOARD_SUCCESS_KEYWORD}しました！",
+            embed_description="",
+        )
+
+        result = cog._detect_bump_success(message)
+        assert result is None
+
+    def test_empty_embed_returns_none(self) -> None:
+        """DISBOARD: description も title も空の embed は検知しない."""
+        cog = _make_cog()
+        message = _make_message(
+            author_id=DISBOARD_BOT_ID,
+            channel_id=456,
+            embed_title="",
+            embed_description="",
+        )
+
+        result = cog._detect_bump_success(message)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _send_reminder エッジケーステスト
+# ---------------------------------------------------------------------------
+
+
+class TestSendReminderEdgeCases:
+    """_send_reminder のエッジケーステスト."""
+
+    async def test_no_role_falls_back_to_here(self) -> None:
+        """ロールが見つからない場合は @here にフォールバック."""
+        cog = _make_cog()
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.guild = MagicMock()
+        # カスタムロールなし、デフォルトロールもなし
+        channel.guild.get_role = MagicMock(return_value=None)
+        channel.guild.roles = []  # discord.utils.get は空リストから None を返す
+        channel.send = AsyncMock()
+
+        cog.bot.get_channel = MagicMock(return_value=channel)
+
+        # role_id=None でリマインダーを作成
+        reminder = _make_reminder(role_id=None)
+
+        await cog._send_reminder(reminder)
+
+        # send が呼ばれたことを確認
+        channel.send.assert_called_once()
+        call_kwargs = channel.send.call_args[1]
+        assert call_kwargs["content"] == "@here"
+
+    async def test_custom_role_mentioned(self) -> None:
+        """カスタムロールが設定されている場合はそのロールをメンション."""
+        cog = _make_cog()
+
+        # カスタムロールを作成
+        custom_role = MagicMock(spec=discord.Role)
+        custom_role.mention = "<@&999>"
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.guild = MagicMock()
+        channel.guild.get_role = MagicMock(return_value=custom_role)
+        channel.send = AsyncMock()
+
+        cog.bot.get_channel = MagicMock(return_value=channel)
+
+        # role_id を設定
+        reminder = _make_reminder(role_id="999")
+
+        await cog._send_reminder(reminder)
+
+        # get_role がカスタムロール ID で呼ばれた
+        channel.guild.get_role.assert_called_once_with(999)
+        # send が呼ばれ、カスタムロールの mention が content に含まれる
+        channel.send.assert_called_once()
+        call_kwargs = channel.send.call_args[1]
+        assert call_kwargs["content"] == "<@&999>"
+
+    async def test_non_text_channel_skipped(self) -> None:
+        """TextChannel 以外のチャンネルの場合は送信しない."""
+        cog = _make_cog()
+
+        # VoiceChannel を返す
+        voice_channel = MagicMock(spec=discord.VoiceChannel)
+        voice_channel.send = AsyncMock()
+
+        cog.bot.get_channel = MagicMock(return_value=voice_channel)
+
+        reminder = _make_reminder()
+
+        await cog._send_reminder(reminder)
+
+        # send は呼ばれない
+        voice_channel.send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Additional Edge Case Tests
+# ---------------------------------------------------------------------------
+
+
+class TestBumpCooldownEdgeCases:
+    """Bump通知クールダウンの追加エッジケーステスト。"""
+
+    def test_first_call_returns_false(self) -> None:
+        """最初の呼び出しはクールダウン中ではない。"""
+        result = is_bump_notification_on_cooldown(1, "guild1", "DISBOARD")
+        assert result is False
+
+    def test_immediate_second_call_returns_true(self) -> None:
+        """連続呼び出しはクールダウン中。"""
+        is_bump_notification_on_cooldown(1, "guild1", "DISBOARD")
+        result = is_bump_notification_on_cooldown(1, "guild1", "DISBOARD")
+        assert result is True
+
+    def test_different_user_not_on_cooldown(self) -> None:
+        """別ユーザーはクールダウンに影響されない。"""
+        is_bump_notification_on_cooldown(1, "guild1", "DISBOARD")
+        result = is_bump_notification_on_cooldown(2, "guild1", "DISBOARD")
+        assert result is False
+
+    def test_different_guild_not_on_cooldown(self) -> None:
+        """別ギルドはクールダウンに影響されない。"""
+        is_bump_notification_on_cooldown(1, "guild1", "DISBOARD")
+        result = is_bump_notification_on_cooldown(1, "guild2", "DISBOARD")
+        assert result is False
+
+    def test_different_service_not_on_cooldown(self) -> None:
+        """別サービスはクールダウンに影響されない。"""
+        is_bump_notification_on_cooldown(1, "guild1", "DISBOARD")
+        result = is_bump_notification_on_cooldown(1, "guild1", "ディス速報")
+        assert result is False
+
+    def test_cache_cleared_resets_cooldown(self) -> None:
+        """キャッシュクリア後はクールダウンリセット。"""
+        is_bump_notification_on_cooldown(1, "guild1", "DISBOARD")
+        clear_bump_notification_cooldown_cache()
+        result = is_bump_notification_on_cooldown(1, "guild1", "DISBOARD")
+        assert result is False
+
+    def test_cleanup_removes_old_entries(self) -> None:
+        """クリーンアップが古いエントリを削除する。"""
+        import src.cogs.bump as bump_module
+
+        # エントリを作成
+        is_bump_notification_on_cooldown(1, "guild1", "DISBOARD")
+
+        # タイムスタンプを古くする
+        key = (1, "guild1", "DISBOARD")
+        _bump_notification_cooldown_cache[key] = time.monotonic() - 400
+
+        # クリーンアップを強制実行
+        bump_module._bump_last_cleanup_time = 0.0
+        _cleanup_bump_notification_cooldown_cache()
+
+        assert key not in _bump_notification_cooldown_cache
+
+
+class TestDetectBumpSuccessEdgeCases:
+    """_detect_bump_success の追加エッジケーステスト。"""
+
+    def test_empty_embeds_no_detection(self) -> None:
+        """embed がない場合は検知しない。"""
+        cog = _make_cog()
+        message = _make_message(
+            author_id=DISBOARD_BOT_ID,
+            channel_id=456,
+        )
+        message.embeds = []
+        message.content = None
+        result = cog._detect_bump_success(message)
+        assert result is None
+
+    def test_disboard_without_success_keyword(self) -> None:
+        """DISBOARD のメッセージだが成功キーワードなしは検知しない。"""
+        cog = _make_cog()
+        message = _make_message(
+            author_id=DISBOARD_BOT_ID,
+            channel_id=456,
+            embed_description="別のメッセージです。",
+        )
+        result = cog._detect_bump_success(message)
+        assert result is None
+
+    def test_non_bot_message_not_detected(self) -> None:
+        """DISBOARD/ディス速報以外の Bot のメッセージは検知しない。"""
+        cog = _make_cog()
+        message = _make_message(
+            author_id=99999,  # 別の Bot
+            channel_id=456,
+            embed_description=f"サーバーの{DISBOARD_SUCCESS_KEYWORD}しました！",
+        )
+        result = cog._detect_bump_success(message)
+        assert result is None
+
+    def test_dissoku_none_description_no_crash(self) -> None:
+        """ディス速報の embed.description が None でもクラッシュしない。"""
+        cog = _make_cog()
+        message = _make_message(
+            author_id=DISSOKU_BOT_ID,
+            channel_id=456,
+        )
+        embed = MagicMock(spec=discord.Embed)
+        embed.description = None
+        embed.title = None
+        embed.fields = []
+        message.embeds = [embed]
+        message.content = None
+        result = cog._detect_bump_success(message)
+        assert result is None
+
+    def test_dissoku_empty_fields_no_crash(self) -> None:
+        """ディス速報の embed.fields が空リストでもクラッシュしない。"""
+        cog = _make_cog()
+        message = _make_message(
+            author_id=DISSOKU_BOT_ID,
+            channel_id=456,
+            embed_description="Some text without keyword",
+        )
+        message.embeds[0].title = None
+        message.embeds[0].fields = []
+        message.content = None
+        result = cog._detect_bump_success(message)
+        assert result is None
+
+
+class TestBumpNotificationViewEdgeCases:
+    """BumpNotificationView の追加エッジケーステスト。"""
+
+    async def test_view_timeout_is_none(self) -> None:
+        """BumpNotificationView の timeout は None (永続 View)。"""
+        view = BumpNotificationView("guild1", "DISBOARD", is_enabled=True)
+        assert view.timeout is None

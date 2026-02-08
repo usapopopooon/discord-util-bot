@@ -2249,3 +2249,273 @@ class TestCreateTicketChannelOpeningMessageFailure:
 
         assert result == mock_channel
         mock_channel.send.assert_awaited_once()
+
+
+# =============================================================================
+# TestTranscriptEdgeCases (transcript generation edge cases)
+# =============================================================================
+
+
+class TestTranscriptEdgeCases:
+    """generate_transcript のエッジケーステスト (追加)。"""
+
+    async def test_empty_channel_no_messages(self) -> None:
+        """メッセージ 0 件でもクラッシュせず有効なトランスクリプトを返す。"""
+        ticket = _make_ticket(ticket_number=99, username="lonely", user_id="777")
+        channel = MagicMock(spec=discord.TextChannel)
+
+        async def empty_history(*_args: object, **_kwargs: object):
+            return
+            yield  # make this an async generator
+
+        channel.history = MagicMock(return_value=empty_history())
+
+        result = await generate_transcript(channel, ticket, "Empty Cat", "staff_user")
+
+        # Header and footer are present
+        assert "=== Ticket #99 - Empty Cat ===" in result
+        assert "Created by: lonely (777)" in result
+        assert "Closed by: staff_user" in result
+        # No message lines (lines starting with "[" that contain a timestamp)
+        body_lines = [
+            line for line in result.split("\n") if line.startswith("[") and "] " in line
+        ]
+        assert len(body_lines) == 0
+
+    async def test_attachment_only_no_text(self) -> None:
+        """content が空で添付ファイルのみのメッセージに [Attachments: が含まれる。"""
+        ticket = _make_ticket()
+        channel = MagicMock(spec=discord.TextChannel)
+
+        msg = MagicMock()
+        msg.author = MagicMock()
+        msg.author.bot = False
+        msg.author.name = "uploader"
+        msg.embeds = []
+        msg.content = ""
+        attachment = MagicMock()
+        attachment.url = "https://cdn.example.com/photo.jpg"
+        msg.attachments = [attachment]
+        msg.stickers = []
+        msg.created_at = datetime(2026, 2, 7, 12, 0, 0, tzinfo=UTC)
+
+        async def message_history(*_args: object, **_kwargs: object):
+            yield msg
+
+        channel.history = MagicMock(return_value=message_history())
+
+        result = await generate_transcript(channel, ticket, "General", "staff")
+
+        assert "[Attachments:" in result
+        assert "https://cdn.example.com/photo.jpg" in result
+
+    async def test_sticker_only_message(self) -> None:
+        """content が空でスタンプのみのメッセージに [Stickers: が含まれる。"""
+        ticket = _make_ticket()
+        channel = MagicMock(spec=discord.TextChannel)
+
+        msg = MagicMock()
+        msg.author = MagicMock()
+        msg.author.bot = False
+        msg.author.name = "sticker_fan"
+        msg.embeds = []
+        msg.content = ""
+        msg.attachments = []
+        sticker = MagicMock()
+        sticker.name = "pepe_happy"
+        msg.stickers = [sticker]
+        msg.created_at = datetime(2026, 2, 7, 14, 30, 0, tzinfo=UTC)
+
+        async def message_history(*_args: object, **_kwargs: object):
+            yield msg
+
+        channel.history = MagicMock(return_value=message_history())
+
+        result = await generate_transcript(channel, ticket, "General", "staff")
+
+        assert "[Stickers:" in result
+        assert "pepe_happy" in result
+
+
+# =============================================================================
+# TestSendCloseLogEdgeCases (send_close_log edge cases)
+# =============================================================================
+
+
+class TestSendCloseLogEdgeCases:
+    """send_close_log のエッジケーステスト (追加)。"""
+
+    async def test_invalid_log_channel_id(self) -> None:
+        """log_channel_id が無効文字列でも例外なし、get_channel 不呼出。"""
+        guild = MagicMock(spec=discord.Guild)
+        ticket = _make_ticket()
+        category = _make_category(log_channel_id="not_a_number")
+
+        # Should NOT raise
+        await send_close_log(guild, ticket, category, "closer", "http://localhost:8000")
+
+        guild.get_channel.assert_not_called()
+
+    async def test_log_channel_not_text_channel(self) -> None:
+        """ログチャンネルが VoiceChannel の場合、send は呼ばれない。"""
+        guild = MagicMock(spec=discord.Guild)
+        voice_channel = MagicMock(spec=discord.VoiceChannel)
+        voice_channel.send = AsyncMock()
+        guild.get_channel.return_value = voice_channel
+
+        ticket = _make_ticket()
+        category = _make_category(log_channel_id="12345")
+
+        await send_close_log(guild, ticket, category, "closer", "http://localhost:8000")
+
+        guild.get_channel.assert_called_once_with(12345)
+        voice_channel.send.assert_not_awaited()
+
+
+# =============================================================================
+# Additional Edge Case Tests
+# =============================================================================
+
+
+class TestCreateTicketOpeningEmbedEdgeCases:
+    """create_ticket_opening_embed の追加エッジケーステスト。"""
+
+    def test_ticket_number_zero(self) -> None:
+        """ticket_number = 0 でも Embed が作成される。"""
+        ticket = _make_ticket(ticket_number=0)
+        category = _make_category()
+        embed = create_ticket_opening_embed(ticket, category)
+        assert "Ticket #0" in embed.title
+
+    def test_large_ticket_number(self) -> None:
+        """大きな ticket_number でも正常に表示。"""
+        ticket = _make_ticket(ticket_number=99999)
+        category = _make_category()
+        embed = create_ticket_opening_embed(ticket, category)
+        assert "99999" in embed.title
+
+    def test_unicode_category_name(self) -> None:
+        """日本語カテゴリ名でも Embed が作成される。"""
+        ticket = _make_ticket()
+        category = _make_category(name="バグ報告")
+        embed = create_ticket_opening_embed(ticket, category)
+        assert "バグ報告" in embed.title
+
+
+class TestCreateTicketPanelEmbedEdgeCases:
+    """create_ticket_panel_embed の追加エッジケーステスト。"""
+
+    def test_multiple_associations(self) -> None:
+        """複数のカテゴリ関連付きパネル。"""
+        panel = _make_panel()
+        associations = [
+            _make_association(category_id=1, position=0),
+            _make_association(category_id=2, position=1),
+            _make_association(category_id=3, position=2),
+        ]
+        embed = create_ticket_panel_embed(panel, associations)
+        assert embed.title == "Support"
+
+    def test_empty_associations(self) -> None:
+        """カテゴリ関連なしのパネル。"""
+        panel = _make_panel()
+        associations: list[MagicMock] = []
+        embed = create_ticket_panel_embed(panel, associations)
+        assert embed.title == "Support"
+
+
+class TestGenerateTranscriptAdditionalEdgeCases:
+    """generate_transcript の追加エッジケーステスト。"""
+
+    async def test_message_with_attachments(self) -> None:
+        """添付ファイル付きメッセージのトランスクリプト。"""
+        ticket = _make_ticket(ticket_number=1, username="user1", user_id="1")
+        channel = MagicMock(spec=discord.TextChannel)
+
+        msg = MagicMock()
+        msg.author = MagicMock()
+        msg.author.bot = False
+        msg.author.name = "user1"
+        msg.embeds = []
+        msg.content = "See attached"
+        attachment = MagicMock()
+        attachment.filename = "screenshot.png"
+        attachment.url = "https://cdn.discord.com/attachments/test.png"
+        msg.attachments = [attachment]
+        msg.created_at = datetime(2026, 2, 7, 10, 0, 5, tzinfo=UTC)
+
+        async def message_history(*_args: object, **_kwargs: object):
+            yield msg
+
+        channel.history = MagicMock(return_value=message_history())
+
+        result = await generate_transcript(channel, ticket, "General", "staff_user")
+
+        assert "https://cdn.discord.com/attachments/test.png" in result
+        assert "See attached" in result
+
+    async def test_bot_embed_message_skipped(self) -> None:
+        """Bot の embed メッセージはトランスクリプトからスキップされる。"""
+        ticket = _make_ticket(ticket_number=1, username="user1", user_id="1")
+        channel = MagicMock(spec=discord.TextChannel)
+
+        msg = MagicMock()
+        msg.author = MagicMock()
+        msg.author.bot = True
+        msg.author.name = "bot"
+        msg.content = ""
+        embed = MagicMock()
+        embed.title = "Bot Embed"
+        embed.description = "Some embed content"
+        msg.embeds = [embed]
+        msg.attachments = []
+        msg.created_at = datetime(2026, 2, 7, 10, 0, 5, tzinfo=UTC)
+
+        async def message_history(*_args: object, **_kwargs: object):
+            yield msg
+
+        channel.history = MagicMock(return_value=message_history())
+
+        result = await generate_transcript(channel, ticket, "General", "staff_user")
+
+        # Bot + embeds の組み合わせはスキップされる
+        assert "Bot Embed" not in result
+        assert "Some embed content" not in result
+
+    async def test_transcript_unicode_messages(self) -> None:
+        """日本語メッセージのトランスクリプト。"""
+        ticket = _make_ticket(ticket_number=1, username="ユーザー", user_id="1")
+        channel = MagicMock(spec=discord.TextChannel)
+
+        msg = MagicMock()
+        msg.author = MagicMock()
+        msg.author.bot = False
+        msg.author.name = "ユーザー"
+        msg.embeds = []
+        msg.content = "こんにちは、サポートお願いします。"
+        msg.attachments = []
+        msg.created_at = datetime(2026, 2, 7, 10, 0, 5, tzinfo=UTC)
+
+        async def message_history(*_args: object, **_kwargs: object):
+            yield msg
+
+        channel.history = MagicMock(return_value=message_history())
+
+        result = await generate_transcript(channel, ticket, "一般", "スタッフ")
+
+        assert "こんにちは" in result
+        assert "ユーザー" in result
+
+
+class TestTicketPanelViewEdgeCases:
+    """TicketPanelView の追加エッジケーステスト。"""
+
+    async def test_panel_view_timeout_is_none(self) -> None:
+        """TicketPanelView の timeout は None (永続 View)。"""
+        view = TicketPanelView(panel_id=1, associations=[], category_names={})
+        assert view.timeout is None
+
+    async def test_control_view_timeout_is_none(self) -> None:
+        """TicketControlView の timeout は None (永続 View)。"""
+        view = TicketControlView(ticket_id=1)
+        assert view.timeout is None

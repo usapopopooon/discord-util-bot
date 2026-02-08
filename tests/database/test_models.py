@@ -13,10 +13,21 @@ from sqlalchemy.orm import selectinload
 
 from src.database.models import (
     AdminUser,
+    AutoBanLog,
+    AutoBanRule,
     BumpConfig,
     BumpReminder,
+    DiscordChannel,
+    DiscordGuild,
+    DiscordRole,
     Lobby,
+    RolePanel,
+    RolePanelItem,
     StickyMessage,
+    Ticket,
+    TicketCategory,
+    TicketPanel,
+    TicketPanelCategory,
     VoiceSession,
     VoiceSessionMember,
 )
@@ -169,15 +180,13 @@ class TestLobbyFields:
         await db_session.commit()
         assert lobby.default_user_limit == 99999
 
-    async def test_unicode_guild_id(self, db_session: AsyncSession) -> None:
-        """guild_id に数値文字列以外が入っても DB は受け入れる。"""
-        lobby = Lobby(
-            guild_id="unicode-テスト",
-            lobby_channel_id=snowflake(),
-        )
-        db_session.add(lobby)
-        await db_session.commit()
-        assert lobby.guild_id == "unicode-テスト"
+    async def test_unicode_guild_id_rejected(self, db_session: AsyncSession) -> None:
+        """guild_id に数値文字列以外は ValueError で拒否される。"""
+        with pytest.raises(ValueError, match="guild_id"):
+            Lobby(
+                guild_id="unicode-テスト",
+                lobby_channel_id=snowflake(),
+            )
 
     async def test_repr_format(self, db_session: AsyncSession) -> None:
         """__repr__ に guild_id と channel_id が含まれる。"""
@@ -1059,6 +1068,621 @@ class TestStickyMessageFields:
 
 
 # ===========================================================================
+# RolePanel — カスケード削除・ユニーク制約・デフォルト値
+# ===========================================================================
+
+
+class TestRolePanelConstraints:
+    """RolePanel モデルの制約テスト。"""
+
+    async def test_items_cascade_on_panel_delete(
+        self, db_session: AsyncSession
+    ) -> None:
+        """パネル削除時に子アイテムもカスケード削除される。"""
+        panel = RolePanel(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Test Panel",
+        )
+        db_session.add(panel)
+        await db_session.flush()
+
+        for i, emoji in enumerate(["🎮", "🎵", "📚"]):
+            db_session.add(
+                RolePanelItem(
+                    panel_id=panel.id,
+                    role_id=snowflake(),
+                    emoji=emoji,
+                    position=i,
+                )
+            )
+        await db_session.commit()
+
+        await db_session.delete(panel)
+        await db_session.commit()
+
+        result = await db_session.execute(select(RolePanelItem))
+        assert list(result.scalars().all()) == []
+
+    async def test_panel_default_values(self, db_session: AsyncSession) -> None:
+        """デフォルト値が正しく設定される。"""
+        panel = RolePanel(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Test",
+        )
+        db_session.add(panel)
+        await db_session.commit()
+
+        assert panel.remove_reaction is False
+        assert panel.use_embed is True
+        assert panel.created_at is not None
+
+    async def test_duplicate_panel_emoji_rejected(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同じパネルに同じ絵文字は重複登録できない。"""
+        panel = RolePanel(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Test",
+        )
+        db_session.add(panel)
+        await db_session.flush()
+
+        db_session.add(
+            RolePanelItem(
+                panel_id=panel.id, role_id=snowflake(), emoji="🎮", position=0
+            )
+        )
+        await db_session.commit()
+
+        db_session.add(
+            RolePanelItem(
+                panel_id=panel.id, role_id=snowflake(), emoji="🎮", position=1
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    async def test_same_emoji_different_panels_allowed(
+        self, db_session: AsyncSession
+    ) -> None:
+        """異なるパネルには同じ絵文字を登録できる。"""
+        panels = []
+        for _ in range(2):
+            p = RolePanel(
+                guild_id=snowflake(),
+                channel_id=snowflake(),
+                panel_type="button",
+                title="Test",
+            )
+            db_session.add(p)
+            panels.append(p)
+        await db_session.flush()
+
+        for p in panels:
+            db_session.add(
+                RolePanelItem(
+                    panel_id=p.id, role_id=snowflake(), emoji="🎮", position=0
+                )
+            )
+        await db_session.commit()
+
+        result = await db_session.execute(
+            select(RolePanelItem).where(RolePanelItem.emoji == "🎮")
+        )
+        assert len(list(result.scalars().all())) == 2
+
+
+class TestRolePanelItemConstraints:
+    """RolePanelItem モデルの制約テスト。"""
+
+    async def test_fk_violation_invalid_panel_id(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない panel_id は FK 違反。"""
+        db_session.add(
+            RolePanelItem(
+                panel_id=999999,
+                role_id=snowflake(),
+                emoji="🎮",
+                position=0,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    async def test_default_position_and_style(self, db_session: AsyncSession) -> None:
+        """position と style のデフォルト値が正しい。"""
+        panel = RolePanel(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Test",
+        )
+        db_session.add(panel)
+        await db_session.flush()
+
+        item = RolePanelItem(
+            panel_id=panel.id,
+            role_id=snowflake(),
+            emoji="🎮",
+        )
+        db_session.add(item)
+        await db_session.commit()
+
+        assert item.position == 0
+        assert item.style == "secondary"
+
+
+# ===========================================================================
+# DiscordRole / DiscordChannel / DiscordGuild — ユニーク制約・デフォルト値
+# ===========================================================================
+
+
+class TestDiscordEntityConstraints:
+    """Discord エンティティモデルの制約テスト。"""
+
+    async def test_duplicate_guild_role_rejected(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同じ (guild_id, role_id) の組み合わせは重複登録できない。"""
+        guild_id = snowflake()
+        role_id = snowflake()
+
+        db_session.add(
+            DiscordRole(
+                guild_id=guild_id,
+                role_id=role_id,
+                role_name="Role1",
+            )
+        )
+        await db_session.commit()
+
+        db_session.add(
+            DiscordRole(
+                guild_id=guild_id,
+                role_id=role_id,
+                role_name="Role2",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    async def test_duplicate_guild_channel_rejected(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同じ (guild_id, channel_id) の組み合わせは重複登録できない。"""
+        guild_id = snowflake()
+        channel_id = snowflake()
+
+        db_session.add(
+            DiscordChannel(
+                guild_id=guild_id,
+                channel_id=channel_id,
+                channel_name="general",
+            )
+        )
+        await db_session.commit()
+
+        db_session.add(
+            DiscordChannel(
+                guild_id=guild_id,
+                channel_id=channel_id,
+                channel_name="general2",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    async def test_duplicate_guild_id_rejected(self, db_session: AsyncSession) -> None:
+        """DiscordGuild の guild_id PK 重複は拒否される。"""
+        guild_id = snowflake()
+
+        db_session.add(DiscordGuild(guild_id=guild_id, guild_name="Server1"))
+        await db_session.commit()
+
+        db_session.add(DiscordGuild(guild_id=guild_id, guild_name="Server2"))
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    async def test_default_values(self, db_session: AsyncSession) -> None:
+        """DiscordRole, DiscordChannel, DiscordGuild のデフォルト値が正しい。"""
+        role = DiscordRole(
+            guild_id=snowflake(),
+            role_id=snowflake(),
+            role_name="Test",
+        )
+        channel = DiscordChannel(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            channel_name="test",
+        )
+        guild = DiscordGuild(
+            guild_id=snowflake(),
+            guild_name="Test Server",
+        )
+        db_session.add_all([role, channel, guild])
+        await db_session.commit()
+
+        assert role.color == 0
+        assert role.position == 0
+        assert channel.channel_type == 0
+        assert channel.position == 0
+        assert guild.member_count == 0
+
+
+# ===========================================================================
+# AutoBanRule / AutoBanLog — カスケード削除・デフォルト値・FK
+# ===========================================================================
+
+
+class TestAutoBanConstraints:
+    """AutoBan モデルの制約テスト。"""
+
+    async def test_logs_cascade_on_rule_delete(self, db_session: AsyncSession) -> None:
+        """ルール削除時にログもカスケード削除される。"""
+        rule = AutoBanRule(
+            guild_id=snowflake(),
+            rule_type="username_match",
+            action="ban",
+            pattern="spam*",
+        )
+        db_session.add(rule)
+        await db_session.flush()
+
+        for _ in range(3):
+            db_session.add(
+                AutoBanLog(
+                    guild_id=rule.guild_id,
+                    user_id=snowflake(),
+                    username=fake.user_name(),
+                    rule_id=rule.id,
+                    action_taken="banned",
+                    reason="Username matched",
+                )
+            )
+        await db_session.commit()
+
+        await db_session.delete(rule)
+        await db_session.commit()
+
+        result = await db_session.execute(select(AutoBanLog))
+        assert list(result.scalars().all()) == []
+
+    async def test_default_values(self, db_session: AsyncSession) -> None:
+        """AutoBanRule のデフォルト値が正しい。"""
+        rule = AutoBanRule(
+            guild_id=snowflake(),
+            rule_type="no_avatar",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+
+        assert rule.is_enabled is True
+        assert rule.action == "ban"
+
+    async def test_log_fk_violation_invalid_rule_id(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない rule_id は FK 違反。"""
+        db_session.add(
+            AutoBanLog(
+                guild_id=snowflake(),
+                user_id=snowflake(),
+                username="test",
+                rule_id=999999,
+                action_taken="banned",
+                reason="test",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+
+# ===========================================================================
+# Ticket — ユニーク制約・カスケード削除・Nullable
+# ===========================================================================
+
+
+class TestTicketConstraints:
+    """Ticket モデルの制約テスト。"""
+
+    async def test_duplicate_guild_ticket_number_rejected(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同じ (guild_id, ticket_number) は重複登録できない。"""
+        guild_id = snowflake()
+        category = TicketCategory(
+            guild_id=guild_id,
+            name="Support",
+            staff_role_id=snowflake(),
+        )
+        db_session.add(category)
+        await db_session.flush()
+
+        db_session.add(
+            Ticket(
+                guild_id=guild_id,
+                channel_id=snowflake(),
+                user_id=snowflake(),
+                username="user1",
+                category_id=category.id,
+                ticket_number=1,
+            )
+        )
+        await db_session.commit()
+
+        db_session.add(
+            Ticket(
+                guild_id=guild_id,
+                channel_id=snowflake(),
+                user_id=snowflake(),
+                username="user2",
+                category_id=category.id,
+                ticket_number=1,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    async def test_same_ticket_number_different_guilds_allowed(
+        self, db_session: AsyncSession
+    ) -> None:
+        """異なるギルドでは同じ ticket_number を使える。"""
+        categories = []
+        for _ in range(2):
+            cat = TicketCategory(
+                guild_id=snowflake(),
+                name="Support",
+                staff_role_id=snowflake(),
+            )
+            db_session.add(cat)
+            categories.append(cat)
+        await db_session.flush()
+
+        for cat in categories:
+            db_session.add(
+                Ticket(
+                    guild_id=cat.guild_id,
+                    channel_id=snowflake(),
+                    user_id=snowflake(),
+                    username="user",
+                    category_id=cat.id,
+                    ticket_number=1,
+                )
+            )
+        await db_session.commit()
+
+        result = await db_session.execute(
+            select(Ticket).where(Ticket.ticket_number == 1)
+        )
+        assert len(list(result.scalars().all())) == 2
+
+    async def test_channel_id_nullable(self, db_session: AsyncSession) -> None:
+        """channel_id は None を許容する (クローズ後)。"""
+        guild_id = snowflake()
+        category = TicketCategory(
+            guild_id=guild_id,
+            name="Support",
+            staff_role_id=snowflake(),
+        )
+        db_session.add(category)
+        await db_session.flush()
+
+        ticket = Ticket(
+            guild_id=guild_id,
+            channel_id=None,
+            user_id=snowflake(),
+            username="user",
+            category_id=category.id,
+            ticket_number=1,
+        )
+        db_session.add(ticket)
+        await db_session.commit()
+
+        assert ticket.channel_id is None
+
+    async def test_panel_category_associations_cascade_on_panel_delete(
+        self, db_session: AsyncSession
+    ) -> None:
+        """パネル削除時に TicketPanelCategory もカスケード削除される。"""
+        guild_id = snowflake()
+        panel = TicketPanel(
+            guild_id=guild_id,
+            channel_id=snowflake(),
+            title="Support Panel",
+        )
+        category = TicketCategory(
+            guild_id=guild_id,
+            name="Support",
+            staff_role_id=snowflake(),
+        )
+        db_session.add_all([panel, category])
+        await db_session.flush()
+
+        db_session.add(
+            TicketPanelCategory(
+                panel_id=panel.id,
+                category_id=category.id,
+            )
+        )
+        await db_session.commit()
+
+        await db_session.delete(panel)
+        await db_session.commit()
+
+        result = await db_session.execute(select(TicketPanelCategory))
+        assert list(result.scalars().all()) == []
+
+    async def test_duplicate_panel_category_rejected(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同じ (panel_id, category_id) は重複登録できない。"""
+        guild_id = snowflake()
+        panel = TicketPanel(
+            guild_id=guild_id,
+            channel_id=snowflake(),
+            title="Panel",
+        )
+        category = TicketCategory(
+            guild_id=guild_id,
+            name="Support",
+            staff_role_id=snowflake(),
+        )
+        db_session.add_all([panel, category])
+        await db_session.flush()
+
+        db_session.add(TicketPanelCategory(panel_id=panel.id, category_id=category.id))
+        await db_session.commit()
+
+        db_session.add(TicketPanelCategory(panel_id=panel.id, category_id=category.id))
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+
+# ===========================================================================
+# Model Validators — @validates デコレータのテスト
+# ===========================================================================
+
+
+class TestModelValidators:
+    """各モデルの @validates デコレータのテスト。"""
+
+    async def test_lobby_invalid_guild_id_rejected(self) -> None:
+        """Lobby の guild_id に空文字・非数字は ValueError。"""
+        with pytest.raises(ValueError, match="guild_id"):
+            Lobby(guild_id="", lobby_channel_id=snowflake(), panel_type="button")
+
+        with pytest.raises(ValueError, match="guild_id"):
+            Lobby(guild_id="abc", lobby_channel_id=snowflake())
+
+    async def test_lobby_valid_ids_accepted(self) -> None:
+        """Lobby の guild_id / lobby_channel_id に数字文字列は受け入れられる。"""
+        lobby = Lobby(guild_id=snowflake(), lobby_channel_id=snowflake())
+        assert lobby.guild_id.isdigit()
+        assert lobby.lobby_channel_id.isdigit()
+
+    async def test_voice_session_negative_user_limit_rejected(self) -> None:
+        """VoiceSession の user_limit に負の値は ValueError。"""
+        with pytest.raises(ValueError, match="user_limit"):
+            VoiceSession(
+                lobby_id=1,
+                channel_id=snowflake(),
+                owner_id=snowflake(),
+                name="test",
+                user_limit=-1,
+            )
+
+    async def test_voice_session_zero_user_limit_accepted(self) -> None:
+        """VoiceSession の user_limit に 0 は受け入れられる。"""
+        vs = VoiceSession(
+            lobby_id=1,
+            channel_id=snowflake(),
+            owner_id=snowflake(),
+            name="test",
+            user_limit=0,
+        )
+        assert vs.user_limit == 0
+
+    async def test_sticky_color_out_of_range_rejected(self) -> None:
+        """StickyMessage の color に範囲外の値は ValueError。"""
+        with pytest.raises(ValueError, match="color"):
+            StickyMessage(
+                channel_id=snowflake(),
+                guild_id=snowflake(),
+                title="T",
+                description="D",
+                color=-1,
+            )
+
+        with pytest.raises(ValueError, match="color"):
+            StickyMessage(
+                channel_id=snowflake(),
+                guild_id=snowflake(),
+                title="T",
+                description="D",
+                color=0x1000000,
+            )
+
+    async def test_sticky_color_none_accepted(self) -> None:
+        """StickyMessage の color に None は受け入れられる。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="T",
+            description="D",
+            color=None,
+        )
+        assert sticky.color is None
+
+    async def test_sticky_negative_cooldown_rejected(self) -> None:
+        """StickyMessage の cooldown_seconds に負の値は ValueError。"""
+        with pytest.raises(ValueError, match="cooldown_seconds"):
+            StickyMessage(
+                channel_id=snowflake(),
+                guild_id=snowflake(),
+                title="T",
+                description="D",
+                cooldown_seconds=-1,
+            )
+
+    async def test_role_panel_invalid_type_rejected(self) -> None:
+        """RolePanel の panel_type に不正な値は ValueError。"""
+        with pytest.raises(ValueError, match="panel_type"):
+            RolePanel(
+                guild_id=snowflake(),
+                channel_id=snowflake(),
+                panel_type="dropdown",
+                title="Test",
+            )
+
+    async def test_role_panel_item_invalid_style_rejected(self) -> None:
+        """RolePanelItem の style に不正な値は ValueError。"""
+        with pytest.raises(ValueError, match="style"):
+            RolePanelItem(
+                panel_id=1,
+                role_id=snowflake(),
+                emoji="🎮",
+                style="primary2",
+            )
+
+    async def test_autoban_invalid_rule_type_rejected(self) -> None:
+        """AutoBanRule の rule_type に不正な値は ValueError。"""
+        with pytest.raises(ValueError, match="rule_type"):
+            AutoBanRule(
+                guild_id=snowflake(),
+                rule_type="unknown",
+            )
+
+    async def test_autoban_invalid_action_rejected(self) -> None:
+        """AutoBanRule の action に不正な値は ValueError。"""
+        with pytest.raises(ValueError, match="action"):
+            AutoBanRule(
+                guild_id=snowflake(),
+                rule_type="no_avatar",
+                action="warn",
+            )
+
+    async def test_ticket_invalid_status_rejected(self) -> None:
+        """Ticket の status に不正な値は ValueError。"""
+        with pytest.raises(ValueError, match="status"):
+            Ticket(
+                guild_id=snowflake(),
+                channel_id=snowflake(),
+                user_id=snowflake(),
+                username="test",
+                category_id=1,
+                ticket_number=1,
+                status="pending",
+            )
+
+
+# ===========================================================================
 # パラメタライズテスト
 # ===========================================================================
 
@@ -1315,3 +1939,560 @@ class TestAdminUserFields:
         text = repr(admin)
         assert "test@example.com" in text
         assert str(admin.id) in text
+
+    async def test_nullable_fields_default_none(self, db_session: AsyncSession) -> None:
+        """nullable フィールドはデフォルト None。"""
+        admin = AdminUser(
+            email="nulltest@example.com",
+            password_hash="hash",
+        )
+        db_session.add(admin)
+        await db_session.commit()
+
+        assert admin.password_changed_at is None
+        assert admin.reset_token is None
+        assert admin.reset_token_expires_at is None
+        assert admin.pending_email is None
+        assert admin.email_change_token is None
+        assert admin.email_change_token_expires_at is None
+        assert admin.email_verified is False
+
+    async def test_email_verified_toggle(self, db_session: AsyncSession) -> None:
+        """email_verified を True に設定して保存できる。"""
+        admin = AdminUser(
+            email="verified@example.com",
+            password_hash="hash",
+            email_verified=True,
+        )
+        db_session.add(admin)
+        await db_session.commit()
+        assert admin.email_verified is True
+
+
+# ===========================================================================
+# Additional Edge Case Tests — Validators
+# ===========================================================================
+
+
+class TestModelValidatorsEdgeCases:
+    """@validates デコレータの追加エッジケーステスト。"""
+
+    async def test_lobby_empty_string_guild_id_rejected(self) -> None:
+        """Lobby の guild_id に空文字は ValueError。"""
+        with pytest.raises(ValueError, match="guild_id"):
+            Lobby(guild_id="", lobby_channel_id=snowflake())
+
+    async def test_lobby_whitespace_guild_id_rejected(self) -> None:
+        """Lobby の guild_id にスペースは ValueError。"""
+        with pytest.raises(ValueError, match="guild_id"):
+            Lobby(guild_id=" ", lobby_channel_id=snowflake())
+
+    async def test_lobby_negative_number_string_rejected(self) -> None:
+        """Lobby の guild_id に負数文字列は ValueError。"""
+        with pytest.raises(ValueError, match="guild_id"):
+            Lobby(guild_id="-123", lobby_channel_id=snowflake())
+
+    async def test_lobby_decimal_number_string_rejected(self) -> None:
+        """Lobby の guild_id に小数文字列は ValueError。"""
+        with pytest.raises(ValueError, match="guild_id"):
+            Lobby(guild_id="123.456", lobby_channel_id=snowflake())
+
+    async def test_lobby_large_snowflake_accepted(self) -> None:
+        """Lobby の guild_id に18桁の大きな snowflake は受け入れられる。"""
+        large_id = "999999999999999999"
+        lobby = Lobby(guild_id=large_id, lobby_channel_id=snowflake())
+        assert lobby.guild_id == large_id
+
+    async def test_voice_session_invalid_channel_id_rejected(self) -> None:
+        """VoiceSession の channel_id に非数字は ValueError。"""
+        with pytest.raises(ValueError, match="channel_id"):
+            VoiceSession(
+                lobby_id=1,
+                channel_id="abc",
+                owner_id=snowflake(),
+                name="test",
+            )
+
+    async def test_voice_session_invalid_owner_id_rejected(self) -> None:
+        """VoiceSession の owner_id に非数字は ValueError。"""
+        with pytest.raises(ValueError, match="owner_id"):
+            VoiceSession(
+                lobby_id=1,
+                channel_id=snowflake(),
+                owner_id="not-a-number",
+                name="test",
+            )
+
+    async def test_voice_session_user_limit_large_value(self) -> None:
+        """VoiceSession の user_limit に大きな正の値は受け入れられる。"""
+        vs = VoiceSession(
+            lobby_id=1,
+            channel_id=snowflake(),
+            owner_id=snowflake(),
+            name="test",
+            user_limit=9999,
+        )
+        assert vs.user_limit == 9999
+
+    async def test_sticky_color_boundary_zero_accepted(self) -> None:
+        """StickyMessage の color = 0 (黒) は受け入れられる。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="T",
+            description="D",
+            color=0,
+        )
+        assert sticky.color == 0
+
+    async def test_sticky_color_boundary_max_accepted(self) -> None:
+        """StickyMessage の color = 0xFFFFFF (白) は受け入れられる。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="T",
+            description="D",
+            color=0xFFFFFF,
+        )
+        assert sticky.color == 0xFFFFFF
+
+    async def test_sticky_cooldown_zero_accepted(self) -> None:
+        """StickyMessage の cooldown_seconds = 0 は受け入れられる。"""
+        sticky = StickyMessage(
+            channel_id=snowflake(),
+            guild_id=snowflake(),
+            title="T",
+            description="D",
+            cooldown_seconds=0,
+        )
+        assert sticky.cooldown_seconds == 0
+
+    async def test_role_panel_button_type_accepted(self) -> None:
+        """RolePanel の panel_type = 'button' は受け入れられる。"""
+        panel = RolePanel(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="button",
+            title="Test",
+        )
+        assert panel.panel_type == "button"
+
+    async def test_role_panel_reaction_type_accepted(self) -> None:
+        """RolePanel の panel_type = 'reaction' は受け入れられる。"""
+        panel = RolePanel(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            panel_type="reaction",
+            title="Test",
+        )
+        assert panel.panel_type == "reaction"
+
+    async def test_role_panel_color_out_of_range_rejected(self) -> None:
+        """RolePanel の color に範囲外の値は ValueError。"""
+        with pytest.raises(ValueError, match="color"):
+            RolePanel(
+                guild_id=snowflake(),
+                channel_id=snowflake(),
+                panel_type="button",
+                title="Test",
+                color=-1,
+            )
+
+        with pytest.raises(ValueError, match="color"):
+            RolePanel(
+                guild_id=snowflake(),
+                channel_id=snowflake(),
+                panel_type="button",
+                title="Test",
+                color=0x1000000,
+            )
+
+    @pytest.mark.parametrize("style", ["primary", "secondary", "success", "danger"])
+    async def test_role_panel_item_all_valid_styles(self, style: str) -> None:
+        """RolePanelItem の全ての有効な style が受け入れられる。"""
+        item = RolePanelItem(
+            panel_id=1,
+            role_id=snowflake(),
+            emoji="🎮",
+            style=style,
+        )
+        assert item.style == style
+
+    @pytest.mark.parametrize(
+        "rule_type", ["username_match", "account_age", "no_avatar"]
+    )
+    async def test_autoban_all_valid_rule_types(self, rule_type: str) -> None:
+        """AutoBanRule の全ての有効な rule_type が受け入れられる。"""
+        rule = AutoBanRule(
+            guild_id=snowflake(),
+            rule_type=rule_type,
+        )
+        assert rule.rule_type == rule_type
+
+    @pytest.mark.parametrize("status", ["open", "claimed", "closed"])
+    async def test_ticket_all_valid_statuses(self, status: str) -> None:
+        """Ticket の全ての有効な status が受け入れられる。"""
+        ticket = Ticket(
+            guild_id=snowflake(),
+            channel_id=snowflake(),
+            user_id=snowflake(),
+            username="test",
+            category_id=1,
+            ticket_number=1,
+            status=status,
+        )
+        assert ticket.status == status
+
+
+# ===========================================================================
+# Cascade Delete Deep Chain Tests
+# ===========================================================================
+
+
+class TestCascadeDeleteDeepChain:
+    """カスケード削除の深いチェーンテスト。"""
+
+    async def test_lobby_delete_cascades_to_session_members(
+        self, db_session: AsyncSession, lobby: Lobby
+    ) -> None:
+        """Lobby 削除 → VoiceSession → VoiceSessionMember まで全てカスケード削除。"""
+        vs = VoiceSession(
+            lobby_id=lobby.id,
+            channel_id=snowflake(),
+            owner_id=snowflake(),
+            name="test",
+        )
+        db_session.add(vs)
+        await db_session.flush()
+
+        member = VoiceSessionMember(
+            voice_session_id=vs.id,
+            user_id=snowflake(),
+        )
+        db_session.add(member)
+        await db_session.commit()
+
+        # ロビーを削除
+        await db_session.delete(lobby)
+        await db_session.commit()
+
+        # VoiceSession も VoiceSessionMember も削除される
+        from sqlalchemy import select
+
+        result_vs = await db_session.execute(select(VoiceSession))
+        assert list(result_vs.scalars().all()) == []
+
+        result_m = await db_session.execute(select(VoiceSessionMember))
+        assert list(result_m.scalars().all()) == []
+
+    async def test_lobby_delete_with_no_children(
+        self, db_session: AsyncSession
+    ) -> None:
+        """子セッションなしのロビー削除は正常動作する。"""
+        lobby = Lobby(guild_id=snowflake(), lobby_channel_id=snowflake())
+        db_session.add(lobby)
+        await db_session.commit()
+
+        await db_session.delete(lobby)
+        await db_session.commit()
+
+        from sqlalchemy import select
+
+        result = await db_session.execute(select(Lobby))
+        assert list(result.scalars().all()) == []
+
+    async def test_ticket_category_delete_cascades_to_tickets(
+        self, db_session: AsyncSession
+    ) -> None:
+        """TicketCategory 削除で Ticket もカスケード削除。"""
+        guild_id = snowflake()
+        category = TicketCategory(
+            guild_id=guild_id,
+            name="Support",
+            staff_role_id=snowflake(),
+        )
+        db_session.add(category)
+        await db_session.flush()
+
+        ticket = Ticket(
+            guild_id=guild_id,
+            channel_id=snowflake(),
+            user_id=snowflake(),
+            username="user",
+            category_id=category.id,
+            ticket_number=1,
+        )
+        db_session.add(ticket)
+        await db_session.commit()
+
+        await db_session.delete(category)
+        await db_session.commit()
+
+        from sqlalchemy import select
+
+        result = await db_session.execute(select(Ticket))
+        assert list(result.scalars().all()) == []
+
+    async def test_ticket_category_delete_cascades_to_panel_associations(
+        self, db_session: AsyncSession
+    ) -> None:
+        """TicketCategory 削除で TicketPanelCategory もカスケード削除。"""
+        guild_id = snowflake()
+        category = TicketCategory(
+            guild_id=guild_id,
+            name="Support",
+            staff_role_id=snowflake(),
+        )
+        panel = TicketPanel(
+            guild_id=guild_id,
+            channel_id=snowflake(),
+            title="Panel",
+        )
+        db_session.add_all([category, panel])
+        await db_session.flush()
+
+        assoc = TicketPanelCategory(
+            panel_id=panel.id,
+            category_id=category.id,
+        )
+        db_session.add(assoc)
+        await db_session.commit()
+
+        await db_session.delete(category)
+        await db_session.commit()
+
+        from sqlalchemy import select
+
+        result = await db_session.execute(select(TicketPanelCategory))
+        assert list(result.scalars().all()) == []
+
+
+# ===========================================================================
+# Ticket Model Edge Cases
+# ===========================================================================
+
+
+class TestTicketFieldEdgeCases:
+    """Ticket モデルのフィールドエッジケーステスト。"""
+
+    async def test_closed_ticket_with_all_fields(
+        self, db_session: AsyncSession
+    ) -> None:
+        """クローズ済みチケットの全フィールドが保存される。"""
+        guild_id = snowflake()
+        category = TicketCategory(
+            guild_id=guild_id,
+            name="Support",
+            staff_role_id=snowflake(),
+        )
+        db_session.add(category)
+        await db_session.flush()
+
+        ticket = Ticket(
+            guild_id=guild_id,
+            channel_id=None,
+            user_id=snowflake(),
+            username="user",
+            category_id=category.id,
+            ticket_number=1,
+            status="closed",
+            claimed_by="staff_user",
+            closed_by="admin_user",
+            close_reason="Resolved",
+            transcript="Some transcript text",
+            closed_at=datetime.now(UTC),
+        )
+        db_session.add(ticket)
+        await db_session.commit()
+        await db_session.refresh(ticket)
+
+        assert ticket.status == "closed"
+        assert ticket.channel_id is None
+        assert ticket.claimed_by == "staff_user"
+        assert ticket.closed_by == "admin_user"
+        assert ticket.close_reason == "Resolved"
+        assert ticket.transcript == "Some transcript text"
+        assert ticket.closed_at is not None
+
+    async def test_ticket_form_answers_stored(self, db_session: AsyncSession) -> None:
+        """form_answers の JSON 文字列が保存される。"""
+        guild_id = snowflake()
+        category = TicketCategory(
+            guild_id=guild_id,
+            name="Support",
+            staff_role_id=snowflake(),
+        )
+        db_session.add(category)
+        await db_session.flush()
+
+        import json
+
+        answers = json.dumps(["Answer 1", "Answer 2"])
+        ticket = Ticket(
+            guild_id=guild_id,
+            channel_id=snowflake(),
+            user_id=snowflake(),
+            username="user",
+            category_id=category.id,
+            ticket_number=1,
+            form_answers=answers,
+        )
+        db_session.add(ticket)
+        await db_session.commit()
+        await db_session.refresh(ticket)
+
+        assert json.loads(ticket.form_answers) == ["Answer 1", "Answer 2"]
+
+    async def test_ticket_long_transcript(self, db_session: AsyncSession) -> None:
+        """長いトランスクリプトが保存される (Text カラム)。"""
+        guild_id = snowflake()
+        category = TicketCategory(
+            guild_id=guild_id,
+            name="Support",
+            staff_role_id=snowflake(),
+        )
+        db_session.add(category)
+        await db_session.flush()
+
+        long_transcript = "A" * 50000
+        ticket = Ticket(
+            guild_id=guild_id,
+            channel_id=snowflake(),
+            user_id=snowflake(),
+            username="user",
+            category_id=category.id,
+            ticket_number=1,
+            transcript=long_transcript,
+        )
+        db_session.add(ticket)
+        await db_session.commit()
+        await db_session.refresh(ticket)
+
+        assert len(ticket.transcript) == 50000
+
+    async def test_ticket_repr(self, db_session: AsyncSession) -> None:
+        """Ticket の __repr__ にフィールドが含まれる。"""
+        guild_id = snowflake()
+        category = TicketCategory(
+            guild_id=guild_id,
+            name="Support",
+            staff_role_id=snowflake(),
+        )
+        db_session.add(category)
+        await db_session.flush()
+
+        ticket = Ticket(
+            guild_id=guild_id,
+            channel_id=snowflake(),
+            user_id=snowflake(),
+            username="user",
+            category_id=category.id,
+            ticket_number=42,
+        )
+        db_session.add(ticket)
+        await db_session.commit()
+
+        text = repr(ticket)
+        assert "42" in text
+        assert guild_id in text
+
+
+# ===========================================================================
+# DiscordEntity Edge Cases
+# ===========================================================================
+
+
+class TestDiscordEntityEdgeCases:
+    """Discord エンティティモデルの追加エッジケーステスト。"""
+
+    async def test_discord_role_unicode_name(self, db_session: AsyncSession) -> None:
+        """DiscordRole に Unicode ロール名を保存できる。"""
+        role = DiscordRole(
+            guild_id=snowflake(),
+            role_id=snowflake(),
+            role_name="🎮 ゲーマー",
+            color=0xFF0000,
+            position=5,
+        )
+        db_session.add(role)
+        await db_session.commit()
+        await db_session.refresh(role)
+        assert "ゲーマー" in role.role_name
+
+    async def test_discord_channel_all_types(self, db_session: AsyncSession) -> None:
+        """各種チャンネルタイプが保存できる。"""
+        guild_id = snowflake()
+        for ch_type in [0, 2, 4, 5, 15]:
+            ch = DiscordChannel(
+                guild_id=guild_id,
+                channel_id=snowflake(),
+                channel_name=f"channel_type_{ch_type}",
+                channel_type=ch_type,
+            )
+            db_session.add(ch)
+        await db_session.commit()
+
+        from sqlalchemy import select
+
+        result = await db_session.execute(
+            select(DiscordChannel).where(DiscordChannel.guild_id == guild_id)
+        )
+        assert len(list(result.scalars().all())) == 5
+
+    async def test_discord_guild_with_icon_hash(self, db_session: AsyncSession) -> None:
+        """DiscordGuild に icon_hash を設定できる。"""
+        guild = DiscordGuild(
+            guild_id=snowflake(),
+            guild_name="Test Server",
+            icon_hash="a_1234567890abcdef",
+            member_count=500,
+        )
+        db_session.add(guild)
+        await db_session.commit()
+        await db_session.refresh(guild)
+        assert guild.icon_hash == "a_1234567890abcdef"
+        assert guild.member_count == 500
+
+    async def test_discord_channel_repr(self, db_session: AsyncSession) -> None:
+        """DiscordChannel の __repr__ にフィールドが含まれる。"""
+        channel_id = snowflake()
+        ch = DiscordChannel(
+            guild_id=snowflake(),
+            channel_id=channel_id,
+            channel_name="test-channel",
+        )
+        db_session.add(ch)
+        await db_session.commit()
+
+        text = repr(ch)
+        assert channel_id in text
+        assert "test-channel" in text
+
+    async def test_discord_role_repr(self, db_session: AsyncSession) -> None:
+        """DiscordRole の __repr__ にフィールドが含まれる。"""
+        role_id = snowflake()
+        role = DiscordRole(
+            guild_id=snowflake(),
+            role_id=role_id,
+            role_name="Moderator",
+        )
+        db_session.add(role)
+        await db_session.commit()
+
+        text = repr(role)
+        assert role_id in text
+        assert "Moderator" in text
+
+    async def test_discord_guild_repr(self, db_session: AsyncSession) -> None:
+        """DiscordGuild の __repr__ にフィールドが含まれる。"""
+        guild_id = snowflake()
+        guild = DiscordGuild(
+            guild_id=guild_id,
+            guild_name="My Server",
+        )
+        db_session.add(guild)
+        await db_session.commit()
+
+        text = repr(guild)
+        assert guild_id in text
+        assert "My Server" in text

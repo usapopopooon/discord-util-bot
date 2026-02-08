@@ -108,7 +108,9 @@ class TestDatabaseInitialization:
                 await conn.run_sync(Base.metadata.create_all)
 
             async with factory() as session:
-                lobby = Lobby(guild_id="test_guild", lobby_channel_id="test_channel")
+                lobby = Lobby(
+                    guild_id="123456789012345678", lobby_channel_id="987654321098765432"
+                )
                 session.add(lobby)
                 await session.commit()
                 lobby_id = lobby.id
@@ -124,7 +126,7 @@ class TestDatabaseInitialization:
                 )
                 found = result.scalar_one_or_none()
                 assert found is not None
-                assert found.guild_id == "test_guild"
+                assert found.guild_id == "123456789012345678"
         finally:
             await engine.dispose()
 
@@ -320,12 +322,16 @@ class TestTransactionHandling:
     async def test_rollback_on_integrity_error(self, db_session: AsyncSession) -> None:
         """IntegrityError 発生時にロールバックする。"""
         # 最初のレコードを作成
-        lobby1 = Lobby(guild_id="guild1", lobby_channel_id="channel1")
+        lobby1 = Lobby(
+            guild_id="100000000000000001", lobby_channel_id="200000000000000001"
+        )
         db_session.add(lobby1)
         await db_session.commit()
 
         # 重複する channel_id で作成を試みる
-        lobby2 = Lobby(guild_id="guild2", lobby_channel_id="channel1")
+        lobby2 = Lobby(
+            guild_id="100000000000000002", lobby_channel_id="200000000000000001"
+        )
         db_session.add(lobby2)
 
         with pytest.raises(IntegrityError):
@@ -336,19 +342,25 @@ class TestTransactionHandling:
 
         # 最初のレコードは残っている
         result = await db_session.execute(
-            select(Lobby).where(Lobby.lobby_channel_id == "channel1")
+            select(Lobby).where(Lobby.lobby_channel_id == "200000000000000001")
         )
         found = result.scalar_one_or_none()
         assert found is not None
-        assert found.guild_id == "guild1"
+        assert found.guild_id == "100000000000000001"
 
     async def test_commit_after_multiple_operations(
         self, db_session: AsyncSession
     ) -> None:
         """複数の操作を1つのトランザクションでコミットできる。"""
-        lobby1 = Lobby(guild_id="guild1", lobby_channel_id="ch1")
-        lobby2 = Lobby(guild_id="guild2", lobby_channel_id="ch2")
-        lobby3 = Lobby(guild_id="guild3", lobby_channel_id="ch3")
+        lobby1 = Lobby(
+            guild_id="100000000000000001", lobby_channel_id="300000000000000001"
+        )
+        lobby2 = Lobby(
+            guild_id="100000000000000002", lobby_channel_id="300000000000000002"
+        )
+        lobby3 = Lobby(
+            guild_id="100000000000000003", lobby_channel_id="300000000000000003"
+        )
 
         db_session.add_all([lobby1, lobby2, lobby3])
         await db_session.commit()
@@ -363,14 +375,18 @@ class TestTransactionHandling:
     ) -> None:
         """ネストしたトランザクションでセーブポイントを使用できる。"""
         # 最初のレコード
-        lobby1 = Lobby(guild_id="guild1", lobby_channel_id="ch1")
+        lobby1 = Lobby(
+            guild_id="100000000000000001", lobby_channel_id="300000000000000001"
+        )
         db_session.add(lobby1)
         await db_session.flush()
 
         # ネストしたトランザクション (begin_nested) を開始
         try:
             async with db_session.begin_nested():
-                lobby2 = Lobby(guild_id="guild2", lobby_channel_id="ch1")  # 重複
+                lobby2 = Lobby(
+                    guild_id="100000000000000002", lobby_channel_id="300000000000000001"
+                )  # 重複
                 db_session.add(lobby2)
                 await db_session.flush()
         except IntegrityError:
@@ -383,7 +399,7 @@ class TestTransactionHandling:
         result = await db_session.execute(select(Lobby))
         lobbies = list(result.scalars().all())
         assert len(lobbies) == 1
-        assert lobbies[0].lobby_channel_id == "ch1"
+        assert lobbies[0].lobby_channel_id == "300000000000000001"
 
 
 # =============================================================================
@@ -430,7 +446,9 @@ class TestEmptyDatabaseEdgeCases:
         self, empty_db_session: AsyncSession
     ) -> None:
         """drop_all 後の最初の INSERT が成功する。"""
-        lobby = Lobby(guild_id="first_guild", lobby_channel_id="first_channel")
+        lobby = Lobby(
+            guild_id="100000000000000001", lobby_channel_id="200000000000000001"
+        )
         empty_db_session.add(lobby)
         await empty_db_session.commit()
 
@@ -467,7 +485,9 @@ class TestConnectionPoolEdgeCases:
             await conn.run_sync(Base.metadata.create_all)
 
         async with factory() as session:
-            lobby = Lobby(guild_id="test", lobby_channel_id="test_ch")
+            lobby = Lobby(
+                guild_id="100000000000000001", lobby_channel_id="200000000000000001"
+            )
             session.add(lobby)
             await session.commit()
 
@@ -501,8 +521,12 @@ class TestConnectionPoolEdgeCases:
 
             # 複数のセッションを同時に開く
             async with factory() as session1, factory() as session2:
-                lobby1 = Lobby(guild_id="g1", lobby_channel_id="ch1")
-                lobby2 = Lobby(guild_id="g2", lobby_channel_id="ch2")
+                lobby1 = Lobby(
+                    guild_id="100000000000000001", lobby_channel_id="300000000000000001"
+                )
+                lobby2 = Lobby(
+                    guild_id="100000000000000002", lobby_channel_id="300000000000000002"
+                )
 
                 session1.add(lobby1)
                 session2.add(lobby2)
@@ -603,5 +627,166 @@ class TestDatabaseSchemaEdgeCases:
 
             all_unique_columns = unique_columns + unique_index_columns
             assert "lobby_channel_id" in all_unique_columns
+        finally:
+            await engine.dispose()
+
+
+# =============================================================================
+# テーブルカラム検証エッジケース
+# =============================================================================
+
+
+class TestTableColumnEdgeCases:
+    """テーブルカラムのエッジケーステスト。"""
+
+    async def test_all_tables_have_expected_columns(self) -> None:
+        """各テーブルに期待されるカラムが存在する。"""
+        engine = create_async_engine(TEST_DATABASE_URL)
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.drop_all)
+                await conn.run_sync(Base.metadata.create_all)
+
+            async with engine.connect() as conn:
+                lobby_cols = await conn.run_sync(
+                    lambda c: [
+                        col["name"] for col in sa_inspect(c).get_columns("lobbies")
+                    ]
+                )
+                vs_cols = await conn.run_sync(
+                    lambda c: [
+                        col["name"]
+                        for col in sa_inspect(c).get_columns("voice_sessions")
+                    ]
+                )
+                admin_cols = await conn.run_sync(
+                    lambda c: [
+                        col["name"] for col in sa_inspect(c).get_columns("admin_users")
+                    ]
+                )
+
+            # lobbies
+            for col in ["id", "guild_id", "lobby_channel_id"]:
+                assert col in lobby_cols, f"lobbies should have {col}"
+
+            # voice_sessions
+            for col in ["id", "lobby_id", "channel_id", "owner_id", "name"]:
+                assert col in vs_cols, f"voice_sessions should have {col}"
+
+            # admin_users
+            for col in ["id", "email", "password_hash", "created_at"]:
+                assert col in admin_cols, f"admin_users should have {col}"
+        finally:
+            await engine.dispose()
+
+    async def test_nullable_columns(self) -> None:
+        """Nullable カラムが正しく設定されている。"""
+        engine = create_async_engine(TEST_DATABASE_URL)
+        factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False
+        )
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.drop_all)
+                await conn.run_sync(Base.metadata.create_all)
+
+            # Lobby with nullable category_id
+            async with factory() as session:
+                lobby = Lobby(
+                    guild_id="100000000000000001",
+                    lobby_channel_id="200000000000000001",
+                    category_id=None,
+                    default_user_limit=0,
+                )
+                session.add(lobby)
+                await session.commit()
+
+                result = await session.execute(
+                    select(Lobby).where(Lobby.lobby_channel_id == "200000000000000001")
+                )
+                found = result.scalar_one()
+                assert found.category_id is None
+                assert found.default_user_limit == 0
+        finally:
+            await engine.dispose()
+
+    async def test_admin_user_all_nullable_fields(self) -> None:
+        """AdminUser のすべてのオプションフィールドが None を許容する。"""
+        engine = create_async_engine(TEST_DATABASE_URL)
+        factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False
+        )
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.drop_all)
+                await conn.run_sync(Base.metadata.create_all)
+
+            async with factory() as session:
+                admin = AdminUser(
+                    email="minimal@example.com",
+                    password_hash="$2b$12$test",
+                )
+                session.add(admin)
+                await session.commit()
+
+                result = await session.execute(
+                    select(AdminUser).where(AdminUser.email == "minimal@example.com")
+                )
+                found = result.scalar_one()
+                assert found.reset_token is None
+                assert found.reset_token_expires_at is None
+                assert found.pending_email is None
+                assert found.email_change_token is None
+                assert found.email_change_token_expires_at is None
+                assert found.password_changed_at is None
+                assert found.email_verified is False
+        finally:
+            await engine.dispose()
+
+
+class TestDropAllAndRecreate:
+    """Drop all + recreate のエッジケーステスト。"""
+
+    async def test_auto_increment_resets_after_drop(self) -> None:
+        """テーブル再作成後に auto increment がリセットされる。"""
+        engine = create_async_engine(TEST_DATABASE_URL)
+        factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False
+        )
+        try:
+            # 1回目: テーブル作成 + データ挿入
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.drop_all)
+                await conn.run_sync(Base.metadata.create_all)
+
+            async with factory() as session:
+                for i in range(5):
+                    lobby = Lobby(
+                        guild_id=f"10000000000000000{i}",
+                        lobby_channel_id=f"20000000000000000{i}",
+                    )
+                    session.add(lobby)
+                await session.commit()
+
+            # 2回目: テーブル再作成
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.drop_all)
+                await conn.run_sync(Base.metadata.create_all)
+
+            # 再作成後は空
+            async with factory() as session:
+                result = await session.execute(select(Lobby))
+                lobbies = list(result.scalars().all())
+                assert lobbies == []
+
+            # 新しいレコードを作成できる
+            async with factory() as session:
+                lobby = Lobby(
+                    guild_id="100000000000000001",
+                    lobby_channel_id="200000000000000001",
+                )
+                session.add(lobby)
+                await session.commit()
+                assert lobby.id is not None
         finally:
             await engine.dispose()

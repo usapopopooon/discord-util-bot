@@ -2583,10 +2583,16 @@ class TestDeleteLobbiesByGuild:
     async def test_delete_lobbies_by_guild(self, db_session: AsyncSession) -> None:
         """指定ギルドのロビーを全て削除できる。"""
         # 対象ギルドにロビーを作成
-        await create_lobby(db_session, guild_id="123", lobby_channel_id="ch1")
-        await create_lobby(db_session, guild_id="123", lobby_channel_id="ch2")
+        await create_lobby(
+            db_session, guild_id="123", lobby_channel_id="200000000000000001"
+        )
+        await create_lobby(
+            db_session, guild_id="123", lobby_channel_id="200000000000000002"
+        )
         # 別ギルドにもロビーを作成
-        await create_lobby(db_session, guild_id="999", lobby_channel_id="ch3")
+        await create_lobby(
+            db_session, guild_id="999", lobby_channel_id="200000000000000003"
+        )
 
         count = await delete_lobbies_by_guild(db_session, "123")
         assert count == 2
@@ -2616,33 +2622,33 @@ class TestDeleteVoiceSessionsByGuild:
         """指定ギルドのボイスセッションを全て削除できる。"""
         # ロビーを作成
         lobby1 = await create_lobby(
-            db_session, guild_id="123", lobby_channel_id="lobby1"
+            db_session, guild_id="123", lobby_channel_id="200000000000000001"
         )
         lobby2 = await create_lobby(
-            db_session, guild_id="999", lobby_channel_id="lobby2"
+            db_session, guild_id="999", lobby_channel_id="200000000000000002"
         )
 
         # 対象ギルドにボイスセッションを作成
         await create_voice_session(
             db_session,
             lobby_id=lobby1.id,
-            channel_id="vc1",
-            owner_id="user1",
+            channel_id="300000000000000001",
+            owner_id="400000000000000001",
             name="VC 1",
         )
         await create_voice_session(
             db_session,
             lobby_id=lobby1.id,
-            channel_id="vc2",
-            owner_id="user2",
+            channel_id="300000000000000002",
+            owner_id="400000000000000002",
             name="VC 2",
         )
         # 別ギルドにもボイスセッションを作成
         await create_voice_session(
             db_session,
             lobby_id=lobby2.id,
-            channel_id="vc3",
-            owner_id="user3",
+            channel_id="300000000000000003",
+            owner_id="400000000000000003",
             name="VC 3",
         )
 
@@ -2785,15 +2791,31 @@ class TestGetAllLobbies:
     async def test_get_all_lobbies(self, db_session: AsyncSession) -> None:
         """全てのロビーを取得できる。"""
         # 複数ギルドにロビーを作成
-        await create_lobby(db_session, guild_id="guild1", lobby_channel_id="ch1")
-        await create_lobby(db_session, guild_id="guild1", lobby_channel_id="ch2")
-        await create_lobby(db_session, guild_id="guild2", lobby_channel_id="ch3")
+        await create_lobby(
+            db_session,
+            guild_id="100000000000000001",
+            lobby_channel_id="200000000000000001",
+        )
+        await create_lobby(
+            db_session,
+            guild_id="100000000000000001",
+            lobby_channel_id="200000000000000002",
+        )
+        await create_lobby(
+            db_session,
+            guild_id="100000000000000002",
+            lobby_channel_id="200000000000000003",
+        )
 
         lobbies = await get_all_lobbies(db_session)
         assert len(lobbies) == 3
 
         channel_ids = {lobby.lobby_channel_id for lobby in lobbies}
-        assert channel_ids == {"ch1", "ch2", "ch3"}
+        assert channel_ids == {
+            "200000000000000001",
+            "200000000000000002",
+            "200000000000000003",
+        }
 
     async def test_get_all_lobbies_empty(self, db_session: AsyncSession) -> None:
         """ロビーが存在しない場合は空リストを返す。"""
@@ -2805,16 +2827,22 @@ class TestGetAllLobbies:
     ) -> None:
         """削除後にロビーが正しく取得される。"""
         lobby1 = await create_lobby(
-            db_session, guild_id="guild1", lobby_channel_id="ch1"
+            db_session,
+            guild_id="100000000000000001",
+            lobby_channel_id="200000000000000001",
         )
-        await create_lobby(db_session, guild_id="guild1", lobby_channel_id="ch2")
+        await create_lobby(
+            db_session,
+            guild_id="100000000000000001",
+            lobby_channel_id="200000000000000002",
+        )
 
         # 1つ削除（IDで削除）
         await delete_lobby(db_session, lobby1.id)
 
         lobbies = await get_all_lobbies(db_session)
         assert len(lobbies) == 1
-        assert lobbies[0].lobby_channel_id == "ch2"
+        assert lobbies[0].lobby_channel_id == "200000000000000002"
 
 
 class TestGetAllBumpConfigs:
@@ -4502,3 +4530,373 @@ class TestAutobanDbService:
         await delete_autoban_rule(db_session, rule.id)
         logs = await get_all_autoban_logs(db_session)
         assert logs == []
+
+
+class TestTicketNumberEdgeCases:
+    """Edge case tests for ticket number generation."""
+
+    async def test_next_number_non_sequential(self, db_session: AsyncSession) -> None:
+        """Non-sequential ticket numbers still return max+1, not gap-filling."""
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            get_next_ticket_number,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+
+        for num in (1, 3, 5):
+            await create_ticket(
+                db_session,
+                guild_id="123",
+                user_id="user1",
+                username="User",
+                category_id=cat.id,
+                channel_id=f"ch{num}",
+                ticket_number=num,
+            )
+
+        result = await get_next_ticket_number(db_session, "123")
+        assert result == 6
+
+    async def test_next_number_empty_guild(self, db_session: AsyncSession) -> None:
+        """Empty guild returns 1 as the first ticket number."""
+        from src.services.db_service import get_next_ticket_number
+
+        result = await get_next_ticket_number(db_session, "999999")
+        assert result == 1
+
+
+class TestBumpConfigUpsertEdgeCases:
+    """Edge case tests for bump config upsert."""
+
+    async def test_upsert_insert_path(self, db_session: AsyncSession) -> None:
+        """Upserting a new guild creates a fresh BumpConfig."""
+        config = await upsert_bump_config(db_session, guild_id="111", channel_id="222")
+        assert config.guild_id == "111"
+        assert config.channel_id == "222"
+
+    async def test_upsert_update_path(self, db_session: AsyncSession) -> None:
+        """Upserting same guild_id twice updates channel_id."""
+        await upsert_bump_config(db_session, guild_id="111", channel_id="222")
+        updated = await upsert_bump_config(db_session, guild_id="111", channel_id="333")
+        assert updated.guild_id == "111"
+        assert updated.channel_id == "333"
+
+
+class TestUpdateTicketSentinelEdgeCases:
+    """Edge case tests for update_ticket_status sentinel behavior."""
+
+    async def test_status_only_preserves_other_fields(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Updating status only preserves previously-set claimed_by."""
+        from src.services.db_service import (
+            create_ticket,
+            create_ticket_category,
+            update_ticket_status,
+        )
+
+        cat = await create_ticket_category(
+            db_session, guild_id="123", name="Cat1", staff_role_id="999"
+        )
+        ticket = await create_ticket(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="User",
+            category_id=cat.id,
+            channel_id="ch1",
+            ticket_number=1,
+        )
+
+        # First set claimed_by
+        await update_ticket_status(
+            db_session, ticket, status="claimed", claimed_by="staff1"
+        )
+
+        # Then update status only — claimed_by should be preserved
+        updated = await update_ticket_status(db_session, ticket, status="closed")
+        assert updated.status == "closed"
+        assert updated.claimed_by == "staff1"
+
+
+class TestDeleteVoiceSessionEdgeCases:
+    """Edge case tests for voice session deletion."""
+
+    async def test_delete_non_existent_returns_false(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Deleting a non-existent voice session returns False."""
+        result = await delete_voice_session(db_session, "999999999999999999")
+        assert result is False
+
+
+# =============================================================================
+# Additional Edge Case Tests
+# =============================================================================
+
+
+class TestGetOperationsEdgeCases:
+    """get_* 系関数のエッジケーステスト。"""
+
+    async def test_get_lobby_by_nonexistent_channel(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない channel_id で get_lobby_by_channel_id は None を返す。"""
+        result = await get_lobby_by_channel_id(db_session, "999999999999999999")
+        assert result is None
+
+    async def test_get_voice_session_nonexistent(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない channel_id で get_voice_session は None を返す。"""
+        result = await get_voice_session(db_session, "999999999999999999")
+        assert result is None
+
+    async def test_get_sticky_message_nonexistent(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない channel_id で get_sticky_message は None を返す。"""
+        result = await get_sticky_message(db_session, "999999999999999999")
+        assert result is None
+
+    async def test_get_bump_config_nonexistent(self, db_session: AsyncSession) -> None:
+        """存在しない guild_id で get_bump_config は None を返す。"""
+        result = await get_bump_config(db_session, "999999999999999999")
+        assert result is None
+
+    async def test_get_bump_reminder_nonexistent(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない guild + service で get_bump_reminder は None を返す。"""
+        result = await get_bump_reminder(db_session, "999999999999999999", "DISBOARD")
+        assert result is None
+
+    async def test_get_role_panel_nonexistent(self, db_session: AsyncSession) -> None:
+        """存在しない id で get_role_panel は None を返す。"""
+        result = await get_role_panel(db_session, 999999)
+        assert result is None
+
+    async def test_get_role_panel_by_message_id_nonexistent(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない message_id で get_role_panel_by_message_id は None を返す。"""
+        result = await get_role_panel_by_message_id(db_session, "999999999999999999")
+        assert result is None
+
+    async def test_get_autoban_rule_nonexistent(self, db_session: AsyncSession) -> None:
+        """存在しない id で get_autoban_rule は None を返す。"""
+        result = await get_autoban_rule(db_session, 999999)
+        assert result is None
+
+
+class TestDeleteOperationsEdgeCases:
+    """delete_* 系関数のエッジケーステスト。"""
+
+    async def test_delete_lobby_nonexistent(self, db_session: AsyncSession) -> None:
+        """存在しないロビーの削除は False を返す。"""
+        result = await delete_lobby(db_session, 999999)
+        assert result is False
+
+    async def test_delete_sticky_nonexistent(self, db_session: AsyncSession) -> None:
+        """存在しない sticky の削除は False を返す。"""
+        result = await delete_sticky_message(db_session, "999999999999999999")
+        assert result is False
+
+    async def test_delete_bump_config_nonexistent(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない bump config の削除は False を返す。"""
+        result = await delete_bump_config(db_session, "999999999999999999")
+        assert result is False
+
+    async def test_delete_role_panel_nonexistent(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないロールパネルの削除は False を返す。"""
+        result = await delete_role_panel(db_session, 999999)
+        assert result is False
+
+    async def test_delete_autoban_rule_nonexistent(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない autoban ルールの削除は False を返す。"""
+        result = await delete_autoban_rule(db_session, 999999)
+        assert result is False
+
+
+class TestBulkDeleteEdgeCases:
+    """一括削除関数のエッジケーステスト。"""
+
+    async def test_delete_lobbies_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないギルドのロビー一括削除は 0 を返す。"""
+        result = await delete_lobbies_by_guild(db_session, "999999999999999999")
+        assert result == 0
+
+    async def test_delete_voice_sessions_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないギルドの VC セッション一括削除は 0 を返す。"""
+        result = await delete_voice_sessions_by_guild(db_session, "999999999999999999")
+        assert result == 0
+
+    async def test_delete_sticky_messages_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないギルドの sticky 一括削除は 0 を返す。"""
+        result = await delete_sticky_messages_by_guild(db_session, "999999999999999999")
+        assert result == 0
+
+    async def test_delete_bump_reminders_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないギルドの bump リマインダー一括削除は 0 を返す。"""
+        result = await delete_bump_reminders_by_guild(db_session, "999999999999999999")
+        assert result == 0
+
+    async def test_delete_role_panels_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないギルドのロールパネル一括削除は 0 を返す。"""
+        result = await delete_role_panels_by_guild(db_session, "999999999999999999")
+        assert result == 0
+
+    async def test_delete_discord_roles_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないギルドの discord ロール一括削除は 0 を返す。"""
+        result = await delete_discord_roles_by_guild(db_session, "999999999999999999")
+        assert result == 0
+
+    async def test_delete_discord_channels_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないギルドの discord チャンネル一括削除は 0 を返す。"""
+        result = await delete_discord_channels_by_guild(
+            db_session, "999999999999999999"
+        )
+        assert result == 0
+
+
+class TestListOperationsEdgeCases:
+    """リスト取得関数のエッジケーステスト。"""
+
+    async def test_get_all_lobbies_empty(self, db_session: AsyncSession) -> None:
+        """ロビーがない場合は空リストを返す。"""
+        result = await get_all_lobbies(db_session)
+        assert result == []
+
+    async def test_get_all_voice_sessions_empty(self, db_session: AsyncSession) -> None:
+        """VC セッションがない場合は空リストを返す。"""
+        result = await get_all_voice_sessions(db_session)
+        assert result == []
+
+    async def test_get_all_sticky_messages_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """sticky がない場合は空リストを返す。"""
+        result = await get_all_sticky_messages(db_session)
+        assert result == []
+
+    async def test_get_all_bump_configs_empty(self, db_session: AsyncSession) -> None:
+        """bump config がない場合は空リストを返す。"""
+        result = await get_all_bump_configs(db_session)
+        assert result == []
+
+    async def test_get_all_discord_guilds_empty(self, db_session: AsyncSession) -> None:
+        """discord guild がない場合は空リストを返す。"""
+        result = await get_all_discord_guilds(db_session)
+        assert result == []
+
+    async def test_get_all_autoban_rules_empty(self, db_session: AsyncSession) -> None:
+        """autoban ルールがない場合は空リストを返す。"""
+        result = await get_all_autoban_rules(db_session)
+        assert result == []
+
+    async def test_get_all_autoban_logs_empty(self, db_session: AsyncSession) -> None:
+        """autoban ログがない場合は空リストを返す。"""
+        result = await get_all_autoban_logs(db_session)
+        assert result == []
+
+    async def test_get_lobbies_by_guild_empty(self, db_session: AsyncSession) -> None:
+        """ギルドにロビーがない場合は空リストを返す。"""
+        result = await get_lobbies_by_guild(db_session, "999999999999999999")
+        assert result == []
+
+    async def test_get_role_panels_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ギルドにロールパネルがない場合は空リストを返す。"""
+        result = await get_role_panels_by_guild(db_session, "999999999999999999")
+        assert result == []
+
+    async def test_get_discord_roles_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ギルドに discord ロールがない場合は空リストを返す。"""
+        result = await get_discord_roles_by_guild(db_session, "999999999999999999")
+        assert result == []
+
+    async def test_get_discord_channels_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ギルドに discord チャンネルがない場合は空リストを返す。"""
+        result = await get_discord_channels_by_guild(db_session, "999999999999999999")
+        assert result == []
+
+
+class TestToggleOperationsEdgeCases:
+    """トグル操作のエッジケーステスト。"""
+
+    async def test_toggle_nonexistent_autoban_rule(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない autoban ルールのトグルは None を返す。"""
+        result = await toggle_autoban_rule(db_session, 999999)
+        assert result is None
+
+    async def test_toggle_nonexistent_bump_reminder_creates_disabled(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しない bump リマインダーのトグルは無効状態で新規作成する。"""
+        result = await toggle_bump_reminder(db_session, "999999", "nonexistent")
+        assert result is False
+
+
+class TestDueBumpRemindersEdgeCases:
+    """get_due_bump_reminders のエッジケーステスト。"""
+
+    async def test_no_due_reminders(self, db_session: AsyncSession) -> None:
+        """期限切れのリマインダーがない場合は空リストを返す。"""
+        from datetime import UTC, datetime, timedelta
+
+        # 未来のリマインダーを作成
+        await upsert_bump_reminder(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            service_name="DISBOARD",
+            remind_at=datetime.now(UTC) + timedelta(hours=2),
+        )
+        result = await get_due_bump_reminders(db_session, datetime.now(UTC))
+        assert result == []
+
+    async def test_due_reminder_returned(self, db_session: AsyncSession) -> None:
+        """期限切れのリマインダーが返される。"""
+        from datetime import UTC, datetime, timedelta
+
+        # 過去のリマインダーを作成
+        await upsert_bump_reminder(
+            db_session,
+            guild_id="123",
+            channel_id="456",
+            service_name="DISBOARD",
+            remind_at=datetime.now(UTC) - timedelta(minutes=1),
+        )
+        result = await get_due_bump_reminders(db_session, datetime.now(UTC))
+        assert len(result) == 1
