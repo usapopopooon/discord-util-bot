@@ -2152,3 +2152,292 @@ class TestEditTicketPanelInDiscord:
         assert success is True
         payload = mock_patch.call_args.kwargs.get("json", {})
         assert payload["components"] == []
+
+    async def test_401_error(
+        self,
+        panel: TicketPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """401 エラー時はトークン無効エラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.content = b'{"message": "Unauthorized"}'
+        mock_response.json.return_value = {"message": "Unauthorized"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_patch = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.patch = mock_patch
+
+            success, error = await edit_ticket_panel_in_discord(panel, [], {})
+
+        assert success is False
+        assert "トークン" in error
+
+    async def test_request_error(
+        self,
+        panel: TicketPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """RequestError 時は接続エラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_patch = AsyncMock(side_effect=httpx.RequestError("Connection failed"))
+            mock_client.return_value.__aenter__.return_value.patch = mock_patch
+
+            success, error = await edit_ticket_panel_in_discord(panel, [], {})
+
+        assert success is False
+        assert "接続" in error
+
+    async def test_custom_emoji_in_edit(
+        self,
+        panel: TicketPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """編集時にカスタム絵文字がボタンに正しくパースされる。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        associations = [
+            TicketPanelCategory(
+                id=1,
+                panel_id=1,
+                category_id=10,
+                button_emoji="<:star:123456789>",
+                button_style="primary",
+                position=0,
+            ),
+        ]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_patch_fn = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.patch = mock_patch_fn
+
+            success, error = await edit_ticket_panel_in_discord(
+                panel, associations, {10: "Support"}
+            )
+
+        assert success is True
+        assert error is None
+        payload = mock_patch_fn.call_args.kwargs.get("json", {})
+        button = payload["components"][0]["components"][0]
+        assert button["emoji"]["name"] == "star"
+        assert button["emoji"]["id"] == "123456789"
+        assert button["emoji"]["animated"] is False
+
+    async def test_animated_emoji_in_edit(
+        self,
+        panel: TicketPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """編集時にアニメーション絵文字がボタンに正しくパースされる。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        associations = [
+            TicketPanelCategory(
+                id=1,
+                panel_id=1,
+                category_id=10,
+                button_emoji="<a:dance:987654321>",
+                button_style="primary",
+                position=0,
+            ),
+        ]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_patch_fn = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.patch = mock_patch_fn
+
+            success, error = await edit_ticket_panel_in_discord(
+                panel, associations, {10: "Support"}
+            )
+
+        assert success is True
+        payload = mock_patch_fn.call_args.kwargs.get("json", {})
+        button = payload["components"][0]["components"][0]
+        assert button["emoji"]["name"] == "dance"
+        assert button["emoji"]["id"] == "987654321"
+        assert button["emoji"]["animated"] is True
+
+
+# ===========================================================================
+# edit_role_panel_in_discord 追加カバレッジテスト
+# ===========================================================================
+
+
+class TestEditRolePanelInDiscordExtraCoverage:
+    """edit_role_panel_in_discord の追加カバレッジテスト。"""
+
+    async def test_edit_without_embed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """use_embed=False で content テキストを送信する。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        panel = RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            message_id="789",
+            panel_type="button",
+            title="Text Panel",
+            description="Text description",
+            use_embed=False,
+        )
+        items = [
+            RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮"),
+        ]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_patch_fn = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.patch = mock_patch_fn
+
+            success, error = await edit_role_panel_in_discord(panel, items)
+
+        assert success is True
+        assert error is None
+        payload = mock_patch_fn.call_args.kwargs.get("json", {})
+        assert "content" in payload
+        assert "embeds" not in payload
+        assert "**Text Panel**" in payload["content"]
+
+    async def test_edit_empty_components_cleared(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """リアクション式パネルの場合、components が空配列でクリアされる。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        panel = RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            message_id="789",
+            panel_type="reaction",
+            title="Reaction Panel",
+            description="Pick a role",
+            use_embed=True,
+        )
+        items = [
+            RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮"),
+        ]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_patch_fn = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.patch = mock_patch_fn
+
+            success, error = await edit_role_panel_in_discord(panel, items)
+
+        assert success is True
+        assert error is None
+        payload = mock_patch_fn.call_args.kwargs.get("json", {})
+        assert payload["components"] == []
+
+    async def test_edit_401_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """401 エラー時はトークン無効エラーを返す。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        panel = RolePanel(
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            message_id="789",
+            panel_type="button",
+            title="Test Panel",
+            use_embed=True,
+        )
+        items = [
+            RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮"),
+        ]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.content = b'{"message": "Unauthorized"}'
+        mock_response.json.return_value = {"message": "Unauthorized"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.patch = AsyncMock(
+                return_value=mock_response
+            )
+
+            success, error = await edit_role_panel_in_discord(panel, items)
+
+        assert success is False
+        assert "トークン" in error
+
+
+# ===========================================================================
+# add_reactions_to_message クリア失敗テスト
+# ===========================================================================
+
+
+class TestAddReactionsClearFailure:
+    """add_reactions_to_message の clear_existing 失敗時のテスト。"""
+
+    async def test_clear_failure_continues_adding_reactions(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """clear_existing=True でクリア失敗しても、リアクション追加は継続する。"""
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "discord_token", "test_token")
+
+        # clear_reactions_from_message が失敗を返すようにモック
+        mock_put_response = MagicMock()
+        mock_put_response.status_code = 204
+
+        mock_delete_response = MagicMock()
+        mock_delete_response.status_code = 403
+        mock_delete_response.content = b'{"message": "Missing Permissions"}'
+        mock_delete_response.json.return_value = {"message": "Missing Permissions"}
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_instance = MagicMock()
+            mock_instance.delete = AsyncMock(return_value=mock_delete_response)
+            mock_instance.put = AsyncMock(return_value=mock_put_response)
+            mock_client.return_value.__aenter__.return_value = mock_instance
+
+            items = [RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮")]
+            success, error = await add_reactions_to_message(
+                "123", "456", items, clear_existing=True
+            )
+
+        assert success is True
+        assert error is None
+        # リアクション追加 (put) が呼ばれた
+        assert mock_instance.put.called

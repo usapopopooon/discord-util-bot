@@ -18,10 +18,13 @@ from src.services.db_service import (
     add_role_panel_item,
     add_voice_session_member,
     clear_bump_reminder,
+    create_autoban_log,
+    create_autoban_rule,
     create_lobby,
     create_role_panel,
     create_sticky_message,
     create_voice_session,
+    delete_autoban_rule,
     delete_bump_config,
     delete_bump_reminders_by_guild,
     delete_discord_channel,
@@ -39,17 +42,23 @@ from src.services.db_service import (
     delete_sticky_messages_by_guild,
     delete_voice_session,
     delete_voice_sessions_by_guild,
+    get_all_autoban_logs,
+    get_all_autoban_rules,
     get_all_bump_configs,
     get_all_discord_guilds,
     get_all_lobbies,
     get_all_role_panels,
     get_all_sticky_messages,
     get_all_voice_sessions,
+    get_autoban_logs_by_guild,
+    get_autoban_rule,
+    get_autoban_rules_by_guild,
     get_bump_config,
     get_bump_reminder,
     get_discord_channels_by_guild,
     get_discord_roles_by_guild,
     get_due_bump_reminders,
+    get_enabled_autoban_rules_by_guild,
     get_lobbies_by_guild,
     get_lobby_by_channel_id,
     get_role_panel,
@@ -63,6 +72,7 @@ from src.services.db_service import (
     get_voice_session_members_ordered,
     remove_role_panel_item,
     remove_voice_session_member,
+    toggle_autoban_rule,
     toggle_bump_reminder,
     update_bump_reminder_role,
     update_role_panel,
@@ -4161,3 +4171,334 @@ class TestTicketOperations:
             db_session, ticket, status="claimed", claimed_by="staff1"
         )
         assert updated.channel_id == "ch1"  # 変更されていない
+
+
+class TestAutobanDbService:
+    """Tests for autoban CRUD database operations."""
+
+    async def test_create_autoban_rule(self, db_session: AsyncSession) -> None:
+        """Test creating an autoban rule with all fields."""
+        rule = await create_autoban_rule(
+            db_session,
+            guild_id="123",
+            rule_type="username_match",
+            action="ban",
+            pattern="spam*",
+            use_wildcard=True,
+            threshold_hours=None,
+        )
+        assert rule.id is not None
+        assert rule.guild_id == "123"
+        assert rule.rule_type == "username_match"
+        assert rule.action == "ban"
+        assert rule.pattern == "spam*"
+        assert rule.use_wildcard is True
+        assert rule.threshold_hours is None
+        assert rule.is_enabled is True
+
+    async def test_create_autoban_rule_defaults(self, db_session: AsyncSession) -> None:
+        """Test creating an autoban rule with default values."""
+        rule = await create_autoban_rule(
+            db_session,
+            guild_id="123",
+            rule_type="no_avatar",
+        )
+        assert rule.action == "ban"
+        assert rule.pattern is None
+        assert rule.use_wildcard is False
+        assert rule.threshold_hours is None
+
+    async def test_get_autoban_rule(self, db_session: AsyncSession) -> None:
+        """Test getting a specific autoban rule by ID."""
+        rule = await create_autoban_rule(
+            db_session,
+            guild_id="123",
+            rule_type="username_match",
+            pattern="test",
+        )
+        found = await get_autoban_rule(db_session, rule.id)
+        assert found is not None
+        assert found.id == rule.id
+        assert found.guild_id == "123"
+
+    async def test_get_autoban_rule_not_found(self, db_session: AsyncSession) -> None:
+        """Test getting a non-existent autoban rule returns None."""
+        found = await get_autoban_rule(db_session, 99999)
+        assert found is None
+
+    async def test_get_all_autoban_rules(self, db_session: AsyncSession) -> None:
+        """Test getting all autoban rules across guilds."""
+        await create_autoban_rule(
+            db_session, guild_id="123", rule_type="username_match", pattern="a"
+        )
+        await create_autoban_rule(db_session, guild_id="456", rule_type="no_avatar")
+        await create_autoban_rule(
+            db_session, guild_id="123", rule_type="account_age", threshold_hours=24
+        )
+
+        rules = await get_all_autoban_rules(db_session)
+        assert len(rules) == 3
+
+    async def test_get_all_autoban_rules_empty(self, db_session: AsyncSession) -> None:
+        """Test getting all autoban rules when none exist."""
+        rules = await get_all_autoban_rules(db_session)
+        assert rules == []
+
+    async def test_get_autoban_rules_by_guild(self, db_session: AsyncSession) -> None:
+        """Test getting autoban rules filtered by guild."""
+        await create_autoban_rule(
+            db_session, guild_id="123", rule_type="username_match", pattern="a"
+        )
+        await create_autoban_rule(db_session, guild_id="123", rule_type="no_avatar")
+        await create_autoban_rule(
+            db_session, guild_id="456", rule_type="account_age", threshold_hours=48
+        )
+
+        rules_123 = await get_autoban_rules_by_guild(db_session, "123")
+        assert len(rules_123) == 2
+
+        rules_456 = await get_autoban_rules_by_guild(db_session, "456")
+        assert len(rules_456) == 1
+
+    async def test_get_autoban_rules_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting autoban rules for a guild with no rules."""
+        rules = await get_autoban_rules_by_guild(db_session, "nonexistent")
+        assert rules == []
+
+    async def test_get_enabled_autoban_rules_by_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting only enabled autoban rules for a guild."""
+        rule1 = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="username_match", pattern="a"
+        )
+        await create_autoban_rule(db_session, guild_id="123", rule_type="no_avatar")
+
+        # Disable rule1
+        await toggle_autoban_rule(db_session, rule1.id)
+
+        enabled = await get_enabled_autoban_rules_by_guild(db_session, "123")
+        assert len(enabled) == 1
+        assert enabled[0].rule_type == "no_avatar"
+
+    async def test_get_enabled_autoban_rules_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting enabled rules when all are disabled."""
+        rule = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="no_avatar"
+        )
+        await toggle_autoban_rule(db_session, rule.id)
+
+        enabled = await get_enabled_autoban_rules_by_guild(db_session, "123")
+        assert enabled == []
+
+    async def test_delete_autoban_rule(self, db_session: AsyncSession) -> None:
+        """Test deleting an autoban rule."""
+        rule = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="no_avatar"
+        )
+        result = await delete_autoban_rule(db_session, rule.id)
+        assert result is True
+
+        found = await get_autoban_rule(db_session, rule.id)
+        assert found is None
+
+    async def test_delete_autoban_rule_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test deleting a non-existent autoban rule returns False."""
+        result = await delete_autoban_rule(db_session, 99999)
+        assert result is False
+
+    async def test_toggle_autoban_rule(self, db_session: AsyncSession) -> None:
+        """Test toggling an autoban rule enabled/disabled."""
+        rule = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="no_avatar"
+        )
+        assert rule.is_enabled is True
+
+        # Toggle off
+        new_state = await toggle_autoban_rule(db_session, rule.id)
+        assert new_state is False
+
+        # Toggle back on
+        new_state = await toggle_autoban_rule(db_session, rule.id)
+        assert new_state is True
+
+    async def test_toggle_autoban_rule_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test toggling a non-existent autoban rule returns None."""
+        result = await toggle_autoban_rule(db_session, 99999)
+        assert result is None
+
+    async def test_create_autoban_log(self, db_session: AsyncSession) -> None:
+        """Test creating an autoban log entry."""
+        rule = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="username_match", pattern="spam"
+        )
+        log = await create_autoban_log(
+            db_session,
+            guild_id="123",
+            user_id="user1",
+            username="spammer",
+            rule_id=rule.id,
+            action_taken="banned",
+            reason="Username matched pattern: spam",
+        )
+        assert log.id is not None
+        assert log.guild_id == "123"
+        assert log.user_id == "user1"
+        assert log.username == "spammer"
+        assert log.rule_id == rule.id
+        assert log.action_taken == "banned"
+        assert log.reason == "Username matched pattern: spam"
+
+    async def test_get_autoban_logs_by_guild(self, db_session: AsyncSession) -> None:
+        """Test getting autoban logs filtered by guild."""
+        rule = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="no_avatar"
+        )
+        await create_autoban_log(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            username="user1",
+            rule_id=rule.id,
+            action_taken="banned",
+            reason="No avatar",
+        )
+        await create_autoban_log(
+            db_session,
+            guild_id="123",
+            user_id="u2",
+            username="user2",
+            rule_id=rule.id,
+            action_taken="banned",
+            reason="No avatar",
+        )
+
+        rule2 = await create_autoban_rule(
+            db_session, guild_id="456", rule_type="no_avatar"
+        )
+        await create_autoban_log(
+            db_session,
+            guild_id="456",
+            user_id="u3",
+            username="user3",
+            rule_id=rule2.id,
+            action_taken="kicked",
+            reason="No avatar",
+        )
+
+        logs_123 = await get_autoban_logs_by_guild(db_session, "123")
+        assert len(logs_123) == 2
+
+        logs_456 = await get_autoban_logs_by_guild(db_session, "456")
+        assert len(logs_456) == 1
+
+    async def test_get_autoban_logs_by_guild_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting autoban logs for a guild with no logs."""
+        logs = await get_autoban_logs_by_guild(db_session, "nonexistent")
+        assert logs == []
+
+    async def test_get_autoban_logs_by_guild_limit(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that get_autoban_logs_by_guild respects the limit parameter."""
+        rule = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="no_avatar"
+        )
+        for i in range(5):
+            await create_autoban_log(
+                db_session,
+                guild_id="123",
+                user_id=f"u{i}",
+                username=f"user{i}",
+                rule_id=rule.id,
+                action_taken="banned",
+                reason="No avatar",
+            )
+
+        logs = await get_autoban_logs_by_guild(db_session, "123", limit=3)
+        assert len(logs) == 3
+
+    async def test_get_all_autoban_logs(self, db_session: AsyncSession) -> None:
+        """Test getting all autoban logs across guilds."""
+        rule1 = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="no_avatar"
+        )
+        rule2 = await create_autoban_rule(
+            db_session, guild_id="456", rule_type="no_avatar"
+        )
+        await create_autoban_log(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            username="user1",
+            rule_id=rule1.id,
+            action_taken="banned",
+            reason="No avatar",
+        )
+        await create_autoban_log(
+            db_session,
+            guild_id="456",
+            user_id="u2",
+            username="user2",
+            rule_id=rule2.id,
+            action_taken="kicked",
+            reason="No avatar",
+        )
+
+        logs = await get_all_autoban_logs(db_session)
+        assert len(logs) == 2
+
+    async def test_get_all_autoban_logs_empty(self, db_session: AsyncSession) -> None:
+        """Test getting all autoban logs when none exist."""
+        logs = await get_all_autoban_logs(db_session)
+        assert logs == []
+
+    async def test_get_all_autoban_logs_limit(self, db_session: AsyncSession) -> None:
+        """Test that get_all_autoban_logs respects the limit parameter."""
+        rule = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="no_avatar"
+        )
+        for i in range(5):
+            await create_autoban_log(
+                db_session,
+                guild_id="123",
+                user_id=f"u{i}",
+                username=f"user{i}",
+                rule_id=rule.id,
+                action_taken="banned",
+                reason="No avatar",
+            )
+
+        logs = await get_all_autoban_logs(db_session, limit=2)
+        assert len(logs) == 2
+
+    async def test_delete_autoban_rule_cascades_logs(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that deleting a rule cascades to delete its logs."""
+        rule = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="no_avatar"
+        )
+        await create_autoban_log(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            username="user1",
+            rule_id=rule.id,
+            action_taken="banned",
+            reason="No avatar",
+        )
+
+        await delete_autoban_rule(db_session, rule.id)
+        logs = await get_all_autoban_logs(db_session)
+        assert logs == []

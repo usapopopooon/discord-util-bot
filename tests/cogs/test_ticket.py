@@ -971,6 +971,169 @@ class TestTicketCloseNoCategoryCommand:
 # =============================================================================
 
 
+class TestCogLoadException:
+    """cog_load の例外ハンドリングテスト。"""
+
+    async def test_cog_load_catches_register_exception(self) -> None:
+        """_register_all_views で例外が発生しても cog_load はクラッシュしない。"""
+        from src.cogs.ticket import TicketCog
+
+        bot = MagicMock(spec=commands.Bot)
+        bot.add_view = MagicMock()
+        cog = TicketCog(bot)
+
+        with patch.object(
+            cog,
+            "_register_all_views",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("DB connection failed"),
+        ):
+            # 例外がキャッチされ、タスクはそれでも開始される
+            await cog.cog_load()
+
+        assert cog._sync_views_task.is_running()
+        cog._sync_views_task.cancel()
+
+
+class TestRegisterAllViewsPanelException:
+    """_register_all_views のパネル View 登録例外テスト。"""
+
+    async def test_panel_view_exception_is_caught(self) -> None:
+        """個別パネルの View 登録で例外が発生しても他のパネルは処理される。"""
+        from src.cogs.ticket import TicketCog
+
+        bot = MagicMock(spec=commands.Bot)
+        bot.add_view = MagicMock()
+        cog = TicketCog(bot)
+
+        panel1 = _make_panel(panel_id=1)
+        panel2 = _make_panel(panel_id=2)
+        assoc = _make_association(category_id=1)
+        category = _make_category(category_id=1, name="General")
+
+        call_count = 0
+
+        async def _get_panel_categories_side_effect(_session, _panel_id):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("DB error on panel 1")
+            return [assoc]
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.cogs.ticket.async_session", mock_factory),
+            patch(
+                "src.cogs.ticket.get_all_ticket_panels",
+                new_callable=AsyncMock,
+                return_value=[panel1, panel2],
+            ),
+            patch(
+                "src.cogs.ticket.get_ticket_panel_categories",
+                new_callable=AsyncMock,
+                side_effect=_get_panel_categories_side_effect,
+            ),
+            patch(
+                "src.cogs.ticket.get_ticket_category",
+                new_callable=AsyncMock,
+                return_value=category,
+            ),
+            patch(
+                "src.cogs.ticket.get_all_tickets",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            await cog._register_all_views()
+
+        # panel1 は失敗、panel2 は成功 → 1 回だけ add_view
+        assert bot.add_view.call_count == 1
+
+
+class TestRegisterAllViewsTicketControlException:
+    """_register_all_views のチケット ControlView 登録例外テスト。"""
+
+    async def test_ticket_control_view_exception_is_caught(self) -> None:
+        """個別チケットの ControlView 登録で例外が発生しても他は処理される。"""
+        from src.cogs.ticket import TicketCog
+
+        bot = MagicMock(spec=commands.Bot)
+        # 最初の add_view 呼び出しで例外、2番目は成功
+        bot.add_view = MagicMock(side_effect=[RuntimeError("view error"), None])
+        cog = TicketCog(bot)
+
+        ticket1 = _make_ticket(ticket_id=1, status="open", channel_id="100")
+        ticket2 = _make_ticket(ticket_id=2, status="claimed", channel_id="200")
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.cogs.ticket.async_session", mock_factory),
+            patch(
+                "src.cogs.ticket.get_all_ticket_panels",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "src.cogs.ticket.get_all_tickets",
+                new_callable=AsyncMock,
+                return_value=[ticket1, ticket2],
+            ),
+        ):
+            # 例外がキャッチされ、外に漏れないことを確認
+            await cog._register_all_views()
+
+        # 両方の add_view が呼ばれた (1つ目は例外、2つ目は成功)
+        assert bot.add_view.call_count == 2
+
+
+class TestOnGuildChannelDeleteException:
+    """on_guild_channel_delete の例外ハンドリングテスト。"""
+
+    async def test_exception_in_cleanup_is_caught(self) -> None:
+        """DB クリーンアップで例外が発生しても外に漏れない。"""
+        from src.cogs.ticket import TicketCog
+
+        bot = MagicMock(spec=commands.Bot)
+        cog = TicketCog(bot)
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.id = 200
+
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(
+            side_effect=RuntimeError("DB error")
+        )
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("src.cogs.ticket.async_session", mock_factory):
+            # 例外がキャッチされ、外に漏れないことを確認
+            await cog.on_guild_channel_delete(channel)
+
+
+class TestOnRawMessageDeleteException:
+    """on_raw_message_delete の例外ハンドリングテスト。"""
+
+    async def test_exception_in_cleanup_is_caught(self) -> None:
+        """DB クリーンアップで例外が発生しても外に漏れない。"""
+        from src.cogs.ticket import TicketCog
+
+        bot = MagicMock(spec=commands.Bot)
+        cog = TicketCog(bot)
+
+        payload = MagicMock(spec=discord.RawMessageDeleteEvent)
+        payload.message_id = 500
+
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(
+            side_effect=RuntimeError("DB error")
+        )
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("src.cogs.ticket.async_session", mock_factory):
+            # 例外がキャッチされ、外に漏れないことを確認
+            await cog.on_raw_message_delete(payload)
+
+
 class TestSetup:
     """setup 関数のテスト。"""
 

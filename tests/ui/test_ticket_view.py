@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from src.database.models import Ticket, TicketCategory, TicketPanel, TicketPanelCategory
 from src.ui.ticket_view import (
@@ -1565,3 +1566,686 @@ class TestSendCloseLog:
         embed = log_channel.send.call_args[1]["embed"]
         field_names = [f.name for f in embed.fields]
         assert "Reason" not in field_names
+
+
+# =============================================================================
+# send_close_log: invalid log_channel_id (L167-169)
+# =============================================================================
+
+
+class TestSendCloseLogInvalidChannelId:
+    """send_close_log の log_channel_id が無効な場合のテスト。"""
+
+    async def test_invalid_log_channel_id_value_error(self) -> None:
+        """log_channel_id が int 変換できない文字列の場合は早期リターン。"""
+        guild = MagicMock(spec=discord.Guild)
+        ticket = _make_ticket()
+        category = _make_category(log_channel_id="not_a_number")
+
+        await send_close_log(guild, ticket, category, "closer", "http://localhost:8000")
+
+        guild.get_channel.assert_not_called()
+
+    async def test_invalid_log_channel_id_type_error(self) -> None:
+        """log_channel_id が None でないが int 変換で TypeError になる場合。"""
+        guild = MagicMock(spec=discord.Guild)
+        ticket = _make_ticket()
+        category = _make_category(log_channel_id=["list_value"])
+
+        await send_close_log(guild, ticket, category, "closer", "http://localhost:8000")
+
+        guild.get_channel.assert_not_called()
+
+
+# =============================================================================
+# TicketCategoryButton.callback: exception handling (L240-258)
+# =============================================================================
+
+
+class TestTicketCategoryButtonCallbackExceptionHandling:
+    """TicketCategoryButton.callback の例外ハンドリングテスト。"""
+
+    async def test_exception_response_not_done_sends_response(self) -> None:
+        """_handle_interaction 例外、response 未完了時は send_message。"""
+        assoc = _make_association(category_id=1)
+        button = TicketCategoryButton(
+            panel_id=1, association=assoc, category_name="Test"
+        )
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.guild.id = 100
+        interaction.response = AsyncMock()
+        interaction.response.is_done = MagicMock(return_value=False)
+        interaction.followup = AsyncMock()
+
+        with patch.object(
+            button,
+            "_handle_interaction",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("unexpected"),
+        ):
+            await button.callback(interaction)
+
+        interaction.response.send_message.assert_awaited_once()
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "エラーが発生しました" in msg
+
+    async def test_exception_response_done_sends_followup(self) -> None:
+        """_handle_interaction で例外発生、response 完了済みは followup.send。"""
+        assoc = _make_association(category_id=1)
+        button = TicketCategoryButton(
+            panel_id=1, association=assoc, category_name="Test"
+        )
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.guild.id = 100
+        interaction.response = AsyncMock()
+        interaction.response.is_done = MagicMock(return_value=True)
+        interaction.followup = AsyncMock()
+
+        with patch.object(
+            button,
+            "_handle_interaction",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("unexpected"),
+        ):
+            await button.callback(interaction)
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "エラーが発生しました" in msg
+
+    async def test_exception_handler_http_exception_suppressed(self) -> None:
+        """エラーハンドラ自体が HTTPException を出した場合も suppress。"""
+        assoc = _make_association(category_id=1)
+        button = TicketCategoryButton(
+            panel_id=1, association=assoc, category_name="Test"
+        )
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.guild.id = 100
+        interaction.response = AsyncMock()
+        interaction.response.is_done = MagicMock(return_value=False)
+        interaction.response.send_message = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(status=500), "Internal Error")
+        )
+        interaction.followup = AsyncMock()
+
+        with patch.object(
+            button,
+            "_handle_interaction",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("unexpected"),
+        ):
+            # HTTPException in error handler should not propagate
+            await button.callback(interaction)
+
+
+# =============================================================================
+# _handle_interaction: panel_category from TextChannel (L297)
+# =============================================================================
+
+
+class TestHandleInteractionPanelCategory:
+    """_handle_interaction でパネルのチャンネルカテゴリが使われるテスト。"""
+
+    async def test_text_channel_category_passed_as_fallback(self) -> None:
+        """TextChannel の場合、channel.category がフォールバックに渡される。"""
+        assoc = _make_association(category_id=1)
+        button = TicketCategoryButton(
+            panel_id=1, association=assoc, category_name="Test"
+        )
+
+        discord_cat = MagicMock(spec=discord.CategoryChannel)
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.guild.id = 100
+        interaction.user = MagicMock(spec=discord.Member)
+        interaction.user.id = 1
+        interaction.channel = MagicMock(spec=discord.TextChannel)
+        interaction.channel.category = discord_cat
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        category = _make_category(is_enabled=True, form_questions=None)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = None
+
+        _, mock_session = _mock_async_session()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        mock_channel = MagicMock(spec=discord.TextChannel)
+        mock_channel.mention = "<#999>"
+
+        with (
+            patch("src.ui.ticket_view.async_session") as mock_factory,
+            patch(
+                "src.ui.ticket_view.get_ticket_category",
+                new_callable=AsyncMock,
+                return_value=category,
+            ),
+            patch(
+                "src.ui.ticket_view._create_ticket_channel",
+                new_callable=AsyncMock,
+                return_value=mock_channel,
+            ) as mock_create,
+        ):
+            mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+            await button.callback(interaction)
+
+        # fallback_category に discord_cat が渡される
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["fallback_category"] == discord_cat
+
+
+# =============================================================================
+# TicketPanelView.__init__: category_names=None (L333)
+# =============================================================================
+
+
+class TestTicketPanelViewCategoryNamesNone:
+    """TicketPanelView で category_names が None の場合のテスト。"""
+
+    async def test_category_names_none_defaults_to_ticket(self) -> None:
+        """category_names が None の場合、ボタンラベルは 'Ticket' になる。"""
+        assoc = _make_association(category_id=1, button_label=None)
+
+        view = TicketPanelView(panel_id=1, associations=[assoc])
+
+        assert len(view.children) == 1
+        assert view.children[0].label == "Ticket"
+
+
+# =============================================================================
+# TicketCloseButton.callback: generic Exception handler (L444-450)
+# =============================================================================
+
+
+class TestTicketCloseButtonCallbackGenericException:
+    """TicketCloseButton.callback の汎用例外ハンドリングテスト。"""
+
+    async def test_generic_exception_sends_followup_with_suppress(self) -> None:
+        """汎用例外発生時に followup.send でエラーメッセージ (suppress 付き)。"""
+        button = TicketCloseButton(ticket_id=1)
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.channel = MagicMock(spec=discord.TextChannel)
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+
+        with patch(
+            "src.ui.ticket_view.async_session",
+            side_effect=RuntimeError("DB connection failed"),
+        ):
+            await button.callback(interaction)
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "エラーが発生しました" in msg
+
+    async def test_generic_exception_followup_http_error_suppressed(self) -> None:
+        """汎用例外後の followup.send も失敗した場合、suppress される。"""
+        button = TicketCloseButton(ticket_id=1)
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.channel = MagicMock(spec=discord.TextChannel)
+        interaction.response = AsyncMock()
+        interaction.followup = AsyncMock()
+        interaction.followup.send = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(status=500), "Server Error")
+        )
+
+        with patch(
+            "src.ui.ticket_view.async_session",
+            side_effect=RuntimeError("DB connection failed"),
+        ):
+            # Should not raise - HTTPException is suppressed
+            await button.callback(interaction)
+
+
+# =============================================================================
+# TicketClaimButton.callback: generic Exception handler (L508-525)
+# =============================================================================
+
+
+class TestTicketClaimButtonCallbackGenericException:
+    """TicketClaimButton.callback の汎用例外ハンドリングテスト。"""
+
+    async def test_generic_exception_response_not_done(self) -> None:
+        """汎用例外発生、response 未完了時は response.send_message。"""
+        button = TicketClaimButton(ticket_id=1)
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.response = AsyncMock()
+        interaction.response.is_done = MagicMock(return_value=False)
+        interaction.followup = AsyncMock()
+
+        with patch(
+            "src.ui.ticket_view.async_session",
+            side_effect=RuntimeError("DB connection failed"),
+        ):
+            await button.callback(interaction)
+
+        interaction.response.send_message.assert_awaited_once()
+        msg = interaction.response.send_message.call_args[0][0]
+        assert "エラーが発生しました" in msg
+
+    async def test_generic_exception_response_done_sends_followup(self) -> None:
+        """汎用例外発生、response 完了済みは followup.send。"""
+        button = TicketClaimButton(ticket_id=1)
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.response = AsyncMock()
+        interaction.response.is_done = MagicMock(return_value=True)
+        interaction.followup = AsyncMock()
+
+        with patch(
+            "src.ui.ticket_view.async_session",
+            side_effect=RuntimeError("DB connection failed"),
+        ):
+            await button.callback(interaction)
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "エラーが発生しました" in msg
+
+    async def test_generic_exception_handler_http_exception_suppressed(self) -> None:
+        """エラーハンドラ自体が HTTPException を出した場合も suppress。"""
+        button = TicketClaimButton(ticket_id=1)
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.response = AsyncMock()
+        interaction.response.is_done = MagicMock(return_value=False)
+        interaction.response.send_message = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(status=500), "Server Error")
+        )
+
+        with patch(
+            "src.ui.ticket_view.async_session",
+            side_effect=RuntimeError("DB connection failed"),
+        ):
+            # Should not raise
+            await button.callback(interaction)
+
+
+# =============================================================================
+# _create_ticket_channel: invalid staff_role_id (L559-565)
+# =============================================================================
+
+
+class TestCreateTicketChannelInvalidStaffRoleId:
+    """_create_ticket_channel で staff_role_id が無効な場合のテスト。"""
+
+    async def test_invalid_staff_role_id_value_error(self) -> None:
+        """staff_role_id が int 変換できない文字列の場合は None を返す。"""
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 100
+
+        user = MagicMock(spec=discord.Member)
+        user.id = 1
+        user.name = "testuser"
+
+        category = _make_category(staff_role_id="not_a_number")
+        db_session = AsyncMock()
+
+        result = await _create_ticket_channel(guild, user, category, db_session)
+
+        assert result is None
+
+    async def test_invalid_staff_role_id_type_error(self) -> None:
+        """staff_role_id が None の場合 (TypeError) は None を返す。"""
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 100
+
+        user = MagicMock(spec=discord.Member)
+        user.id = 1
+        user.name = "testuser"
+
+        category = _make_category(staff_role_id=None)
+        db_session = AsyncMock()
+
+        result = await _create_ticket_channel(guild, user, category, db_session)
+
+        assert result is None
+
+
+# =============================================================================
+# _create_ticket_channel: invalid discord_category_id (L603-607)
+# =============================================================================
+
+
+class TestCreateTicketChannelInvalidDiscordCategoryId:
+    """_create_ticket_channel で discord_category_id が無効な場合のテスト。"""
+
+    async def test_invalid_discord_category_id_value_error(self) -> None:
+        """discord_category_id が int 変換できない場合はフォールバックを使用。"""
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 100
+        guild.default_role = MagicMock(spec=discord.Role)
+        guild.me = MagicMock(spec=discord.Member)
+        guild.get_role = MagicMock(return_value=None)
+        guild.get_channel = MagicMock(return_value=None)
+
+        mock_channel = MagicMock(spec=discord.TextChannel)
+        mock_channel.send = AsyncMock()
+        guild.create_text_channel = AsyncMock(return_value=mock_channel)
+
+        user = MagicMock(spec=discord.Member)
+        user.id = 1
+        user.name = "testuser"
+
+        category = _make_category(
+            channel_prefix="ticket-",
+            staff_role_id="999",
+            discord_category_id="not_a_number",
+        )
+        db_session = AsyncMock()
+        mock_ticket = _make_ticket()
+
+        fallback_cat = MagicMock(spec=discord.CategoryChannel)
+
+        with (
+            patch(
+                "src.ui.ticket_view.get_next_ticket_number",
+                new_callable=AsyncMock,
+                return_value=1,
+            ),
+            patch(
+                "src.ui.ticket_view.create_ticket",
+                new_callable=AsyncMock,
+                return_value=mock_ticket,
+            ),
+            patch(
+                "src.ui.ticket_view.TicketControlView",
+                return_value=MagicMock(),
+            ),
+        ):
+            result = await _create_ticket_channel(
+                guild, user, category, db_session, fallback_category=fallback_cat
+            )
+
+        assert result == mock_channel
+        call_kwargs = guild.create_text_channel.call_args[1]
+        assert call_kwargs["category"] == fallback_cat
+
+    async def test_invalid_discord_category_id_type_error(self) -> None:
+        """discord_category_id がリスト等で TypeError の場合はフォールバックを使用。"""
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 100
+        guild.default_role = MagicMock(spec=discord.Role)
+        guild.me = MagicMock(spec=discord.Member)
+        guild.get_role = MagicMock(return_value=None)
+        guild.get_channel = MagicMock(return_value=None)
+
+        mock_channel = MagicMock(spec=discord.TextChannel)
+        mock_channel.send = AsyncMock()
+        guild.create_text_channel = AsyncMock(return_value=mock_channel)
+
+        user = MagicMock(spec=discord.Member)
+        user.id = 1
+        user.name = "testuser"
+
+        category = _make_category(
+            channel_prefix="ticket-",
+            staff_role_id="999",
+            discord_category_id=["bad_value"],
+        )
+        db_session = AsyncMock()
+        mock_ticket = _make_ticket()
+
+        with (
+            patch(
+                "src.ui.ticket_view.get_next_ticket_number",
+                new_callable=AsyncMock,
+                return_value=1,
+            ),
+            patch(
+                "src.ui.ticket_view.create_ticket",
+                new_callable=AsyncMock,
+                return_value=mock_ticket,
+            ),
+            patch(
+                "src.ui.ticket_view.TicketControlView",
+                return_value=MagicMock(),
+            ),
+        ):
+            result = await _create_ticket_channel(guild, user, category, db_session)
+
+        assert result == mock_channel
+        call_kwargs = guild.create_text_channel.call_args[1]
+        # フォールバックもなしなので None
+        assert call_kwargs["category"] is None
+
+
+# =============================================================================
+# _create_ticket_channel: IntegrityError retry loop (L617-655)
+# =============================================================================
+
+
+class TestCreateTicketChannelIntegrityErrorRetry:
+    """_create_ticket_channel の IntegrityError リトライテスト。"""
+
+    async def test_integrity_error_retry_succeeds_on_second_attempt(self) -> None:
+        """1回目で IntegrityError、2回目で成功。"""
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 100
+        guild.default_role = MagicMock(spec=discord.Role)
+        guild.me = MagicMock(spec=discord.Member)
+        guild.get_role = MagicMock(return_value=None)
+        guild.get_channel = MagicMock(return_value=None)
+
+        mock_channel1 = MagicMock(spec=discord.TextChannel)
+        mock_channel1.delete = AsyncMock()
+        mock_channel2 = MagicMock(spec=discord.TextChannel)
+        mock_channel2.id = 999
+        mock_channel2.send = AsyncMock()
+
+        guild.create_text_channel = AsyncMock(
+            side_effect=[mock_channel1, mock_channel2]
+        )
+
+        user = MagicMock(spec=discord.Member)
+        user.id = 1
+        user.name = "testuser"
+
+        category = _make_category(channel_prefix="ticket-", staff_role_id="999")
+        db_session = AsyncMock()
+        mock_ticket = _make_ticket()
+
+        with (
+            patch(
+                "src.ui.ticket_view.get_next_ticket_number",
+                new_callable=AsyncMock,
+                side_effect=[42, 43],
+            ),
+            patch(
+                "src.ui.ticket_view.create_ticket",
+                new_callable=AsyncMock,
+                side_effect=[
+                    IntegrityError("", {}, Exception()),
+                    mock_ticket,
+                ],
+            ),
+            patch(
+                "src.ui.ticket_view.TicketControlView",
+                return_value=MagicMock(),
+            ),
+        ):
+            result = await _create_ticket_channel(guild, user, category, db_session)
+
+        assert result == mock_channel2
+        # 孤立チャンネルが削除される
+        mock_channel1.delete.assert_awaited_once()
+        db_session.rollback.assert_awaited_once()
+
+    async def test_integrity_error_orphan_channel_delete_fails(self) -> None:
+        """孤立チャンネル削除が HTTPException でも suppress される。"""
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 100
+        guild.default_role = MagicMock(spec=discord.Role)
+        guild.me = MagicMock(spec=discord.Member)
+        guild.get_role = MagicMock(return_value=None)
+        guild.get_channel = MagicMock(return_value=None)
+
+        mock_channel1 = MagicMock(spec=discord.TextChannel)
+        mock_channel1.delete = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(status=403), "Forbidden")
+        )
+        mock_channel2 = MagicMock(spec=discord.TextChannel)
+        mock_channel2.id = 999
+        mock_channel2.send = AsyncMock()
+
+        guild.create_text_channel = AsyncMock(
+            side_effect=[mock_channel1, mock_channel2]
+        )
+
+        user = MagicMock(spec=discord.Member)
+        user.id = 1
+        user.name = "testuser"
+
+        category = _make_category(channel_prefix="ticket-", staff_role_id="999")
+        db_session = AsyncMock()
+        mock_ticket = _make_ticket()
+
+        with (
+            patch(
+                "src.ui.ticket_view.get_next_ticket_number",
+                new_callable=AsyncMock,
+                side_effect=[42, 43],
+            ),
+            patch(
+                "src.ui.ticket_view.create_ticket",
+                new_callable=AsyncMock,
+                side_effect=[
+                    IntegrityError("", {}, Exception()),
+                    mock_ticket,
+                ],
+            ),
+            patch(
+                "src.ui.ticket_view.TicketControlView",
+                return_value=MagicMock(),
+            ),
+        ):
+            # Should not raise despite delete failing
+            result = await _create_ticket_channel(guild, user, category, db_session)
+
+        assert result == mock_channel2
+
+
+# =============================================================================
+# _create_ticket_channel: all retries exhausted (L656-659)
+# =============================================================================
+
+
+class TestCreateTicketChannelAllRetriesExhausted:
+    """_create_ticket_channel で全リトライが失敗した場合のテスト。"""
+
+    async def test_all_retries_exhausted_returns_none(self) -> None:
+        """3回全て IntegrityError の場合は None を返す。"""
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 100
+        guild.default_role = MagicMock(spec=discord.Role)
+        guild.me = MagicMock(spec=discord.Member)
+        guild.get_role = MagicMock(return_value=None)
+        guild.get_channel = MagicMock(return_value=None)
+
+        mock_channels = [MagicMock(spec=discord.TextChannel) for _ in range(3)]
+        for ch in mock_channels:
+            ch.delete = AsyncMock()
+        guild.create_text_channel = AsyncMock(side_effect=mock_channels)
+
+        user = MagicMock(spec=discord.Member)
+        user.id = 1
+        user.name = "testuser"
+
+        category = _make_category(channel_prefix="ticket-", staff_role_id="999")
+        db_session = AsyncMock()
+
+        with (
+            patch(
+                "src.ui.ticket_view.get_next_ticket_number",
+                new_callable=AsyncMock,
+                side_effect=[42, 43, 44],
+            ),
+            patch(
+                "src.ui.ticket_view.create_ticket",
+                new_callable=AsyncMock,
+                side_effect=[
+                    IntegrityError("", {}, Exception()),
+                    IntegrityError("", {}, Exception()),
+                    IntegrityError("", {}, Exception()),
+                ],
+            ),
+        ):
+            result = await _create_ticket_channel(guild, user, category, db_session)
+
+        assert result is None
+        # 全ての孤立チャンネルが削除される
+        for ch in mock_channels:
+            ch.delete.assert_awaited_once()
+
+
+# =============================================================================
+# _create_ticket_channel: send opening message HTTPException (L667-668)
+# =============================================================================
+
+
+class TestCreateTicketChannelOpeningMessageFailure:
+    """_create_ticket_channel でオープニングメッセージ送信失敗のテスト。"""
+
+    async def test_opening_message_http_exception_still_returns_channel(self) -> None:
+        """オープニングメッセージ送信が HTTPException でもチャンネルは返す。"""
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 100
+        guild.default_role = MagicMock(spec=discord.Role)
+        guild.me = MagicMock(spec=discord.Member)
+        guild.get_role = MagicMock(return_value=MagicMock(spec=discord.Role))
+        guild.get_channel = MagicMock(return_value=None)
+
+        mock_channel = MagicMock(spec=discord.TextChannel)
+        mock_channel.id = 999
+        mock_channel.send = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(status=403), "Forbidden")
+        )
+        guild.create_text_channel = AsyncMock(return_value=mock_channel)
+
+        user = MagicMock(spec=discord.Member)
+        user.id = 1
+        user.name = "testuser"
+
+        category = _make_category(channel_prefix="ticket-", staff_role_id="999")
+        db_session = AsyncMock()
+
+        mock_ticket = _make_ticket(id=1, ticket_number=42)
+
+        with (
+            patch(
+                "src.ui.ticket_view.get_next_ticket_number",
+                new_callable=AsyncMock,
+                return_value=42,
+            ),
+            patch(
+                "src.ui.ticket_view.create_ticket",
+                new_callable=AsyncMock,
+                return_value=mock_ticket,
+            ),
+            patch(
+                "src.ui.ticket_view.TicketControlView",
+                return_value=MagicMock(),
+            ),
+        ):
+            result = await _create_ticket_channel(guild, user, category, db_session)
+
+        assert result == mock_channel
+        mock_channel.send.assert_awaited_once()
