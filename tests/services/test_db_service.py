@@ -42,6 +42,7 @@ from src.services.db_service import (
     delete_sticky_messages_by_guild,
     delete_voice_session,
     delete_voice_sessions_by_guild,
+    get_all_autoban_configs,
     get_all_autoban_logs,
     get_all_autoban_rules,
     get_all_bump_configs,
@@ -50,6 +51,7 @@ from src.services.db_service import (
     get_all_role_panels,
     get_all_sticky_messages,
     get_all_voice_sessions,
+    get_autoban_config,
     get_autoban_logs_by_guild,
     get_autoban_rule,
     get_autoban_rules_by_guild,
@@ -78,6 +80,7 @@ from src.services.db_service import (
     update_role_panel,
     update_sticky_message_id,
     update_voice_session,
+    upsert_autoban_config,
     upsert_bump_config,
     upsert_bump_reminder,
     upsert_discord_channel,
@@ -4530,6 +4533,64 @@ class TestAutobanDbService:
         await delete_autoban_rule(db_session, rule.id)
         logs = await get_all_autoban_logs(db_session)
         assert logs == []
+
+
+class TestAutobanConfigDbService:
+    """Tests for autoban config CRUD database operations."""
+
+    async def test_get_autoban_config(self, db_session: AsyncSession) -> None:
+        """Test getting an existing autoban config."""
+        config = await upsert_autoban_config(db_session, "123", "456")
+        found = await get_autoban_config(db_session, "123")
+        assert found is not None
+        assert found.guild_id == config.guild_id
+        assert found.log_channel_id == "456"
+
+    async def test_get_autoban_config_not_found(self, db_session: AsyncSession) -> None:
+        """Test getting a non-existent autoban config returns None."""
+        found = await get_autoban_config(db_session, "nonexistent")
+        assert found is None
+
+    async def test_upsert_autoban_config_create(self, db_session: AsyncSession) -> None:
+        """Test creating a new autoban config via upsert."""
+        config = await upsert_autoban_config(db_session, "123", "789")
+        assert config.guild_id == "123"
+        assert config.log_channel_id == "789"
+
+    async def test_upsert_autoban_config_update(self, db_session: AsyncSession) -> None:
+        """Test updating an existing autoban config via upsert."""
+        await upsert_autoban_config(db_session, "123", "789")
+        updated = await upsert_autoban_config(db_session, "123", "999")
+        assert updated.guild_id == "123"
+        assert updated.log_channel_id == "999"
+
+        # 確認: 重複作成されていない
+        configs = await get_all_autoban_configs(db_session)
+        assert len(configs) == 1
+
+    async def test_upsert_autoban_config_set_none(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test setting log_channel_id to None via upsert."""
+        await upsert_autoban_config(db_session, "123", "789")
+        updated = await upsert_autoban_config(db_session, "123", None)
+        assert updated.log_channel_id is None
+
+    async def test_get_all_autoban_configs(self, db_session: AsyncSession) -> None:
+        """Test getting all autoban configs."""
+        await upsert_autoban_config(db_session, "111", "aaa")
+        await upsert_autoban_config(db_session, "222", "bbb")
+        await upsert_autoban_config(db_session, "333", None)
+
+        configs = await get_all_autoban_configs(db_session)
+        assert len(configs) == 3
+
+    async def test_get_all_autoban_configs_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting all autoban configs when none exist."""
+        configs = await get_all_autoban_configs(db_session)
+        assert configs == []
 
 
 class TestTicketNumberEdgeCases:

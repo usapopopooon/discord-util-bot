@@ -38,6 +38,7 @@ from src.constants import (
 from src.database.engine import async_session, check_database_connection
 from src.database.models import (
     AdminUser,
+    AutoBanConfig,
     AutoBanLog,
     AutoBanRule,
     BumpConfig,
@@ -71,6 +72,7 @@ from src.web.templates import (
     autoban_create_page,
     autoban_list_page,
     autoban_logs_page,
+    autoban_settings_page,
     bump_list_page,
     dashboard_page,
     email_change_page,
@@ -3020,6 +3022,7 @@ async def autoban_create_post(
     pattern: Annotated[str, Form()] = "",
     use_wildcard: Annotated[str, Form()] = "",
     threshold_hours: Annotated[str, Form()] = "",
+    threshold_seconds: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(get_current_user),
     csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
@@ -3038,7 +3041,15 @@ async def autoban_create_post(
         return RedirectResponse(url="/autoban", status_code=302)
 
     # Validate rule_type
-    if rule_type not in ("username_match", "account_age", "no_avatar"):
+    valid_rule_types = (
+        "username_match",
+        "account_age",
+        "no_avatar",
+        "role_acquired",
+        "vc_join",
+        "message_post",
+    )
+    if rule_type not in valid_rule_types:
         return RedirectResponse(url="/autoban/new", status_code=302)
 
     # Validate action
@@ -3049,13 +3060,22 @@ async def autoban_create_post(
     if rule_type == "username_match" and not pattern.strip():
         return RedirectResponse(url="/autoban/new", status_code=302)
 
-    threshold_int: int | None = None
+    threshold_hours_int: int | None = None
     if rule_type == "account_age":
         try:
-            threshold_int = int(threshold_hours)
+            threshold_hours_int = int(threshold_hours)
         except (ValueError, TypeError):
             return RedirectResponse(url="/autoban/new", status_code=302)
-        if threshold_int < 1 or threshold_int > 336:
+        if threshold_hours_int < 1 or threshold_hours_int > 336:
+            return RedirectResponse(url="/autoban/new", status_code=302)
+
+    threshold_seconds_int: int | None = None
+    if rule_type in ("role_acquired", "vc_join", "message_post"):
+        try:
+            threshold_seconds_int = int(threshold_seconds)
+        except (ValueError, TypeError):
+            return RedirectResponse(url="/autoban/new", status_code=302)
+        if threshold_seconds_int < 1 or threshold_seconds_int > 3600:
             return RedirectResponse(url="/autoban/new", status_code=302)
 
     async with get_resource_lock(f"autoban:create:{guild_id}"):
@@ -3065,7 +3085,10 @@ async def autoban_create_post(
             action=action,
             pattern=pattern.strip() if rule_type == "username_match" else None,
             use_wildcard=bool(use_wildcard) if rule_type == "username_match" else False,
-            threshold_hours=threshold_int if rule_type == "account_age" else None,
+            threshold_hours=threshold_hours_int if rule_type == "account_age" else None,
+            threshold_seconds=threshold_seconds_int
+            if rule_type in ("role_acquired", "vc_join", "message_post")
+            else None,
         )
         db.add(rule)
         await db.commit()
@@ -3162,6 +3185,77 @@ async def autoban_logs_view(
             guilds_map=guilds_map,
         )
     )
+
+
+@app.get("/autoban/settings", response_model=None)
+async def autoban_settings_get(
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Autoban 設定ページ。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
+
+    # 既存の設定を取得
+    result = await db.execute(select(AutoBanConfig))
+    configs = list(result.scalars().all())
+    configs_map = {c.guild_id: c.log_channel_id for c in configs}
+
+    return HTMLResponse(
+        content=autoban_settings_page(
+            guilds_map=guilds_map,
+            channels_map=channels_map,
+            configs_map=configs_map,
+            csrf_token=generate_csrf_token(),
+        )
+    )
+
+
+@app.post("/autoban/settings", response_model=None)
+async def autoban_settings_post(
+    request: Request,
+    guild_id: Annotated[str, Form()],
+    log_channel_id: Annotated[str, Form()] = "",
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Autoban 設定を保存する。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/autoban/settings", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/autoban/settings", status_code=302)
+
+    if not guild_id:
+        return RedirectResponse(url="/autoban/settings", status_code=302)
+
+    async with get_resource_lock(f"autoban:settings:{guild_id}"):
+        existing = await db.execute(
+            select(AutoBanConfig).where(AutoBanConfig.guild_id == guild_id)
+        )
+        config = existing.scalar_one_or_none()
+
+        channel_value = log_channel_id.strip() if log_channel_id.strip() else None
+
+        if config:
+            config.log_channel_id = channel_value
+        else:
+            config = AutoBanConfig(guild_id=guild_id, log_channel_id=channel_value)
+            db.add(config)
+
+        await db.commit()
+        record_form_submit(user_email, path)
+
+    return RedirectResponse(url="/autoban/settings", status_code=302)
 
 
 # =============================================================================

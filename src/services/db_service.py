@@ -43,6 +43,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import (
+    AutoBanConfig,
     AutoBanLog,
     AutoBanRule,
     BumpConfig,
@@ -1861,6 +1862,7 @@ async def create_autoban_rule(
     pattern: str | None = None,
     use_wildcard: bool = False,
     threshold_hours: int | None = None,
+    threshold_seconds: int | None = None,
 ) -> AutoBanRule:
     """新しい autoban ルールを作成する。"""
     rule = AutoBanRule(
@@ -1870,6 +1872,7 @@ async def create_autoban_rule(
         pattern=pattern,
         use_wildcard=use_wildcard,
         threshold_hours=threshold_hours,
+        threshold_seconds=threshold_seconds,
     )
     session.add(rule)
     await session.commit()
@@ -1941,6 +1944,42 @@ async def get_all_autoban_logs(
     result = await session.execute(
         select(AutoBanLog).order_by(AutoBanLog.created_at.desc()).limit(limit)
     )
+    return list(result.scalars().all())
+
+
+async def get_autoban_config(
+    session: AsyncSession, guild_id: str
+) -> AutoBanConfig | None:
+    """ギルドの autoban 設定を取得する。"""
+    result = await session.execute(
+        select(AutoBanConfig).where(AutoBanConfig.guild_id == guild_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def upsert_autoban_config(
+    session: AsyncSession,
+    guild_id: str,
+    log_channel_id: str | None,
+) -> AutoBanConfig:
+    """autoban 設定を作成または更新する。"""
+    existing = await get_autoban_config(session, guild_id)
+
+    if existing:
+        existing.log_channel_id = log_channel_id
+        await session.commit()
+        return existing
+
+    config = AutoBanConfig(guild_id=guild_id, log_channel_id=log_channel_id)
+    session.add(config)
+    await session.commit()
+    await session.refresh(config)
+    return config
+
+
+async def get_all_autoban_configs(session: AsyncSession) -> list[AutoBanConfig]:
+    """全 autoban 設定を取得する。"""
+    result = await session.execute(select(AutoBanConfig))
     return list(result.scalars().all())
 
 

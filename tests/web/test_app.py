@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.constants import BCRYPT_MAX_PASSWORD_BYTES, LOGIN_MAX_ATTEMPTS
 from src.database.models import (
     AdminUser,
+    AutoBanConfig,
     AutoBanLog,
     AutoBanRule,
     BumpConfig,
@@ -9701,6 +9702,29 @@ class TestCsrfValidationFailures:
         assert response.status_code == 302
         assert "/autoban" in response.headers["location"]
 
+    async def test_autoban_settings_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+    ) -> None:
+        """autoban_settings の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        await self._login_client(client, admin_user)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                "/autoban/settings",
+                data={
+                    "guild_id": "123",
+                    "log_channel_id": "456",
+                    "csrf_token": "bad",
+                },
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "/autoban/settings" in response.headers["location"]
+
 
 # ===========================================================================
 # クールダウンテスト (各エンドポイント)
@@ -10018,6 +10042,25 @@ class TestCooldownEnforcement:
         )
         assert response.status_code == 302
         assert "/autoban" in response.headers["location"]
+
+    async def test_autoban_settings_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """autoban_settings のクールダウン。"""
+        from src.web.app import record_form_submit
+
+        record_form_submit("test@example.com", "/autoban/settings")
+        response = await authenticated_client.post(
+            "/autoban/settings",
+            data={
+                "guild_id": "123",
+                "log_channel_id": "456",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/autoban/settings" in response.headers["location"]
 
 
 # ===========================================================================
@@ -10563,6 +10606,126 @@ class TestAutobanRoutes:
         assert response.status_code == 200
         assert "baduser" in response.text
         assert "banned" in response.text
+
+    async def test_autoban_settings_requires_auth(self, client: AsyncClient) -> None:
+        """設定ページは認証が必要。"""
+        response = await client.get("/autoban/settings", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_autoban_settings_post_requires_auth(
+        self, client: AsyncClient
+    ) -> None:
+        """設定の POST は認証が必要。"""
+        response = await client.post(
+            "/autoban/settings",
+            data={"guild_id": "123", "log_channel_id": "456"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_autoban_settings_get(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """設定ページが表示される。"""
+        response = await authenticated_client.get("/autoban/settings")
+        assert response.status_code == 200
+        assert "Autoban Settings" in response.text
+
+    async def test_autoban_settings_post_saves_config(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """設定を保存できる。"""
+        response = await authenticated_client.post(
+            "/autoban/settings",
+            data={
+                "guild_id": "123456789012345678",
+                "log_channel_id": "987654321098765432",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/autoban/settings" in response.headers["location"]
+
+        result = await db_session.execute(select(AutoBanConfig))
+        configs = list(result.scalars().all())
+        assert len(configs) == 1
+        assert configs[0].guild_id == "123456789012345678"
+        assert configs[0].log_channel_id == "987654321098765432"
+
+    async def test_autoban_settings_post_updates_config(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """既存の設定を更新できる。"""
+        config = AutoBanConfig(
+            guild_id="123456789012345678",
+            log_channel_id="111111111111111111",
+        )
+        db_session.add(config)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            "/autoban/settings",
+            data={
+                "guild_id": "123456789012345678",
+                "log_channel_id": "222222222222222222",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(config)
+        assert config.log_channel_id == "222222222222222222"
+
+    async def test_autoban_settings_post_clears_channel(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """ログチャンネルを空にできる (None に設定)。"""
+        config = AutoBanConfig(
+            guild_id="123456789012345678",
+            log_channel_id="111111111111111111",
+        )
+        db_session.add(config)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            "/autoban/settings",
+            data={
+                "guild_id": "123456789012345678",
+                "log_channel_id": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(config)
+        assert config.log_channel_id is None
+
+    async def test_autoban_settings_post_empty_guild_id(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """guild_id が空の場合は 422 (FastAPI バリデーション)。"""
+        response = await authenticated_client.post(
+            "/autoban/settings",
+            data={
+                "guild_id": "",
+                "log_channel_id": "123",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 422
+
+        result = await db_session.execute(select(AutoBanConfig))
+        assert list(result.scalars().all()) == []
 
 
 # ===========================================================================

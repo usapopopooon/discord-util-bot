@@ -31,6 +31,7 @@ def _make_member(
     guild_id: int = 789,
     avatar: object | None = MagicMock(),
     created_at: datetime | None = None,
+    joined_at: datetime | None = None,
     is_bot: bool = False,
 ) -> MagicMock:
     """Create a mock Discord member."""
@@ -40,8 +41,13 @@ def _make_member(
     member.bot = is_bot
     member.avatar = avatar
     member.created_at = created_at or datetime.now(UTC) - timedelta(days=30)
+    member.joined_at = joined_at
+    member.display_name = name
+    member.display_avatar = MagicMock()
+    member.display_avatar.url = "https://cdn.example.com/avatar.png"
     member.guild = MagicMock()
     member.guild.id = guild_id
+    member.guild.name = "Test Server"
     member.guild.ban = AsyncMock()
     member.guild.kick = AsyncMock()
     return member
@@ -57,6 +63,7 @@ def _make_rule(
     pattern: str | None = "spammer",
     use_wildcard: bool = False,
     threshold_hours: int | None = None,
+    threshold_seconds: int | None = None,
 ) -> MagicMock:
     """Create a mock AutoBanRule."""
     rule = MagicMock()
@@ -68,6 +75,7 @@ def _make_rule(
     rule.pattern = pattern
     rule.use_wildcard = use_wildcard
     rule.threshold_hours = threshold_hours
+    rule.threshold_seconds = threshold_seconds
     return rule
 
 
@@ -279,6 +287,11 @@ class TestOnMemberJoin:
                 return_value=[rule],
             ),
             patch("src.cogs.autoban.create_autoban_log", new_callable=AsyncMock),
+            patch(
+                "src.cogs.autoban.get_autoban_config",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
             await cog.on_member_join(member)
             member.guild.ban.assert_called_once()
@@ -294,6 +307,11 @@ class TestOnMemberJoin:
                 return_value=[rule],
             ),
             patch("src.cogs.autoban.create_autoban_log", new_callable=AsyncMock),
+            patch(
+                "src.cogs.autoban.get_autoban_config",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
             await cog.on_member_join(member)
             member.guild.kick.assert_called_once()
@@ -322,6 +340,11 @@ class TestOnMemberJoin:
                 return_value=[rule1, rule2],
             ),
             patch("src.cogs.autoban.create_autoban_log", new_callable=AsyncMock),
+            patch(
+                "src.cogs.autoban.get_autoban_config",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
             await cog.on_member_join(member)
             member.guild.kick.assert_called_once()
@@ -341,6 +364,11 @@ class TestOnMemberJoin:
                 "src.cogs.autoban.create_autoban_log",
                 new_callable=AsyncMock,
             ) as mock_log,
+            patch(
+                "src.cogs.autoban.get_autoban_config",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
             await cog.on_member_join(member)
             mock_log.assert_called_once()
@@ -693,6 +721,11 @@ class TestFirstMatchWins:
                 return_value=[enabled_rule],
             ),
             patch("src.cogs.autoban.create_autoban_log", new_callable=AsyncMock),
+            patch(
+                "src.cogs.autoban.get_autoban_config",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
             await cog.on_member_join(member)
             member.guild.ban.assert_called_once()
@@ -720,6 +753,11 @@ class TestFirstMatchWins:
                 return_value=[rule1, rule2],
             ),
             patch("src.cogs.autoban.create_autoban_log", new_callable=AsyncMock),
+            patch(
+                "src.cogs.autoban.get_autoban_config",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
             await cog.on_member_join(member)
             member.guild.kick.assert_called_once()
@@ -872,3 +910,300 @@ class TestOnMemberJoinEdgeCases:
                 await cog.on_member_join(member)
             # BAN は実行されている
             member.guild.ban.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestSendLogEmbed: _send_log_embed のテスト
+# ---------------------------------------------------------------------------
+
+
+class TestSendLogEmbed:
+    """_send_log_embed メソッドのテスト。"""
+
+    @staticmethod
+    def _make_guild(*, channel_return: object | None = None) -> MagicMock:
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+        guild.name = "Test Server"
+        guild.get_channel.return_value = channel_return
+        return guild
+
+    @staticmethod
+    def _make_text_channel(*, side_effect: Exception | None = None) -> MagicMock:
+        ch = MagicMock(spec=discord.TextChannel)
+        ch.send = AsyncMock(side_effect=side_effect)
+        return ch
+
+    @staticmethod
+    async def _call(
+        cog: AutoBanCog,
+        guild: MagicMock,
+        *,
+        channel_id: str = "100",
+        action_taken: str = "banned",
+        rule: MagicMock | None = None,
+        reason: str = "test",
+        member_name: str = "user",
+        member_id: int = 1,
+        member_display_name: str = "user",
+        member_avatar_url: str | None = None,
+        member_created_at: datetime | None = None,
+        member_joined_at: datetime | None = None,
+    ) -> None:
+        now = datetime.now(UTC)
+        await cog._send_log_embed(
+            guild=guild,
+            channel_id=channel_id,
+            action_taken=action_taken,
+            rule=rule or _make_rule(),
+            reason=reason,
+            member_name=member_name,
+            member_id=member_id,
+            member_display_name=member_display_name,
+            member_avatar_url=member_avatar_url,
+            member_created_at=member_created_at or now,
+            member_joined_at=member_joined_at,
+        )
+
+    @pytest.mark.asyncio
+    async def test_sends_embed_to_channel(self) -> None:
+        """有効なチャンネルに Embed が送信される。"""
+        cog = _make_cog()
+        ch = self._make_text_channel()
+        guild = self._make_guild(channel_return=ch)
+        now = datetime.now(UTC)
+
+        await self._call(
+            cog,
+            guild,
+            action_taken="banned",
+            rule=_make_rule(rule_type="no_avatar"),
+            reason="No avatar set",
+            member_name="baduser",
+            member_id=12345,
+            member_display_name="Bad User",
+            member_avatar_url="https://cdn.example.com/avatar.png",
+            member_created_at=now - timedelta(days=30),
+            member_joined_at=now - timedelta(seconds=5),
+        )
+
+        guild.get_channel.assert_called_once_with(100)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert embed.title == "User Banned"
+        assert embed.color.value == 0xFF0000
+
+    @pytest.mark.asyncio
+    async def test_kick_embed_color(self) -> None:
+        """KICK の場合はオレンジ色の Embed が送信される。"""
+        cog = _make_cog()
+        ch = self._make_text_channel()
+        guild = self._make_guild(channel_return=ch)
+
+        await self._call(
+            cog,
+            guild,
+            action_taken="kicked",
+            rule=_make_rule(rule_type="no_avatar", action="kick"),
+        )
+
+        embed = ch.send.call_args.kwargs["embed"]
+        assert embed.title == "User Kicked"
+        assert embed.color.value == 0xFFA500
+
+    @pytest.mark.asyncio
+    async def test_channel_not_found(self) -> None:
+        """チャンネルが見つからない場合は何も送信しない。"""
+        cog = _make_cog()
+        guild = self._make_guild(channel_return=None)
+        # 例外は発生しない
+        await self._call(cog, guild, channel_id="999")
+
+    @pytest.mark.asyncio
+    async def test_channel_not_text_channel(self) -> None:
+        """TextChannel でないチャンネルの場合は何も送信しない。"""
+        cog = _make_cog()
+        guild = self._make_guild(channel_return=MagicMock(spec=discord.VoiceChannel))
+        await self._call(cog, guild)
+
+    @pytest.mark.asyncio
+    async def test_forbidden_error_handled(self) -> None:
+        """権限不足の場合は例外が伝播しない。"""
+        cog = _make_cog()
+        ch = self._make_text_channel(
+            side_effect=discord.Forbidden(MagicMock(), "forbidden")
+        )
+        guild = self._make_guild(channel_return=ch)
+        # 例外は発生しない
+        await self._call(cog, guild)
+
+    @pytest.mark.asyncio
+    async def test_http_exception_handled(self) -> None:
+        """HTTPException の場合は例外が伝播しない。"""
+        cog = _make_cog()
+        ch = self._make_text_channel(
+            side_effect=discord.HTTPException(MagicMock(), "error")
+        )
+        guild = self._make_guild(channel_return=ch)
+        # 例外は発生しない
+        await self._call(cog, guild)
+
+    @pytest.mark.asyncio
+    async def test_embed_fields(self) -> None:
+        """Embed に正しいフィールドが含まれる。"""
+        cog = _make_cog()
+        ch = self._make_text_channel()
+        guild = self._make_guild(channel_return=ch)
+        now = datetime.now(UTC)
+
+        await self._call(
+            cog,
+            guild,
+            rule=_make_rule(rule_id=42, rule_type="username_match"),
+            reason="Username match",
+            member_name="baduser",
+            member_id=12345,
+            member_display_name="Bad User",
+            member_avatar_url="https://cdn.example.com/av.png",
+            member_created_at=now - timedelta(days=30),
+            member_joined_at=now - timedelta(seconds=5),
+        )
+
+        embed = ch.send.call_args.kwargs["embed"]
+        field_names = [f.name for f in embed.fields]
+        assert "User" in field_names
+        assert "User ID" in field_names
+        assert "Action" in field_names
+        assert "Rule" in field_names
+        assert "Reason" in field_names
+        assert "Account Created" in field_names
+        assert "Joined Server" in field_names
+
+        # User ID フィールドの値
+        uid_field = next(f for f in embed.fields if f.name == "User ID")
+        assert uid_field.value == "12345"
+
+        # Rule フィールドの値
+        rule_field = next(f for f in embed.fields if f.name == "Rule")
+        assert "#42" in rule_field.value
+        assert "username_match" in rule_field.value
+
+    @pytest.mark.asyncio
+    async def test_embed_no_joined_at(self) -> None:
+        """joined_at が None の場合は Joined Server フィールドがない。"""
+        cog = _make_cog()
+        ch = self._make_text_channel()
+        guild = self._make_guild(channel_return=ch)
+
+        await self._call(cog, guild, member_joined_at=None)
+
+        embed = ch.send.call_args.kwargs["embed"]
+        field_names = [f.name for f in embed.fields]
+        assert "Joined Server" not in field_names
+
+
+# ---------------------------------------------------------------------------
+# TestExecuteActionWithLogChannel: ログチャンネル連携のテスト
+# ---------------------------------------------------------------------------
+
+
+class TestExecuteActionWithLogChannel:
+    """_execute_action でログチャンネルに通知されるテスト。"""
+
+    @staticmethod
+    def _patches(
+        config_return: MagicMock | None,
+    ) -> tuple[patch, patch]:  # type: ignore[type-arg]
+        """共通 patch オブジェクトを返す。"""
+        return (
+            patch(
+                "src.cogs.autoban.create_autoban_log",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.cogs.autoban.get_autoban_config",
+                new_callable=AsyncMock,
+                return_value=config_return,
+            ),
+        )
+
+    @pytest.mark.asyncio
+    async def test_sends_log_when_config_exists(self) -> None:
+        """ログチャンネル設定がある場合は _send_log_embed が呼ばれる。"""
+        cog = _make_cog()
+        mock_config = MagicMock()
+        mock_config.log_channel_id = "100"
+        p_log, p_cfg = self._patches(mock_config)
+
+        with (
+            p_log,
+            p_cfg,
+            patch.object(cog, "_send_log_embed", new_callable=AsyncMock) as mock_send,
+        ):
+            await cog._execute_action(
+                _make_member(name="spammer"),
+                _make_rule(action="ban", pattern="spammer"),
+                "test reason",
+            )
+            mock_send.assert_called_once()
+            assert mock_send.call_args.kwargs["channel_id"] == "100"
+            assert mock_send.call_args.kwargs["action_taken"] == "banned"
+
+    @pytest.mark.asyncio
+    async def test_no_log_when_config_none(self) -> None:
+        """ログチャンネル設定がない場合は _send_log_embed が呼ばれない。"""
+        cog = _make_cog()
+        p_log, p_cfg = self._patches(None)
+
+        with (
+            p_log,
+            p_cfg,
+            patch.object(cog, "_send_log_embed", new_callable=AsyncMock) as mock_send,
+        ):
+            await cog._execute_action(
+                _make_member(name="spammer"),
+                _make_rule(action="ban", pattern="spammer"),
+                "test reason",
+            )
+            mock_send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_log_when_channel_id_none(self) -> None:
+        """log_channel_id が None の場合は _send_log_embed が呼ばれない。"""
+        cog = _make_cog()
+        mock_config = MagicMock()
+        mock_config.log_channel_id = None
+        p_log, p_cfg = self._patches(mock_config)
+
+        with (
+            p_log,
+            p_cfg,
+            patch.object(cog, "_send_log_embed", new_callable=AsyncMock) as mock_send,
+        ):
+            await cog._execute_action(
+                _make_member(name="spammer"),
+                _make_rule(action="ban", pattern="spammer"),
+                "test reason",
+            )
+            mock_send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_kick_action_with_log(self) -> None:
+        """KICK アクションでもログが送信される。"""
+        cog = _make_cog()
+        mock_config = MagicMock()
+        mock_config.log_channel_id = "200"
+        p_log, p_cfg = self._patches(mock_config)
+
+        with (
+            p_log,
+            p_cfg,
+            patch.object(cog, "_send_log_embed", new_callable=AsyncMock) as mock_send,
+        ):
+            await cog._execute_action(
+                _make_member(name="spammer"),
+                _make_rule(action="kick", pattern="spammer"),
+                "test reason",
+            )
+            mock_send.assert_called_once()
+            assert mock_send.call_args.kwargs["action_taken"] == "kicked"

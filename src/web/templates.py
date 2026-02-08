@@ -2997,6 +2997,12 @@ def autoban_list_page(
             details = escape(rule.pattern or "") + wildcard
         elif rule.rule_type == "account_age":
             details = f"{rule.threshold_hours}h" if rule.threshold_hours else "-"
+        elif rule.rule_type in ("role_acquired", "vc_join", "message_post"):
+            details = (
+                f"{rule.threshold_seconds}s after join"
+                if rule.threshold_seconds
+                else "-"
+            )
         else:
             details = "-"
 
@@ -3065,6 +3071,10 @@ def autoban_list_page(
             <a href="/autoban/logs"
                class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition-colors">
                 View Logs
+            </a>
+            <a href="/autoban/settings"
+               class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition-colors">
+                Settings
             </a>
         </div>
         <div class="bg-gray-800 rounded-lg overflow-hidden overflow-x-auto">
@@ -3147,6 +3157,21 @@ def autoban_create_page(
                                    onchange="updateRuleFields()">
                             <span>No Avatar</span>
                         </label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="rule_type" value="role_acquired"
+                                   onchange="updateRuleFields()">
+                            <span>Role Acquired (after join)</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="rule_type" value="vc_join"
+                                   onchange="updateRuleFields()">
+                            <span>VC Join (after join)</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="rule_type" value="message_post"
+                                   onchange="updateRuleFields()">
+                            <span>Message Post (after join)</span>
+                        </label>
                     </div>
                 </div>
 
@@ -3184,6 +3209,15 @@ def autoban_create_page(
                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                 </div>
 
+                <div id="thresholdSecondsFields" class="hidden">
+                    <label class="block text-sm font-medium mb-1">
+                        Threshold (seconds after join, max 3600 = 1 hour)
+                    </label>
+                    <input type="number" name="threshold_seconds"
+                           min="1" max="3600" placeholder="e.g. 30"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                </div>
+
                 <button type="submit"
                         class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded transition-colors">
                     Create Rule
@@ -3197,9 +3231,12 @@ def autoban_create_page(
         const ruleType = document.querySelector('input[name="rule_type"]:checked').value;
         const usernameFields = document.getElementById('usernameFields');
         const accountAgeFields = document.getElementById('accountAgeFields');
+        const thresholdSecondsFields = document.getElementById('thresholdSecondsFields');
 
         usernameFields.classList.toggle('hidden', ruleType !== 'username_match');
         accountAgeFields.classList.toggle('hidden', ruleType !== 'account_age');
+        thresholdSecondsFields.classList.toggle('hidden',
+            ruleType !== 'role_acquired' && ruleType !== 'vc_join' && ruleType !== 'message_post');
     }}
     </script>
     """
@@ -3290,6 +3327,107 @@ def autoban_logs_page(
     </div>
     """
     return _base("Autoban Logs", content)
+
+
+def autoban_settings_page(
+    guilds_map: dict[str, str] | None = None,
+    channels_map: dict[str, list[tuple[str, str]]] | None = None,
+    configs_map: dict[str, str | None] | None = None,
+    csrf_token: str = "",
+) -> str:
+    """Autoban settings page template."""
+    import json as json_mod
+
+    if guilds_map is None:
+        guilds_map = {}
+    if channels_map is None:
+        channels_map = {}
+    if configs_map is None:
+        configs_map = {}
+
+    guild_options = ""
+    for gid, gname in sorted(guilds_map.items(), key=lambda x: x[1]):
+        guild_options += (
+            f'<option value="{escape(gid)}">{escape(gname)} ({escape(gid)})</option>'
+        )
+
+    channels_data: dict[str, list[dict[str, str]]] = {}
+    for gid, ch_list in channels_map.items():
+        channels_data[gid] = [{"id": cid, "name": cname} for cid, cname in ch_list]
+    channels_json = json_mod.dumps(channels_data)
+
+    configs_json = json_mod.dumps(
+        {gid: (ch_id or "") for gid, ch_id in configs_map.items()}
+    )
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            "Autoban Settings",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Autoban Rules", "/autoban"),
+                ("Settings", None),
+            ],
+        )
+    }
+        <div class="max-w-2xl">
+            <form method="POST" action="/autoban/settings" class="space-y-6">
+                {_csrf_field(csrf_token)}
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Server</label>
+                    <select name="guild_id" required id="guildSelect"
+                            onchange="updateLogChannel()"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">Select server...</option>
+                        {guild_options}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Log Channel
+                        <span class="text-gray-400 font-normal">(BAN/KICK notification destination)</span>
+                    </label>
+                    <select name="log_channel_id" id="logChannelSelect"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">None (disabled)</option>
+                    </select>
+                </div>
+
+                <button type="submit"
+                        class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded transition-colors">
+                    Save Settings
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+    const channelsData = {channels_json};
+    const configsData = {configs_json};
+    function updateLogChannel() {{
+        const guildId = document.getElementById('guildSelect').value;
+        const logSelect = document.getElementById('logChannelSelect');
+        logSelect.innerHTML = '<option value="">None (disabled)</option>';
+        if (channelsData[guildId]) {{
+            channelsData[guildId].forEach(ch => {{
+                const opt = document.createElement('option');
+                opt.value = ch.id;
+                opt.textContent = '#' + ch.name;
+                logSelect.appendChild(opt);
+            }});
+        }}
+        // Restore saved value
+        if (configsData[guildId]) {{
+            logSelect.value = configsData[guildId];
+        }}
+    }}
+    </script>
+    """
+    return _base("Autoban Settings", content)
 
 
 # =============================================================================

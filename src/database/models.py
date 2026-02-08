@@ -1100,18 +1100,21 @@ class AutoBanRule(Base):
     Attributes:
         id (int): 自動採番の主キー。
         guild_id (str): Discord サーバーの ID。インデックス付き。
-        rule_type (str): ルールの種類 ("username_match", "account_age", "no_avatar")。
+        rule_type (str): ルールの種類。
+            "username_match", "account_age", "no_avatar",
+            "role_acquired", "vc_join", "message_post"
         is_enabled (bool): ルールが有効かどうか (デフォルト True)。
         action (str): アクション ("ban" または "kick")。
         pattern (str | None): ユーザー名マッチング用パターン (username_match のみ)。
         use_wildcard (bool): ワイルドカード (部分一致) を使用するか (デフォルト False)。
         threshold_hours (int | None): アカウント年齢の閾値 (時間、最大 336 = 14日)。
+        threshold_seconds (int | None): JOIN後の閾値 (秒、role_acquired/vc_join 用)。
         created_at (datetime): ルール作成日時 (UTC)。
         logs (list[AutoBanLog]): このルールの実行ログ一覧。
 
     Notes:
         - テーブル名: ``autoban_rules``
-        - on_member_join イベントで新規参加メンバーに対してルールを評価
+        - on_member_join, on_member_update, on_voice_state_update でルールを評価
         - rule_type に応じて使用するフィールドが異なる
     """
 
@@ -1125,6 +1128,7 @@ class AutoBanRule(Base):
     pattern: Mapped[str | None] = mapped_column(String, nullable=True)
     use_wildcard: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     threshold_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    threshold_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
@@ -1135,7 +1139,14 @@ class AutoBanRule(Base):
 
     @validates("rule_type")
     def _validate_rule_type(self, _key: str, value: str) -> str:
-        allowed = ("username_match", "account_age", "no_avatar")
+        allowed = (
+            "username_match",
+            "account_age",
+            "no_avatar",
+            "role_acquired",
+            "vc_join",
+            "message_post",
+        )
         if value not in allowed:
             msg = f"rule_type must be one of {allowed}, got: {value!r}"
             raise ValueError(msg)
@@ -1153,6 +1164,33 @@ class AutoBanRule(Base):
         return (
             f"<AutoBanRule(id={self.id}, guild_id={self.guild_id}, "
             f"type={self.rule_type}, enabled={self.is_enabled})>"
+        )
+
+
+class AutoBanConfig(Base):
+    """Autoban のギルドごと設定テーブル。
+
+    ギルドごとに autoban のログチャンネルを設定する。
+
+    Attributes:
+        guild_id (str): Discord サーバーの ID (主キー、1ギルド1設定)。
+        log_channel_id (str | None): BAN/KICK ログ送信先チャンネルの ID。
+
+    Notes:
+        - テーブル名: ``autoban_configs``
+        - guild_id が主キー (1ギルドにつき1設定のみ)
+    """
+
+    __tablename__ = "autoban_configs"
+
+    guild_id: Mapped[str] = mapped_column(String, primary_key=True)
+    log_channel_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return (
+            f"<AutoBanConfig(guild_id={self.guild_id}, "
+            f"log_channel_id={self.log_channel_id})>"
         )
 
 

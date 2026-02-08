@@ -24,6 +24,7 @@ from src.web.templates import (
     autoban_create_page,
     autoban_list_page,
     autoban_logs_page,
+    autoban_settings_page,
     bump_list_page,
     dashboard_page,
     lobbies_list_page,
@@ -1978,6 +1979,73 @@ class TestDashboardAutobanCard:
         result = dashboard_page()
         assert "/autoban" in result
         assert "Autoban" in result
+
+
+class TestAutobanSettingsPage:
+    """autoban_settings_page テンプレートのテスト。"""
+
+    def test_default_page_elements(self) -> None:
+        """デフォルトページにフォーム、セレクト、ボタン、JS等が含まれる。"""
+        result = autoban_settings_page()
+        # フォーム
+        assert 'action="/autoban/settings"' in result
+        assert 'method="POST"' in result
+        # ギルド選択
+        assert 'name="guild_id"' in result
+        assert "Select server..." in result
+        # ログチャンネル選択
+        assert 'name="log_channel_id"' in result
+        assert "None (disabled)" in result
+        # JS
+        assert "updateLogChannel" in result
+        # ボタン
+        assert "Save Settings" in result
+        # パンくず
+        assert "Dashboard" in result
+        assert "Autoban Rules" in result
+        assert "Settings" in result
+        # ラベル
+        assert "Log Channel" in result
+        assert "BAN/KICK" in result
+
+    def test_contains_guild_options(self) -> None:
+        """ギルドオプションが表示される。"""
+        result = autoban_settings_page(
+            guilds_map={"123": "Test Server", "456": "Other Server"}
+        )
+        assert "Test Server" in result
+        assert "Other Server" in result
+        assert "123" in result
+        assert "456" in result
+
+    def test_contains_channels_js_data(self) -> None:
+        """チャンネル JS データが含まれる。"""
+        result = autoban_settings_page(
+            channels_map={"123": [("ch1", "general"), ("ch2", "logs")]}
+        )
+        assert "channelsData" in result
+        assert "general" in result
+        assert "logs" in result
+
+    def test_contains_configs_js_data(self) -> None:
+        """既存設定の JS データが含まれる。"""
+        result = autoban_settings_page(configs_map={"123": "ch1", "456": None})
+        assert "configsData" in result
+
+    def test_csrf_field(self) -> None:
+        """CSRF フィールドが含まれる。"""
+        result = autoban_settings_page(csrf_token="test_csrf_token")
+        assert "test_csrf_token" in result
+
+
+class TestAutobanListPageSettingsLink:
+    """autoban_list_page の Settings リンクのテスト。"""
+
+    def test_contains_settings_link(self) -> None:
+        """Settings リンクが含まれる。"""
+        result = autoban_list_page([])
+        assert "/autoban/settings" in result
+        assert "Settings" in result
 
 
 class TestDashboardTicketsCard:

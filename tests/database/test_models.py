@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from src.database.models import (
     AdminUser,
+    AutoBanConfig,
     AutoBanLog,
     AutoBanRule,
     BumpConfig,
@@ -1319,6 +1320,92 @@ class TestDiscordEntityConstraints:
 # ===========================================================================
 # AutoBanRule / AutoBanLog — カスケード削除・デフォルト値・FK
 # ===========================================================================
+
+
+class TestAutoBanConfigModel:
+    """AutoBanConfig モデルのテスト。"""
+
+    async def test_create_config(self, db_session: AsyncSession) -> None:
+        """AutoBanConfig を作成できる。"""
+        config = AutoBanConfig(
+            guild_id=snowflake(),
+            log_channel_id=snowflake(),
+        )
+        db_session.add(config)
+        await db_session.commit()
+
+        result = await db_session.execute(
+            select(AutoBanConfig).where(AutoBanConfig.guild_id == config.guild_id)
+        )
+        found = result.scalar_one()
+        assert found.guild_id == config.guild_id
+        assert found.log_channel_id == config.log_channel_id
+
+    async def test_create_config_without_log_channel(
+        self, db_session: AsyncSession
+    ) -> None:
+        """log_channel_id なしで AutoBanConfig を作成できる。"""
+        config = AutoBanConfig(guild_id=snowflake())
+        db_session.add(config)
+        await db_session.commit()
+
+        result = await db_session.execute(
+            select(AutoBanConfig).where(AutoBanConfig.guild_id == config.guild_id)
+        )
+        found = result.scalar_one()
+        assert found.log_channel_id is None
+
+    async def test_guild_id_primary_key(self, db_session: AsyncSession) -> None:
+        """同じ guild_id で2つ目の AutoBanConfig は IntegrityError。"""
+        gid = snowflake()
+        config1 = AutoBanConfig(guild_id=gid, log_channel_id=snowflake())
+        db_session.add(config1)
+        await db_session.commit()
+
+        config2 = AutoBanConfig(guild_id=gid, log_channel_id=snowflake())
+        db_session.add(config2)
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    async def test_repr(self) -> None:
+        """__repr__ にギルド ID とチャンネル ID が含まれる。"""
+        config = AutoBanConfig(guild_id="111", log_channel_id="222")
+        r = repr(config)
+        assert "111" in r
+        assert "222" in r
+
+    async def test_update_log_channel(self, db_session: AsyncSession) -> None:
+        """log_channel_id を更新できる。"""
+        gid = snowflake()
+        new_channel = snowflake()
+        config = AutoBanConfig(guild_id=gid, log_channel_id=snowflake())
+        db_session.add(config)
+        await db_session.commit()
+
+        config.log_channel_id = new_channel
+        await db_session.commit()
+
+        result = await db_session.execute(
+            select(AutoBanConfig).where(AutoBanConfig.guild_id == gid)
+        )
+        found = result.scalar_one()
+        assert found.log_channel_id == new_channel
+
+    async def test_set_log_channel_to_none(self, db_session: AsyncSession) -> None:
+        """log_channel_id を None に設定できる。"""
+        gid = snowflake()
+        config = AutoBanConfig(guild_id=gid, log_channel_id=snowflake())
+        db_session.add(config)
+        await db_session.commit()
+
+        config.log_channel_id = None
+        await db_session.commit()
+
+        result = await db_session.execute(
+            select(AutoBanConfig).where(AutoBanConfig.guild_id == gid)
+        )
+        found = result.scalar_one()
+        assert found.log_channel_id is None
 
 
 class TestAutoBanConstraints:

@@ -6,9 +6,15 @@
   - username_match: ユーザー名マッチング (大文字小文字無視、ワイルドカード対応)
   - account_age: アカウント年齢 (作成からの時間が閾値未満なら該当)
   - no_avatar: アバター未設定
+  - role_acquired: サーバーJOIN後 X秒以内にロール取得
+  - vc_join: サーバーJOIN後 X秒以内にVC参加
+  - message_post: サーバーJOIN後 X秒以内にメッセージ投稿
 
 仕組み:
   - on_member_join イベントで新規メンバーを検知
+  - on_member_update イベントでロール変更を検知
+  - on_voice_state_update イベントでVC参加を検知
+  - on_message イベントでメッセージ投稿を検知
   - DB から有効ルールを取得し、順にチェック
   - マッチしたら ban/kick + DB にログ記録
 """
@@ -28,6 +34,7 @@ from src.services.db_service import (
     create_autoban_log,
     create_autoban_rule,
     delete_autoban_rule,
+    get_autoban_config,
     get_autoban_logs_by_guild,
     get_autoban_rules_by_guild,
     get_enabled_autoban_rules_by_guild,
@@ -36,6 +43,7 @@ from src.services.db_service import (
 logger = logging.getLogger(__name__)
 
 MAX_THRESHOLD_HOURS = 336
+MAX_THRESHOLD_SECONDS = 3600
 
 
 class AutoBanCog(commands.Cog):
@@ -68,6 +76,105 @@ class AutoBanCog(commands.Cog):
                 await self._execute_action(member, rule, reason)
                 break
 
+    @commands.Cog.listener()
+    async def on_member_update(
+        self, before: discord.Member, after: discord.Member
+    ) -> None:
+        """メンバー更新時にロール取得の autoban ルールをチェックする。"""
+        if after.bot:
+            return
+
+        # ロール変更がない場合はスキップ
+        if before.roles == after.roles:
+            return
+
+        # ロールが追加されたかチェック
+        added_roles = set(after.roles) - set(before.roles)
+        if not added_roles:
+            return
+
+        guild_id = str(after.guild.id)
+
+        async with async_session() as session:
+            rules = await get_enabled_autoban_rules_by_guild(session, guild_id)
+
+        if not rules:
+            return
+
+        for rule in rules:
+            if rule.rule_type != "role_acquired":
+                continue
+            matched, reason = self._check_join_timing(rule, after)
+            if matched:
+                await self._execute_action(after, rule, reason)
+                break
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
+    ) -> None:
+        """VC参加時の autoban ルールをチェックする。"""
+        if member.bot:
+            return
+
+        # VC に新規参加した場合のみ (チャンネル移動は対象外)
+        if before.channel is not None or after.channel is None:
+            return
+
+        guild_id = str(member.guild.id)
+
+        async with async_session() as session:
+            rules = await get_enabled_autoban_rules_by_guild(session, guild_id)
+
+        if not rules:
+            return
+
+        for rule in rules:
+            if rule.rule_type != "vc_join":
+                continue
+            matched, reason = self._check_join_timing(rule, member)
+            if matched:
+                await self._execute_action(member, rule, reason)
+                break
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message) -> None:
+        """メッセージ投稿時の autoban ルールをチェックする。"""
+        if not message.guild or not message.author:
+            return
+
+        # Bot やシステムメッセージは無視
+        if message.author.bot:
+            return
+
+        # Member オブジェクトが必要 (joined_at を参照するため)
+        member = message.author
+        if not isinstance(member, discord.Member):
+            return
+
+        guild_id = str(message.guild.id)
+
+        async with async_session() as session:
+            rules = await get_enabled_autoban_rules_by_guild(session, guild_id)
+
+        if not rules:
+            return
+
+        for rule in rules:
+            if rule.rule_type != "message_post":
+                continue
+            matched, reason = self._check_join_timing(rule, member)
+            if matched:
+                await self._execute_action(member, rule, reason)
+                break
+
+    # ==========================================================================
+    # ルールチェック
+    # ==========================================================================
+
     def _check_rule(
         self, rule: AutoBanRule, member: discord.Member
     ) -> tuple[bool, str]:
@@ -78,6 +185,8 @@ class AutoBanCog(commands.Cog):
             return self._check_account_age(rule, member)
         if rule.rule_type == "no_avatar":
             return self._check_no_avatar(member)
+        if rule.rule_type in ("role_acquired", "vc_join", "message_post"):
+            return self._check_join_timing(rule, member)
         return False, ""
 
     def _check_username_match(
@@ -121,6 +230,25 @@ class AutoBanCog(commands.Cog):
             return True, "No avatar set"
         return False, ""
 
+    def _check_join_timing(
+        self, rule: AutoBanRule, member: discord.Member
+    ) -> tuple[bool, str]:
+        """サーバーJOIN後の経過時間をチェック (role_acquired / vc_join 共通)。"""
+        if not rule.threshold_seconds or not member.joined_at:
+            return False, ""
+
+        elapsed = (datetime.now(UTC) - member.joined_at).total_seconds()
+        if elapsed < rule.threshold_seconds:
+            return True, (
+                f"Action within {elapsed:.1f}s of join "
+                f"(threshold: {rule.threshold_seconds}s)"
+            )
+        return False, ""
+
+    # ==========================================================================
+    # アクション実行
+    # ==========================================================================
+
     async def _execute_action(
         self,
         member: discord.Member,
@@ -132,6 +260,14 @@ class AutoBanCog(commands.Cog):
         action_taken = "banned" if rule.action == "ban" else "kicked"
         full_reason = f"[Autoban] {reason}"
 
+        # ログ送信用にメンバー情報を事前に保存 (BAN後はアクセス不可)
+        member_name = member.name
+        member_id = member.id
+        member_display_name = member.display_name
+        member_avatar_url = member.display_avatar.url if member.display_avatar else None
+        member_created_at = member.created_at
+        member_joined_at = member.joined_at
+
         try:
             if rule.action == "ban":
                 await guild.ban(member, reason=full_reason)
@@ -141,8 +277,8 @@ class AutoBanCog(commands.Cog):
             logger.info(
                 "Autoban %s user %s (%s) in guild %s: %s",
                 action_taken,
-                member.name,
-                member.id,
+                member_name,
+                member_id,
                 guild.id,
                 reason,
             )
@@ -150,8 +286,8 @@ class AutoBanCog(commands.Cog):
             logger.warning(
                 "Missing permissions to %s user %s (%s) in guild %s",
                 rule.action,
-                member.name,
-                member.id,
+                member_name,
+                member_id,
                 guild.id,
             )
             return
@@ -159,8 +295,8 @@ class AutoBanCog(commands.Cog):
             logger.error(
                 "Failed to %s user %s (%s) in guild %s: %s",
                 rule.action,
-                member.name,
-                member.id,
+                member_name,
+                member_id,
                 guild.id,
                 e,
             )
@@ -170,11 +306,122 @@ class AutoBanCog(commands.Cog):
             await create_autoban_log(
                 session,
                 guild_id=str(guild.id),
-                user_id=str(member.id),
-                username=member.name,
+                user_id=str(member_id),
+                username=member_name,
                 rule_id=rule.id,
                 action_taken=action_taken,
                 reason=reason,
+            )
+
+            # ログチャンネルに通知を送信
+            config = await get_autoban_config(session, str(guild.id))
+
+        if config and config.log_channel_id:
+            await self._send_log_embed(
+                guild=guild,
+                channel_id=config.log_channel_id,
+                action_taken=action_taken,
+                rule=rule,
+                reason=reason,
+                member_name=member_name,
+                member_id=member_id,
+                member_display_name=member_display_name,
+                member_avatar_url=member_avatar_url,
+                member_created_at=member_created_at,
+                member_joined_at=member_joined_at,
+            )
+
+    async def _send_log_embed(
+        self,
+        *,
+        guild: discord.Guild,
+        channel_id: str,
+        action_taken: str,
+        rule: AutoBanRule,
+        reason: str,
+        member_name: str,
+        member_id: int,
+        member_display_name: str,
+        member_avatar_url: str | None,
+        member_created_at: datetime,
+        member_joined_at: datetime | None,
+    ) -> None:
+        """ログチャンネルに BAN/KICK の通知 Embed を送信する。"""
+        channel = guild.get_channel(int(channel_id))
+        if not channel or not isinstance(channel, discord.TextChannel):
+            logger.warning("Log channel %s not found in guild %s", channel_id, guild.id)
+            return
+
+        color = 0xFF0000 if action_taken == "banned" else 0xFFA500
+        title = f"User {action_taken.capitalize()}"
+
+        embed = discord.Embed(
+            title=title,
+            color=color,
+            timestamp=datetime.now(UTC),
+        )
+
+        if member_avatar_url:
+            embed.set_thumbnail(url=member_avatar_url)
+
+        embed.add_field(
+            name="User",
+            value=f"{member_display_name} (`{member_name}`)",
+            inline=True,
+        )
+        embed.add_field(
+            name="User ID",
+            value=str(member_id),
+            inline=True,
+        )
+        embed.add_field(
+            name="Action",
+            value=action_taken.upper(),
+            inline=True,
+        )
+        embed.add_field(
+            name="Rule",
+            value=f"#{rule.id} ({rule.rule_type})",
+            inline=True,
+        )
+        embed.add_field(
+            name="Reason",
+            value=reason,
+            inline=False,
+        )
+
+        created_str = member_created_at.strftime("%Y-%m-%d %H:%M UTC")
+        embed.add_field(
+            name="Account Created",
+            value=created_str,
+            inline=True,
+        )
+
+        if member_joined_at:
+            joined_str = member_joined_at.strftime("%Y-%m-%d %H:%M UTC")
+            elapsed = (datetime.now(UTC) - member_joined_at).total_seconds()
+            embed.add_field(
+                name="Joined Server",
+                value=f"{joined_str} ({elapsed:.0f}s ago)",
+                inline=True,
+            )
+
+        embed.set_footer(text=f"Server: {guild.name}")
+
+        try:
+            await channel.send(embed=embed)
+        except discord.Forbidden:
+            logger.warning(
+                "Missing permissions to send log to channel %s in guild %s",
+                channel_id,
+                guild.id,
+            )
+        except discord.HTTPException as e:
+            logger.error(
+                "Failed to send log to channel %s in guild %s: %s",
+                channel_id,
+                guild.id,
+                e,
             )
 
     # ==========================================================================
@@ -194,12 +441,18 @@ class AutoBanCog(commands.Cog):
         pattern="ユーザー名パターン (username_match のみ)",
         use_wildcard="ワイルドカード: パターンがユーザー名に含まれていればマッチ",
         threshold_hours="アカウント年齢の閾値 (時間、account_age のみ、最大 336)",
+        threshold_seconds="JOIN後の閾値 (秒、role_acquired/vc_join のみ、最大 3600)",
     )
     @app_commands.choices(
         rule_type=[
             app_commands.Choice(name="Username Match", value="username_match"),
             app_commands.Choice(name="Account Age", value="account_age"),
             app_commands.Choice(name="No Avatar", value="no_avatar"),
+            app_commands.Choice(
+                name="Role Acquired (after join)", value="role_acquired"
+            ),
+            app_commands.Choice(name="VC Join (after join)", value="vc_join"),
+            app_commands.Choice(name="Message Post (after join)", value="message_post"),
         ],
         action=[
             app_commands.Choice(name="Ban", value="ban"),
@@ -214,6 +467,7 @@ class AutoBanCog(commands.Cog):
         pattern: str | None = None,
         use_wildcard: bool = False,
         threshold_hours: int | None = None,
+        threshold_seconds: int | None = None,
     ) -> None:
         """Autoban ルールを追加する。"""
         if not interaction.guild:
@@ -242,6 +496,20 @@ class AutoBanCog(commands.Cog):
                 )
                 return
 
+        if rule_type in ("role_acquired", "vc_join", "message_post"):
+            if not threshold_seconds or threshold_seconds < 1:
+                await interaction.response.send_message(
+                    f"{rule_type} ルールには 1 以上の threshold_seconds が必要です。",
+                    ephemeral=True,
+                )
+                return
+            if threshold_seconds > MAX_THRESHOLD_SECONDS:
+                await interaction.response.send_message(
+                    f"threshold_seconds は最大 {MAX_THRESHOLD_SECONDS} (1時間) です。",
+                    ephemeral=True,
+                )
+                return
+
         guild_id = str(interaction.guild.id)
 
         async with async_session() as session:
@@ -253,6 +521,7 @@ class AutoBanCog(commands.Cog):
                 pattern=pattern,
                 use_wildcard=use_wildcard,
                 threshold_hours=threshold_hours,
+                threshold_seconds=threshold_seconds,
             )
 
         desc_parts = [f"Type: {rule_type}", f"Action: {action}"]
@@ -262,6 +531,8 @@ class AutoBanCog(commands.Cog):
                 desc_parts.append("Wildcard: Yes")
         if threshold_hours:
             desc_parts.append(f"Threshold: {threshold_hours}h")
+        if threshold_seconds:
+            desc_parts.append(f"Threshold: {threshold_seconds}s")
 
         await interaction.response.send_message(
             f"Autoban rule #{rule.id} added.\n" + "\n".join(desc_parts),
@@ -320,6 +591,8 @@ class AutoBanCog(commands.Cog):
                 desc += f"\nPattern: {rule.pattern}{wildcard}"
             elif rule.rule_type == "account_age":
                 desc += f"\nThreshold: {rule.threshold_hours}h"
+            elif rule.rule_type in ("role_acquired", "vc_join", "message_post"):
+                desc += f"\nThreshold: {rule.threshold_seconds}s after join"
             embed.add_field(
                 name=f"#{rule.id} - {rule.rule_type}",
                 value=desc,
