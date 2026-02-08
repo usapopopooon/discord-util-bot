@@ -1506,3 +1506,63 @@ class Ticket(Base):
             f"<Ticket(id={self.id}, guild_id={self.guild_id}, "
             f"number={self.ticket_number}, status={self.status})>"
         )
+
+
+# =============================================================================
+# Join Role (自動ロール付与)
+# =============================================================================
+
+
+class JoinRoleConfig(Base):
+    """サーバーごとの Join ロール設定。
+
+    新規メンバー参加時に自動付与するロールと期限を定義する。
+    1サーバーで複数ロール設定可能。
+    """
+
+    __tablename__ = "join_role_configs"
+    __table_args__ = (
+        UniqueConstraint("guild_id", "role_id", name="uq_join_role_guild_role"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    role_id: Mapped[str] = mapped_column(String, nullable=False)
+    duration_hours: Mapped[int] = mapped_column(Integer, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<JoinRoleConfig(id={self.id}, guild_id={self.guild_id}, "
+            f"role_id={self.role_id}, hours={self.duration_hours})>"
+        )
+
+
+class JoinRoleAssignment(Base):
+    """付与済みロールの追跡レコード。
+
+    期限切れ時にロールを自動削除するために使用する。
+    Bot 再起動後も期限切れチェックを継続できる。
+    """
+
+    __tablename__ = "join_role_assignments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    role_id: Mapped[str] = mapped_column(String, nullable=False)
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<JoinRoleAssignment(id={self.id}, guild_id={self.guild_id}, "
+            f"user_id={self.user_id}, role_id={self.role_id})>"
+        )

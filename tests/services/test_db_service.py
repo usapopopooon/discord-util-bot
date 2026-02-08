@@ -21,6 +21,8 @@ from src.services.db_service import (
     create_autoban_log,
     create_autoban_rule,
     create_ban_log,
+    create_join_role_assignment,
+    create_join_role_config,
     create_lobby,
     create_role_panel,
     create_sticky_message,
@@ -33,6 +35,8 @@ from src.services.db_service import (
     delete_discord_guild,
     delete_discord_role,
     delete_discord_roles_by_guild,
+    delete_join_role_assignment,
+    delete_join_role_config,
     delete_lobbies_by_guild,
     delete_lobby,
     delete_role_panel,
@@ -63,6 +67,9 @@ from src.services.db_service import (
     get_discord_roles_by_guild,
     get_due_bump_reminders,
     get_enabled_autoban_rules_by_guild,
+    get_enabled_join_role_configs,
+    get_expired_join_role_assignments,
+    get_join_role_configs,
     get_lobbies_by_guild,
     get_lobby_by_channel_id,
     get_role_panel,
@@ -78,6 +85,7 @@ from src.services.db_service import (
     remove_voice_session_member,
     toggle_autoban_rule,
     toggle_bump_reminder,
+    toggle_join_role_config,
     update_autoban_rule,
     update_bump_reminder_role,
     update_role_panel,
@@ -5179,3 +5187,217 @@ class TestBanLogOperations:
         """Test retrieving ban logs when none exist."""
         logs = await get_ban_logs(db_session)
         assert logs == []
+
+
+class TestJoinRoleDbService:
+    """Tests for join role CRUD database operations."""
+
+    async def test_create_join_role_config(self, db_session: AsyncSession) -> None:
+        """Test creating a join role config."""
+        config = await create_join_role_config(
+            db_session,
+            guild_id="123",
+            role_id="456",
+            duration_hours=24,
+        )
+        assert config.id is not None
+        assert config.guild_id == "123"
+        assert config.role_id == "456"
+        assert config.duration_hours == 24
+        assert config.enabled is True
+
+    async def test_get_join_role_configs(self, db_session: AsyncSession) -> None:
+        """Test getting all join role configs."""
+        await create_join_role_config(db_session, "g1", "r1", 24)
+        await create_join_role_config(db_session, "g2", "r2", 48)
+
+        configs = await get_join_role_configs(db_session)
+        assert len(configs) == 2
+
+    async def test_get_join_role_configs_by_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting join role configs filtered by guild."""
+        await create_join_role_config(db_session, "g1", "r1", 24)
+        await create_join_role_config(db_session, "g2", "r2", 48)
+
+        configs = await get_join_role_configs(db_session, guild_id="g1")
+        assert len(configs) == 1
+        assert configs[0].guild_id == "g1"
+
+    async def test_get_enabled_join_role_configs(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting only enabled configs."""
+        c1 = await create_join_role_config(db_session, "g1", "r1", 24)
+        await create_join_role_config(db_session, "g1", "r2", 48)
+
+        # Disable one
+        await toggle_join_role_config(db_session, c1.id)
+
+        enabled = await get_enabled_join_role_configs(db_session, "g1")
+        assert len(enabled) == 1
+        assert enabled[0].role_id == "r2"
+
+    async def test_delete_join_role_config(self, db_session: AsyncSession) -> None:
+        """Test deleting a join role config."""
+        config = await create_join_role_config(db_session, "g1", "r1", 24)
+        result = await delete_join_role_config(db_session, config.id)
+        assert result is True
+
+        configs = await get_join_role_configs(db_session)
+        assert len(configs) == 0
+
+    async def test_delete_join_role_config_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test deleting a non-existent join role config."""
+        result = await delete_join_role_config(db_session, 999)
+        assert result is False
+
+    async def test_toggle_join_role_config(self, db_session: AsyncSession) -> None:
+        """Test toggling a join role config."""
+        config = await create_join_role_config(db_session, "g1", "r1", 24)
+        assert config.enabled is True
+
+        toggled = await toggle_join_role_config(db_session, config.id)
+        assert toggled is not None
+        assert toggled.enabled is False
+
+        toggled2 = await toggle_join_role_config(db_session, config.id)
+        assert toggled2 is not None
+        assert toggled2.enabled is True
+
+    async def test_toggle_join_role_config_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test toggling a non-existent join role config."""
+        result = await toggle_join_role_config(db_session, 999)
+        assert result is None
+
+    async def test_create_join_role_assignment(self, db_session: AsyncSession) -> None:
+        """Test creating a join role assignment."""
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        assignment = await create_join_role_assignment(
+            db_session,
+            guild_id="g1",
+            user_id="u1",
+            role_id="r1",
+            assigned_at=now,
+            expires_at=now + timedelta(hours=24),
+        )
+        assert assignment.id is not None
+        assert assignment.guild_id == "g1"
+        assert assignment.user_id == "u1"
+        assert assignment.role_id == "r1"
+
+    async def test_get_expired_join_role_assignments(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test getting expired assignments."""
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        # Expired
+        await create_join_role_assignment(
+            db_session,
+            "g1",
+            "u1",
+            "r1",
+            now - timedelta(hours=25),
+            now - timedelta(hours=1),
+        )
+        # Not yet expired
+        await create_join_role_assignment(
+            db_session, "g1", "u2", "r1", now, now + timedelta(hours=23)
+        )
+
+        expired = await get_expired_join_role_assignments(db_session, now)
+        assert len(expired) == 1
+        assert expired[0].user_id == "u1"
+
+    async def test_delete_join_role_assignment(self, db_session: AsyncSession) -> None:
+        """Test deleting a join role assignment."""
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        assignment = await create_join_role_assignment(
+            db_session, "g1", "u1", "r1", now, now + timedelta(hours=24)
+        )
+        result = await delete_join_role_assignment(db_session, assignment.id)
+        assert result is True
+
+    async def test_delete_join_role_assignment_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test deleting a non-existent assignment."""
+        result = await delete_join_role_assignment(db_session, 999)
+        assert result is False
+
+    async def test_get_expired_exact_boundary(self, db_session: AsyncSession) -> None:
+        """expires_at == now のレコードは期限切れとして取得される。"""
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        await create_join_role_assignment(
+            db_session, "g1", "u1", "r1", now - timedelta(hours=24), now
+        )
+        expired = await get_expired_join_role_assignments(db_session, now)
+        assert len(expired) == 1
+
+    async def test_get_expired_just_before_boundary(
+        self, db_session: AsyncSession
+    ) -> None:
+        """expires_at が now の1秒後のレコードは期限切れにならない。"""
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        await create_join_role_assignment(
+            db_session,
+            "g1",
+            "u1",
+            "r1",
+            now - timedelta(hours=24),
+            now + timedelta(seconds=1),
+        )
+        expired = await get_expired_join_role_assignments(db_session, now)
+        assert len(expired) == 0
+
+    async def test_get_enabled_all_disabled(self, db_session: AsyncSession) -> None:
+        """全て無効の場合、空リストが返る。"""
+        c1 = await create_join_role_config(db_session, "g1", "r1", 24)
+        c2 = await create_join_role_config(db_session, "g1", "r2", 48)
+        await toggle_join_role_config(db_session, c1.id)
+        await toggle_join_role_config(db_session, c2.id)
+
+        enabled = await get_enabled_join_role_configs(db_session, "g1")
+        assert len(enabled) == 0
+
+    async def test_create_duplicate_guild_role_raises(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同じ guild_id + role_id の二重登録は IntegrityError。"""
+        from sqlalchemy.exc import IntegrityError
+
+        await create_join_role_config(db_session, "g1", "r1", 24)
+        with pytest.raises(IntegrityError):
+            await create_join_role_config(db_session, "g1", "r1", 48)
+
+    async def test_multiple_assignments_same_user(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同一ユーザーの複数ロール割り当てが共存できる。"""
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        a1 = await create_join_role_assignment(
+            db_session, "g1", "u1", "r1", now, now + timedelta(hours=24)
+        )
+        a2 = await create_join_role_assignment(
+            db_session, "g1", "u1", "r2", now, now + timedelta(hours=48)
+        )
+        assert a1.id != a2.id
+        assert a1.role_id == "r1"
+        assert a2.role_id == "r2"

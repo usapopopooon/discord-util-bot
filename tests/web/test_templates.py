@@ -10,6 +10,7 @@ from src.database.models import (
     BanLog,
     BumpConfig,
     BumpReminder,
+    JoinRoleConfig,
     Lobby,
     RolePanel,
     RolePanelItem,
@@ -30,6 +31,7 @@ from src.web.templates import (
     ban_logs_page,
     bump_list_page,
     dashboard_page,
+    joinrole_page,
     lobbies_list_page,
     login_page,
     maintenance_page,
@@ -2964,3 +2966,152 @@ class TestDashboardBanLogsCard:
         result = dashboard_page()
         assert "/banlogs" in result
         assert "Ban Logs" in result
+
+
+class TestDashboardJoinRoleCard:
+    """ダッシュボードの Join Role カードのテスト。"""
+
+    def test_joinrole_card_exists(self) -> None:
+        """ダッシュボードに Join Role カードが存在する。"""
+        result = dashboard_page()
+        assert "/joinrole" in result
+        assert "Join Role" in result
+
+
+class TestJoinRolePage:
+    """joinrole_page テンプレートのテスト。"""
+
+    def test_empty_page(self) -> None:
+        """設定なしの場合は空メッセージが表示される。"""
+        result = joinrole_page([])
+        assert "No join role configs configured" in result
+        assert "Join Role" in result
+
+    def test_with_data(self) -> None:
+        """設定がある場合は一覧が表示される。"""
+        config = JoinRoleConfig(
+            id=1,
+            guild_id="123",
+            role_id="456",
+            duration_hours=24,
+            enabled=True,
+        )
+        result = joinrole_page(
+            [config],
+            guilds_map={"123": "Test Server"},
+            roles_by_guild={"123": [("456", "Member", 0)]},
+        )
+        assert "Test Server" in result
+        assert "Member" in result
+        assert "24h" in result
+        assert "Enabled" in result
+
+    def test_disabled_config(self) -> None:
+        """無効な設定は Disabled と表示される。"""
+        config = JoinRoleConfig(
+            id=1,
+            guild_id="123",
+            role_id="456",
+            duration_hours=48,
+            enabled=False,
+        )
+        result = joinrole_page([config])
+        assert "Disabled" in result
+
+    def test_form_elements(self) -> None:
+        """作成フォーム要素が含まれる。"""
+        result = joinrole_page(
+            [],
+            guilds_map={"123": "Test Server"},
+            roles_by_guild={"123": [("456", "Member", 0)]},
+        )
+        assert 'action="/joinrole/new"' in result
+        assert 'name="guild_id"' in result
+        assert 'name="role_id"' in result
+        assert 'name="duration_hours"' in result
+        assert "Add Config" in result
+
+    def test_action_links(self) -> None:
+        """Toggle/Delete リンクが含まれる。"""
+        config = JoinRoleConfig(
+            id=42,
+            guild_id="123",
+            role_id="456",
+            duration_hours=24,
+            enabled=True,
+        )
+        result = joinrole_page([config], csrf_token="test_token")
+        assert "/joinrole/42/toggle" in result
+        assert "/joinrole/42/delete" in result
+
+    def test_role_js_dropdown(self) -> None:
+        """ロール選択の JS コードが含まれる。"""
+        result = joinrole_page(
+            [],
+            roles_by_guild={"123": [("456", "Member", 0)]},
+        )
+        assert "joinroleRolesData" in result
+        assert "updateJoinRoleSelect" in result
+
+    def test_breadcrumbs(self) -> None:
+        """パンくずリストが表示される。"""
+        result = joinrole_page([])
+        assert "Dashboard" in result
+        assert "/dashboard" in result
+
+    def test_guild_not_found_shows_id(self) -> None:
+        """guilds_map にないギルドは ID のみ表示される。"""
+        config = JoinRoleConfig(
+            id=1,
+            guild_id="999",
+            role_id="456",
+            duration_hours=12,
+            enabled=True,
+        )
+        result = joinrole_page([config], guilds_map={"123": "Other"})
+        assert "999" in result
+        assert "text-yellow-400" in result
+
+    def test_role_name_fallback_to_id(self) -> None:
+        """roles_by_guild にないロールは ID がそのまま表示される。"""
+        config = JoinRoleConfig(
+            id=1,
+            guild_id="123",
+            role_id="789",
+            duration_hours=24,
+            enabled=True,
+        )
+        result = joinrole_page(
+            [config],
+            guilds_map={"123": "Server"},
+            roles_by_guild={"123": [("456", "Member", 0)]},
+        )
+        assert "789" in result
+
+    def test_empty_guild_and_role_maps(self) -> None:
+        """guilds_map/roles_by_guild が None の場合もエラーにならない。"""
+        config = JoinRoleConfig(
+            id=1,
+            guild_id="123",
+            role_id="456",
+            duration_hours=1,
+            enabled=True,
+        )
+        result = joinrole_page([config])
+        assert "123" in result
+        assert "456" in result
+
+    def test_multiple_guilds_in_dropdown(self) -> None:
+        """複数ギルドがドロップダウンに表示される。"""
+        result = joinrole_page(
+            [],
+            guilds_map={"111": "Alpha", "222": "Beta"},
+            roles_by_guild={
+                "111": [("r1", "RoleA", 0)],
+                "222": [("r2", "RoleB", 0)],
+            },
+        )
+        assert "Alpha" in result
+        assert "Beta" in result
+        assert "RoleA" in result
+        assert "RoleB" in result

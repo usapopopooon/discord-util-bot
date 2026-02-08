@@ -99,7 +99,8 @@
     "banneduser",
     "xdist",
     "XDIST",
-    "datname"
+    "datname",
+    "joinrole"
   ],
   "ignorePaths": [
     ".venv",

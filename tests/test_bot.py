@@ -103,7 +103,7 @@ class TestSetupHook:
         ):
             await bot.setup_hook()
 
-        assert bot.load_extension.await_count == 8
+        assert bot.load_extension.await_count == 9
         bot.load_extension.assert_any_await("src.cogs.voice")
         bot.load_extension.assert_any_await("src.cogs.admin")
         bot.load_extension.assert_any_await("src.cogs.health")
@@ -112,6 +112,7 @@ class TestSetupHook:
         bot.load_extension.assert_any_await("src.cogs.role_panel")
         bot.load_extension.assert_any_await("src.cogs.autoban")
         bot.load_extension.assert_any_await("src.cogs.ticket")
+        bot.load_extension.assert_any_await("src.cogs.join_role")
 
     @patch("src.bot.async_session")
     async def test_syncs_commands(self, mock_session_factory: MagicMock) -> None:

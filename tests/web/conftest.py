@@ -159,18 +159,27 @@ async def authenticated_client(
     client: AsyncClient,
     admin_user: AdminUser,
 ) -> AsyncClient:
-    """認証済みのテストクライアントを提供する。"""
+    """認証済みのテストクライアントを提供する。
+
+    bcrypt verify をパッチしてログイン高速化 (~168ms → ~0ms per test)。
+    ログイン自体の正確性は TestLoginRoutes で別途検証済み。
+    """
     csrf_token = generate_csrf_token()
 
-    response = await client.post(
-        "/login",
-        data={
-            "email": TEST_ADMIN_EMAIL,
-            "password": TEST_ADMIN_PASSWORD,
-            "csrf_token": csrf_token,
-        },
-        follow_redirects=False,
-    )
+    with patch(
+        "src.web.app.verify_password",
+        side_effect=lambda pw, h: pw == TEST_ADMIN_PASSWORD
+        and h == _CACHED_PASSWORD_HASH,
+    ):
+        response = await client.post(
+            "/login",
+            data={
+                "email": TEST_ADMIN_EMAIL,
+                "password": TEST_ADMIN_PASSWORD,
+                "csrf_token": csrf_token,
+            },
+            follow_redirects=False,
+        )
     session_cookie = response.cookies.get("session")
     if session_cookie:
         client.cookies.set("session", session_cookie)

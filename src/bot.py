@@ -180,6 +180,7 @@ class EphemeralVCBot(commands.Bot):
             "src.cogs.role_panel",
             "src.cogs.autoban",
             "src.cogs.ticket",
+            "src.cogs.join_role",
         ]
         for ext in extensions:
             try:

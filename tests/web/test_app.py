@@ -22,6 +22,7 @@ from src.database.models import (
     DiscordChannel,
     DiscordGuild,
     DiscordRole,
+    JoinRoleConfig,
     Lobby,
     RolePanel,
     RolePanelItem,
@@ -9755,6 +9756,68 @@ class TestCsrfValidationFailures:
         assert response.status_code == 302
         assert f"/autoban/{rule.id}/edit" in response.headers["location"]
 
+    async def test_joinrole_create_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+    ) -> None:
+        """joinrole_create の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        await self._login_client(client, admin_user)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                "/joinrole/new",
+                data={
+                    "guild_id": "123",
+                    "role_id": "456",
+                    "duration_hours": "24",
+                    "csrf_token": "bad",
+                },
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "/joinrole" in response.headers["location"]
+
+    async def test_joinrole_delete_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+    ) -> None:
+        """joinrole_delete の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        await self._login_client(client, admin_user)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                "/joinrole/1/delete",
+                data={"csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "/joinrole" in response.headers["location"]
+
+    async def test_joinrole_toggle_csrf_failure(
+        self,
+        client: AsyncClient,
+        admin_user: AdminUser,
+    ) -> None:
+        """joinrole_toggle の CSRF 失敗はリダイレクト。"""
+        from unittest.mock import patch
+
+        await self._login_client(client, admin_user)
+
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await client.post(
+                "/joinrole/1/toggle",
+                data={"csrf_token": "bad"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "/joinrole" in response.headers["location"]
+
 
 # ===========================================================================
 # クールダウンテスト (各エンドポイント)
@@ -10117,6 +10180,82 @@ class TestCooldownEnforcement:
         )
         assert response.status_code == 302
         assert f"/autoban/{rule.id}/edit" in response.headers["location"]
+
+    async def test_joinrole_create_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """joinrole_create のクールダウン。"""
+        from src.web.app import record_form_submit
+
+        record_form_submit("test@example.com", "/joinrole/new")
+        response = await authenticated_client.post(
+            "/joinrole/new",
+            data={
+                "guild_id": "123",
+                "role_id": "456",
+                "duration_hours": "24",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/joinrole" in response.headers["location"]
+
+    async def test_joinrole_delete_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """joinrole_delete のクールダウン。"""
+        from src.web.app import record_form_submit
+
+        config = JoinRoleConfig(
+            guild_id="123",
+            role_id="456",
+            duration_hours=24,
+        )
+        db_session.add(config)
+        await db_session.commit()
+        await db_session.refresh(config)
+
+        record_form_submit("test@example.com", f"/joinrole/{config.id}/delete")
+        response = await authenticated_client.post(
+            f"/joinrole/{config.id}/delete",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/joinrole" in response.headers["location"]
+
+    async def test_joinrole_toggle_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """joinrole_toggle のクールダウン。"""
+        from src.web.app import record_form_submit
+
+        config = JoinRoleConfig(
+            guild_id="123",
+            role_id="456",
+            duration_hours=24,
+        )
+        db_session.add(config)
+        await db_session.commit()
+        await db_session.refresh(config)
+
+        record_form_submit("test@example.com", f"/joinrole/{config.id}/toggle")
+        response = await authenticated_client.post(
+            f"/joinrole/{config.id}/toggle",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/joinrole" in response.headers["location"]
+
+        # Config should not be toggled
+        await db_session.refresh(config)
+        assert config.enabled is True
 
 
 # ===========================================================================
@@ -12444,3 +12583,299 @@ class TestTicketPanelDetailRoutes:
 
         assert response.status_code == 302
         assert "Error" in response.headers["location"]
+
+
+class TestJoinRoleRoutes:
+    """/joinrole ルートのテスト。"""
+
+    async def test_joinrole_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.get("/joinrole", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_joinrole_list_empty(self, authenticated_client: AsyncClient) -> None:
+        """設定がない場合は空メッセージが表示される。"""
+        response = await authenticated_client.get("/joinrole")
+        assert response.status_code == 200
+        assert "No join role configs configured" in response.text
+
+    async def test_joinrole_list_with_data(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """設定がある場合は一覧が表示される。"""
+        config = JoinRoleConfig(
+            guild_id="123456789012345678",
+            role_id="987654321012345678",
+            duration_hours=24,
+        )
+        db_session.add(config)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/joinrole")
+        assert response.status_code == 200
+        assert "24h" in response.text
+
+    async def test_joinrole_create(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """JoinRole 設定を作成できる。"""
+        response = await authenticated_client.post(
+            "/joinrole/new",
+            data={
+                "guild_id": "123456789012345678",
+                "role_id": "987654321012345678",
+                "duration_hours": "48",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/joinrole"
+
+        result = await db_session.execute(select(JoinRoleConfig))
+        configs = list(result.scalars().all())
+        assert len(configs) == 1
+        assert configs[0].duration_hours == 48
+
+    async def test_joinrole_create_invalid_hours(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """無効な時間はリダイレクトで拒否される。"""
+        response = await authenticated_client.post(
+            "/joinrole/new",
+            data={
+                "guild_id": "123",
+                "role_id": "456",
+                "duration_hours": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(JoinRoleConfig))
+        assert len(list(result.scalars().all())) == 0
+
+    async def test_joinrole_create_too_many_hours(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """720時間超はリダイレクトで拒否される。"""
+        response = await authenticated_client.post(
+            "/joinrole/new",
+            data={
+                "guild_id": "123",
+                "role_id": "456",
+                "duration_hours": "721",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(JoinRoleConfig))
+        assert len(list(result.scalars().all())) == 0
+
+    async def test_joinrole_delete(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """JoinRole 設定を削除できる。"""
+        config = JoinRoleConfig(
+            guild_id="123",
+            role_id="456",
+            duration_hours=24,
+        )
+        db_session.add(config)
+        await db_session.commit()
+        await db_session.refresh(config)
+
+        response = await authenticated_client.post(
+            f"/joinrole/{config.id}/delete",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(JoinRoleConfig))
+        assert len(list(result.scalars().all())) == 0
+
+    async def test_joinrole_toggle(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """JoinRole 設定の有効/無効を切り替えできる。"""
+        config = JoinRoleConfig(
+            guild_id="123",
+            role_id="456",
+            duration_hours=24,
+        )
+        db_session.add(config)
+        await db_session.commit()
+        await db_session.refresh(config)
+        assert config.enabled is True
+
+        response = await authenticated_client.post(
+            f"/joinrole/{config.id}/toggle",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(config)
+        assert config.enabled is False
+
+    async def test_joinrole_create_requires_auth(self, client: AsyncClient) -> None:
+        """作成は認証が必要。"""
+        response = await client.post(
+            "/joinrole/new",
+            data={
+                "guild_id": "123",
+                "role_id": "456",
+                "duration_hours": "24",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_joinrole_delete_requires_auth(self, client: AsyncClient) -> None:
+        """削除は認証が必要。"""
+        response = await client.post(
+            "/joinrole/1/delete",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_joinrole_toggle_requires_auth(self, client: AsyncClient) -> None:
+        """トグルは認証が必要。"""
+        response = await client.post(
+            "/joinrole/1/toggle",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_joinrole_create_non_integer_hours(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """duration_hours が数値でない場合はリダイレクト。"""
+        response = await authenticated_client.post(
+            "/joinrole/new",
+            data={
+                "guild_id": "123",
+                "role_id": "456",
+                "duration_hours": "abc",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(JoinRoleConfig))
+        assert len(list(result.scalars().all())) == 0
+
+    async def test_joinrole_create_negative_hours(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """負の時間はリダイレクトで拒否。"""
+        response = await authenticated_client.post(
+            "/joinrole/new",
+            data={
+                "guild_id": "123",
+                "role_id": "456",
+                "duration_hours": "-1",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(JoinRoleConfig))
+        assert len(list(result.scalars().all())) == 0
+
+    async def test_joinrole_create_boundary_min(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """最小値 1 時間で作成可能。"""
+        response = await authenticated_client.post(
+            "/joinrole/new",
+            data={
+                "guild_id": "123",
+                "role_id": "456",
+                "duration_hours": "1",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(JoinRoleConfig))
+        configs = list(result.scalars().all())
+        assert len(configs) == 1
+        assert configs[0].duration_hours == 1
+
+    async def test_joinrole_create_boundary_max(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """最大値 720 時間で作成可能。"""
+        response = await authenticated_client.post(
+            "/joinrole/new",
+            data={
+                "guild_id": "123",
+                "role_id": "456",
+                "duration_hours": "720",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(JoinRoleConfig))
+        configs = list(result.scalars().all())
+        assert len(configs) == 1
+        assert configs[0].duration_hours == 720
+
+    async def test_joinrole_create_duplicate(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """同じ guild_id + role_id で重複作成はエラーにならない。"""
+        config = JoinRoleConfig(
+            guild_id="123",
+            role_id="456",
+            duration_hours=24,
+        )
+        db_session.add(config)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            "/joinrole/new",
+            data={
+                "guild_id": "123",
+                "role_id": "456",
+                "duration_hours": "48",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(JoinRoleConfig))
+        assert len(list(result.scalars().all())) == 1
+
+    async def test_joinrole_delete_nonexistent(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """存在しない設定の削除はエラーにならない。"""
+        response = await authenticated_client.post(
+            "/joinrole/99999/delete",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/joinrole" in response.headers["location"]
+
+    async def test_joinrole_toggle_nonexistent(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """存在しない設定のトグルはエラーにならない。"""
+        response = await authenticated_client.post(
+            "/joinrole/99999/toggle",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/joinrole" in response.headers["location"]
