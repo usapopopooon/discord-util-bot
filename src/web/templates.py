@@ -2947,10 +2947,13 @@ def autoban_list_page(
     rules: list["AutoBanRule"],
     csrf_token: str = "",
     guilds_map: dict[str, str] | None = None,
+    channels_map: dict[str, list[tuple[str, str]]] | None = None,
 ) -> str:
     """Autoban rules list page template."""
     if guilds_map is None:
         guilds_map = {}
+    if channels_map is None:
+        channels_map = {}
 
     row_parts: list[str] = []
     for rule in rules:
@@ -2980,11 +2983,18 @@ def autoban_list_page(
                 else "-"
             )
         elif rule.rule_type in ("vc_without_intro", "msg_without_intro"):
-            details = (
-                f"Required ch: {rule.required_channel_id}"
-                if rule.required_channel_id
-                else "-"
-            )
+            if rule.required_channel_id:
+                ch_name = None
+                for cid, cname in channels_map.get(rule.guild_id, []):
+                    if cid == rule.required_channel_id:
+                        ch_name = cname
+                        break
+                if ch_name:
+                    details = f"#{escape(ch_name)}"
+                else:
+                    details = f"Ch: {escape(rule.required_channel_id)}"
+            else:
+                details = "-"
         else:
             details = "-"
 

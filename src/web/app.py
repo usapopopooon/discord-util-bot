@@ -2988,13 +2988,14 @@ async def autoban_list_view(
         select(AutoBanRule).order_by(AutoBanRule.guild_id, AutoBanRule.created_at)
     )
     rules = list(result.scalars().all())
-    guilds_map, _ = await _get_discord_guilds_and_channels(db)
+    guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
 
     return HTMLResponse(
         content=autoban_list_page(
             rules,
             csrf_token=generate_csrf_token(),
             guilds_map=guilds_map,
+            channels_map=channels_map,
         )
     )
 

@@ -2201,8 +2201,27 @@ class TestAutobanEditPage:
 class TestAutobanListPageIntroRules:
     """autoban_list_page の新ルールタイプ表示テスト。"""
 
-    def test_vc_without_intro_details(self) -> None:
-        """vc_without_intro の Details 列に channel ID が表示される。"""
+    def test_vc_without_intro_with_channel_name(self) -> None:
+        """vc_without_intro でチャンネル名が表示される。"""
+        from unittest.mock import MagicMock
+
+        rule = MagicMock()
+        rule.id = 1
+        rule.guild_id = "123"
+        rule.rule_type = "vc_without_intro"
+        rule.action = "ban"
+        rule.pattern = None
+        rule.use_wildcard = False
+        rule.threshold_hours = None
+        rule.threshold_seconds = None
+        rule.required_channel_id = "555"
+        rule.is_enabled = True
+        channels = {"123": [("555", "self-intro"), ("666", "general")]}
+        result = autoban_list_page([rule], channels_map=channels)
+        assert "#self-intro" in result
+
+    def test_vc_without_intro_channel_not_found(self) -> None:
+        """チャンネルが見つからない場合は ID をフォールバック表示。"""
         from unittest.mock import MagicMock
 
         rule = MagicMock()
@@ -2217,10 +2236,10 @@ class TestAutobanListPageIntroRules:
         rule.required_channel_id = "555"
         rule.is_enabled = True
         result = autoban_list_page([rule])
-        assert "Required ch: 555" in result
+        assert "Ch: 555" in result
 
-    def test_msg_without_intro_details(self) -> None:
-        """msg_without_intro の Details 列に channel ID が表示される。"""
+    def test_msg_without_intro_with_channel_name(self) -> None:
+        """msg_without_intro でチャンネル名が表示される。"""
         from unittest.mock import MagicMock
 
         rule = MagicMock()
@@ -2234,8 +2253,9 @@ class TestAutobanListPageIntroRules:
         rule.threshold_seconds = None
         rule.required_channel_id = "777"
         rule.is_enabled = True
-        result = autoban_list_page([rule])
-        assert "Required ch: 777" in result
+        channels = {"123": [("777", "introduce")]}
+        result = autoban_list_page([rule], channels_map=channels)
+        assert "#introduce" in result
 
 
 class TestDashboardTicketsCard:
