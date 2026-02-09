@@ -11407,6 +11407,183 @@ class TestAutobanRoutes:
         assert response.status_code == 302
         assert response.headers["location"] == "/login"
 
+    # --- vc_without_intro / msg_without_intro ---
+
+    async def test_autoban_create_vc_without_intro(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """vc_without_intro ルールを作成できる。"""
+        response = await authenticated_client.post(
+            "/autoban/new",
+            data={
+                "guild_id": "123456789012345678",
+                "rule_type": "vc_without_intro",
+                "action": "ban",
+                "required_channel_id": "987654321",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/autoban"
+
+        result = await db_session.execute(select(AutoBanRule))
+        rules = list(result.scalars().all())
+        assert len(rules) == 1
+        assert rules[0].rule_type == "vc_without_intro"
+        assert rules[0].required_channel_id == "987654321"
+
+    async def test_autoban_create_msg_without_intro(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """msg_without_intro ルールを作成できる。"""
+        response = await authenticated_client.post(
+            "/autoban/new",
+            data={
+                "guild_id": "123456789012345678",
+                "rule_type": "msg_without_intro",
+                "action": "kick",
+                "required_channel_id": "111222333",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(AutoBanRule))
+        rules = list(result.scalars().all())
+        assert len(rules) == 1
+        assert rules[0].rule_type == "msg_without_intro"
+        assert rules[0].action == "kick"
+
+    async def test_autoban_create_intro_rule_no_channel(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """required_channel_id 未指定 → リダイレクト。"""
+        response = await authenticated_client.post(
+            "/autoban/new",
+            data={
+                "guild_id": "123456789012345678",
+                "rule_type": "vc_without_intro",
+                "action": "ban",
+                "required_channel_id": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/autoban/new" in response.headers["location"]
+
+    async def test_autoban_create_intro_rule_non_digit(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """required_channel_id が数字でない → リダイレクト。"""
+        response = await authenticated_client.post(
+            "/autoban/new",
+            data={
+                "guild_id": "123456789012345678",
+                "rule_type": "msg_without_intro",
+                "action": "ban",
+                "required_channel_id": "abc",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/autoban/new" in response.headers["location"]
+
+    async def test_autoban_edit_intro_rule(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """intro ルールの required_channel_id を編集できる。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="vc_without_intro",
+            action="ban",
+            required_channel_id="111",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={
+                "action": "kick",
+                "required_channel_id": "222",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(rule)
+        assert rule.action == "kick"
+        assert rule.required_channel_id == "222"
+
+    async def test_autoban_edit_intro_rule_empty_channel(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """intro ルール編集で channel 未指定 → リダイレクト。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="msg_without_intro",
+            action="ban",
+            required_channel_id="111",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={
+                "action": "ban",
+                "required_channel_id": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert f"/autoban/{rule.id}/edit" in response.headers["location"]
+
+    async def test_autoban_edit_intro_rule_non_digit(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """intro ルール編集で非数字の channel → リダイレクト。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="vc_without_intro",
+            action="ban",
+            required_channel_id="111",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/autoban/{rule.id}/edit",
+            data={
+                "action": "ban",
+                "required_channel_id": "not-a-number",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert f"/autoban/{rule.id}/edit" in response.headers["location"]
+
+    async def test_autoban_edit_get_intro_rule(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """intro ルールの編集ページが表示される。"""
+        rule = AutoBanRule(
+            guild_id="123456789012345678",
+            rule_type="vc_without_intro",
+            action="ban",
+            required_channel_id="555",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.get(f"/autoban/{rule.id}/edit")
+        assert response.status_code == 200
+        assert "VC Join without Intro Post" in response.text
+
 
 # ===========================================================================
 # BAN ログルート

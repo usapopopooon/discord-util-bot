@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from src.database.models import (
     AdminUser,
     AutoBanConfig,
+    AutoBanIntroPost,
     AutoBanLog,
     AutoBanRule,
     BanLog,
@@ -2778,3 +2779,88 @@ class TestModelReprCoverage:
         text = repr(assignment)
         assert "JoinRoleAssignment" in text
         assert assignment.user_id in text
+
+
+# ===========================================================================
+# AutoBanIntroPost モデル
+# ===========================================================================
+
+
+class TestAutoBanIntroPost:
+    """AutoBanIntroPost モデルのテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_create_intro_post(self, db_session: AsyncSession) -> None:
+        """投稿記録を作成できる。"""
+        post = AutoBanIntroPost(
+            guild_id=snowflake(),
+            user_id=snowflake(),
+            channel_id=snowflake(),
+        )
+        db_session.add(post)
+        await db_session.commit()
+        await db_session.refresh(post)
+        assert post.id is not None
+        assert post.posted_at is not None
+
+    @pytest.mark.asyncio
+    async def test_unique_constraint(self, db_session: AsyncSession) -> None:
+        """同じ guild/user/channel の重複は IntegrityError。"""
+        gid = snowflake()
+        uid = snowflake()
+        cid = snowflake()
+        post1 = AutoBanIntroPost(guild_id=gid, user_id=uid, channel_id=cid)
+        db_session.add(post1)
+        await db_session.commit()
+
+        post2 = AutoBanIntroPost(guild_id=gid, user_id=uid, channel_id=cid)
+        db_session.add(post2)
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    @pytest.mark.asyncio
+    async def test_repr(self, db_session: AsyncSession) -> None:
+        """__repr__ にモデル名が含まれる。"""
+        post = AutoBanIntroPost(
+            guild_id=snowflake(),
+            user_id=snowflake(),
+            channel_id=snowflake(),
+        )
+        db_session.add(post)
+        await db_session.commit()
+        text = repr(post)
+        assert "AutoBanIntroPost" in text
+
+
+class TestAutoBanRuleNewTypes:
+    """新ルールタイプのバリデーションテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_vc_without_intro_valid(self, db_session: AsyncSession) -> None:
+        """vc_without_intro ルールを作成できる。"""
+        rule = AutoBanRule(
+            guild_id=snowflake(),
+            rule_type="vc_without_intro",
+            action="ban",
+            required_channel_id=snowflake(),
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+        assert rule.rule_type == "vc_without_intro"
+        assert rule.required_channel_id is not None
+
+    @pytest.mark.asyncio
+    async def test_msg_without_intro_valid(self, db_session: AsyncSession) -> None:
+        """msg_without_intro ルールを作成できる。"""
+        rule = AutoBanRule(
+            guild_id=snowflake(),
+            rule_type="msg_without_intro",
+            action="kick",
+            required_channel_id=snowflake(),
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+        assert rule.rule_type == "msg_without_intro"
+        assert rule.action == "kick"

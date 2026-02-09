@@ -9,6 +9,8 @@
   - role_acquired: サーバーJOIN後 X秒以内にロール取得
   - vc_join: サーバーJOIN後 X秒以内にVC参加
   - message_post: サーバーJOIN後 X秒以内にメッセージ投稿
+  - vc_without_intro: 指定チャンネル未投稿でVC参加
+  - msg_without_intro: 指定チャンネル未投稿で別チャンネルに投稿
 
 仕組み:
   - on_member_join イベントで新規メンバーを検知
@@ -39,6 +41,8 @@ from src.services.db_service import (
     get_autoban_logs_by_guild,
     get_autoban_rules_by_guild,
     get_enabled_autoban_rules_by_guild,
+    has_intro_post,
+    record_intro_post,
 )
 
 logger = logging.getLogger(__name__)
@@ -134,12 +138,16 @@ class AutoBanCog(commands.Cog):
             return
 
         for rule in rules:
-            if rule.rule_type != "vc_join":
-                continue
-            matched, reason = self._check_join_timing(rule, member)
-            if matched:
-                await self._execute_action(member, rule, reason)
-                break
+            if rule.rule_type == "vc_join":
+                matched, reason = self._check_join_timing(rule, member)
+                if matched:
+                    await self._execute_action(member, rule, reason)
+                    return
+            elif rule.rule_type == "vc_without_intro":
+                matched, reason = await self._check_intro_missing(rule, member)
+                if matched:
+                    await self._execute_action(member, rule, reason)
+                    return
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -164,13 +172,35 @@ class AutoBanCog(commands.Cog):
         if not rules:
             return
 
+        channel_id_str = str(message.channel.id)
+
+        # 指定チャンネルへの投稿を記録 (vc_without_intro / msg_without_intro 用)
+        intro_rule_types = ("vc_without_intro", "msg_without_intro")
+        required_channels = {
+            r.required_channel_id
+            for r in rules
+            if r.rule_type in intro_rule_types and r.required_channel_id
+        }
+        if channel_id_str in required_channels:
+            async with async_session() as session:
+                await record_intro_post(
+                    session, guild_id, str(member.id), channel_id_str
+                )
+
         for rule in rules:
-            if rule.rule_type != "message_post":
-                continue
-            matched, reason = self._check_join_timing(rule, member)
-            if matched:
-                await self._execute_action(member, rule, reason)
-                break
+            if rule.rule_type == "message_post":
+                matched, reason = self._check_join_timing(rule, member)
+                if matched:
+                    await self._execute_action(member, rule, reason)
+                    return
+            elif rule.rule_type == "msg_without_intro":
+                # 指定チャンネル自体への投稿は対象外
+                if channel_id_str == rule.required_channel_id:
+                    continue
+                matched, reason = await self._check_intro_missing(rule, member)
+                if matched:
+                    await self._execute_action(member, rule, reason)
+                    return
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User) -> None:
@@ -272,6 +302,29 @@ class AutoBanCog(commands.Cog):
                 f"Action within {elapsed:.1f}s of join "
                 f"(threshold: {rule.threshold_seconds}s)"
             )
+        return False, ""
+
+    async def _check_intro_missing(
+        self, rule: AutoBanRule, member: discord.Member
+    ) -> tuple[bool, str]:
+        """指定チャンネルに投稿していないかチェック。"""
+        if not rule.required_channel_id or not member.joined_at:
+            return False, ""
+
+        # ルール作成前に参加したメンバーは対象外
+        if member.joined_at < rule.created_at:
+            return False, ""
+
+        async with async_session() as session:
+            posted = await has_intro_post(
+                session,
+                str(member.guild.id),
+                str(member.id),
+                rule.required_channel_id,
+            )
+
+        if not posted:
+            return True, (f"No post in required channel ({rule.required_channel_id})")
         return False, ""
 
     # ==========================================================================

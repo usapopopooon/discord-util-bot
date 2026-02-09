@@ -2979,6 +2979,12 @@ def autoban_list_page(
                 if rule.threshold_seconds
                 else "-"
             )
+        elif rule.rule_type in ("vc_without_intro", "msg_without_intro"):
+            details = (
+                f"Required ch: {rule.required_channel_id}"
+                if rule.required_channel_id
+                else "-"
+            )
         else:
             details = "-"
 
@@ -3067,17 +3073,27 @@ def autoban_list_page(
 
 def autoban_create_page(
     guilds_map: dict[str, str] | None = None,
+    channels_map: dict[str, list[tuple[str, str]]] | None = None,
     csrf_token: str = "",
 ) -> str:
     """Autoban rule create page template."""
+    import json as json_mod
+
     if guilds_map is None:
         guilds_map = {}
+    if channels_map is None:
+        channels_map = {}
 
     guild_options = ""
     for gid, gname in sorted(guilds_map.items(), key=lambda x: x[1]):
         guild_options += (
             f'<option value="{escape(gid)}">{escape(gname)} ({escape(gid)})</option>'
         )
+
+    channels_data: dict[str, list[dict[str, str]]] = {}
+    for gid, ch_list in channels_map.items():
+        channels_data[gid] = [{"id": cid, "name": cname} for cid, cname in ch_list]
+    channels_json = json_mod.dumps(channels_data)
 
     content = f"""
     <div class="p-6">
@@ -3097,7 +3113,8 @@ def autoban_create_page(
 
                 <div>
                     <label class="block text-sm font-medium mb-1">Server</label>
-                    <select name="guild_id" required
+                    <select name="guild_id" required id="guildSelect"
+                            onchange="updateRequiredChannel()"
                             class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                         <option value="">Select server...</option>
                         {guild_options}
@@ -3136,6 +3153,16 @@ def autoban_create_page(
                             <input type="radio" name="rule_type" value="message_post"
                                    onchange="updateRuleFields()">
                             <span>Message Post (after join)</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="rule_type" value="vc_without_intro"
+                                   onchange="updateRuleFields()">
+                            <span>VC Join without Intro Post</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="rule_type" value="msg_without_intro"
+                                   onchange="updateRuleFields()">
+                            <span>Message without Intro Post</span>
                         </label>
                     </div>
                 </div>
@@ -3183,6 +3210,16 @@ def autoban_create_page(
                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                 </div>
 
+                <div id="requiredChannelFields" class="hidden">
+                    <label class="block text-sm font-medium mb-1">
+                        Required Channel (must post here first)
+                    </label>
+                    <select name="required_channel_id" id="requiredChannelSelect"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">Select channel...</option>
+                    </select>
+                </div>
+
                 <button type="submit"
                         class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded transition-colors">
                     Create Rule
@@ -3192,16 +3229,33 @@ def autoban_create_page(
     </div>
 
     <script>
+    const channelsData = {channels_json};
     function updateRuleFields() {{
         const ruleType = document.querySelector('input[name="rule_type"]:checked').value;
         const usernameFields = document.getElementById('usernameFields');
         const accountAgeFields = document.getElementById('accountAgeFields');
         const thresholdSecondsFields = document.getElementById('thresholdSecondsFields');
+        const requiredChannelFields = document.getElementById('requiredChannelFields');
+        const introTypes = ['vc_without_intro', 'msg_without_intro'];
 
         usernameFields.classList.toggle('hidden', ruleType !== 'username_match');
         accountAgeFields.classList.toggle('hidden', ruleType !== 'account_age');
         thresholdSecondsFields.classList.toggle('hidden',
             ruleType !== 'role_acquired' && ruleType !== 'vc_join' && ruleType !== 'message_post');
+        requiredChannelFields.classList.toggle('hidden', !introTypes.includes(ruleType));
+    }}
+    function updateRequiredChannel() {{
+        const guildId = document.getElementById('guildSelect').value;
+        const sel = document.getElementById('requiredChannelSelect');
+        sel.innerHTML = '<option value="">Select channel...</option>';
+        if (channelsData[guildId]) {{
+            channelsData[guildId].forEach(ch => {{
+                const opt = document.createElement('option');
+                opt.value = ch.id;
+                opt.textContent = '#' + ch.name;
+                sel.appendChild(opt);
+            }});
+        }}
     }}
     </script>
     """
@@ -3211,11 +3265,14 @@ def autoban_create_page(
 def autoban_edit_page(
     rule: "AutoBanRule",
     guilds_map: dict[str, str] | None = None,
+    channels_map: dict[str, list[tuple[str, str]]] | None = None,
     csrf_token: str = "",
 ) -> str:
     """Autoban rule edit page template."""
     if guilds_map is None:
         guilds_map = {}
+    if channels_map is None:
+        channels_map = {}
 
     guild_name = guilds_map.get(rule.guild_id, rule.guild_id)
     guild_display = f"{escape(guild_name)} ({escape(rule.guild_id)})"
@@ -3264,6 +3321,26 @@ def autoban_edit_page(
                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                 </div>
         """
+    elif rule.rule_type in ("vc_without_intro", "msg_without_intro"):
+        guild_channels = channels_map.get(rule.guild_id, [])
+        ch_options = ""
+        for cid, cname in guild_channels:
+            selected = " selected" if cid == rule.required_channel_id else ""
+            ch_options += (
+                f'<option value="{escape(cid)}"{selected}>#{escape(cname)}</option>'
+            )
+        type_fields = f"""
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Required Channel (must post here first)
+                    </label>
+                    <select name="required_channel_id"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">Select channel...</option>
+                        {ch_options}
+                    </select>
+                </div>
+        """
 
     # Human-readable rule type label
     type_labels = {
@@ -3273,6 +3350,8 @@ def autoban_edit_page(
         "role_acquired": "Role Acquired (after join)",
         "vc_join": "VC Join (after join)",
         "message_post": "Message Post (after join)",
+        "vc_without_intro": "VC Join without Intro Post",
+        "msg_without_intro": "Message without Intro Post",
     }
     rule_type_label = type_labels.get(rule.rule_type, rule.rule_type)
 

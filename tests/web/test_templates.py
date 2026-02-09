@@ -1933,6 +1933,30 @@ class TestAutobanCreatePage:
         assert "Autoban Rules" in result
         assert "Create" in result
 
+    def test_contains_intro_rule_types(self) -> None:
+        """新しいルールタイプのラジオボタンが含まれる。"""
+        result = autoban_create_page()
+        assert "vc_without_intro" in result
+        assert "msg_without_intro" in result
+
+    def test_contains_required_channel_field(self) -> None:
+        """required_channel_id のドロップダウンが含まれる。"""
+        result = autoban_create_page()
+        assert 'name="required_channel_id"' in result
+        assert "requiredChannelFields" in result
+
+    def test_channels_json_in_page(self) -> None:
+        """channels_map が JSON でページに含まれる。"""
+        channels = {"123": [("456", "general")]}
+        result = autoban_create_page(channels_map=channels)
+        assert "general" in result
+        assert "456" in result
+
+    def test_guild_select_updates_channels(self) -> None:
+        """ギルド選択で updateRequiredChannel が呼ばれる。"""
+        result = autoban_create_page()
+        assert "updateRequiredChannel" in result
+
 
 class TestAutobanLogsPage:
     """autoban_logs_page テンプレートのテスト。"""
@@ -2073,6 +2097,7 @@ class TestAutobanEditPage:
             "use_wildcard": False,
             "threshold_hours": None,
             "threshold_seconds": None,
+            "required_channel_id": None,
             "is_enabled": True,
         }
         defaults.update(kwargs)
@@ -2130,6 +2155,29 @@ class TestAutobanEditPage:
         result = autoban_edit_page(rule, guilds_map=guilds)
         assert "Test Server" in result
 
+    def test_vc_without_intro_page(self) -> None:
+        """vc_without_intro ルールの編集ページにチャンネル選択がある。"""
+        rule = self._make_rule(
+            rule_type="vc_without_intro",
+            required_channel_id="555",
+        )
+        channels = {"123456789012345678": [("555", "intro-ch"), ("666", "general")]}
+        result = autoban_edit_page(rule, channels_map=channels)
+        assert "VC Join without Intro Post" in result
+        assert "#intro-ch" in result
+        assert "selected" in result
+
+    def test_msg_without_intro_page(self) -> None:
+        """msg_without_intro ルールの編集ページにチャンネル選択がある。"""
+        rule = self._make_rule(
+            rule_type="msg_without_intro",
+            required_channel_id="777",
+        )
+        channels = {"123456789012345678": [("777", "self-intro")]}
+        result = autoban_edit_page(rule, channels_map=channels)
+        assert "Message without Intro Post" in result
+        assert "#self-intro" in result
+
     def test_edit_link_in_list(self) -> None:
         """autoban_list_page に Edit リンクが含まれる。"""
         from unittest.mock import MagicMock
@@ -2143,10 +2191,51 @@ class TestAutobanEditPage:
         rule.use_wildcard = False
         rule.threshold_hours = None
         rule.threshold_seconds = None
+        rule.required_channel_id = None
         rule.is_enabled = True
         result = autoban_list_page([rule])
         assert "/autoban/42/edit" in result
         assert "Edit" in result
+
+
+class TestAutobanListPageIntroRules:
+    """autoban_list_page の新ルールタイプ表示テスト。"""
+
+    def test_vc_without_intro_details(self) -> None:
+        """vc_without_intro の Details 列に channel ID が表示される。"""
+        from unittest.mock import MagicMock
+
+        rule = MagicMock()
+        rule.id = 1
+        rule.guild_id = "123"
+        rule.rule_type = "vc_without_intro"
+        rule.action = "ban"
+        rule.pattern = None
+        rule.use_wildcard = False
+        rule.threshold_hours = None
+        rule.threshold_seconds = None
+        rule.required_channel_id = "555"
+        rule.is_enabled = True
+        result = autoban_list_page([rule])
+        assert "Required ch: 555" in result
+
+    def test_msg_without_intro_details(self) -> None:
+        """msg_without_intro の Details 列に channel ID が表示される。"""
+        from unittest.mock import MagicMock
+
+        rule = MagicMock()
+        rule.id = 2
+        rule.guild_id = "123"
+        rule.rule_type = "msg_without_intro"
+        rule.action = "kick"
+        rule.pattern = None
+        rule.use_wildcard = False
+        rule.threshold_hours = None
+        rule.threshold_seconds = None
+        rule.required_channel_id = "777"
+        rule.is_enabled = True
+        result = autoban_list_page([rule])
+        assert "Required ch: 777" in result
 
 
 class TestDashboardTicketsCard:

@@ -64,6 +64,8 @@ def _make_rule(
     use_wildcard: bool = False,
     threshold_hours: int | None = None,
     threshold_seconds: int | None = None,
+    required_channel_id: str | None = None,
+    created_at: datetime | None = None,
 ) -> MagicMock:
     """Create a mock AutoBanRule."""
     rule = MagicMock()
@@ -76,6 +78,8 @@ def _make_rule(
     rule.use_wildcard = use_wildcard
     rule.threshold_hours = threshold_hours
     rule.threshold_seconds = threshold_seconds
+    rule.required_channel_id = required_channel_id
+    rule.created_at = created_at or datetime.now(UTC) - timedelta(days=1)
     return rule
 
 
@@ -1919,3 +1923,277 @@ class TestAutobanListTimingRules:
             call_kwargs = interaction.response.send_message.call_args
             embed = call_kwargs.kwargs["embed"]
             assert "120s" in embed.fields[0].value
+
+
+# ---------------------------------------------------------------------------
+# TestCheckIntroMissing: _check_intro_missing のテスト
+# ---------------------------------------------------------------------------
+
+
+class TestCheckIntroMissing:
+    """_check_intro_missing のテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_no_required_channel_returns_false(self) -> None:
+        """required_channel_id が None なら False。"""
+        cog = _make_cog()
+        rule = _make_rule(
+            rule_type="vc_without_intro",
+            required_channel_id=None,
+            pattern=None,
+        )
+        member = _make_member(joined_at=datetime.now(UTC))
+        matched, _ = await cog._check_intro_missing(rule, member)
+        assert matched is False
+
+    @pytest.mark.asyncio
+    async def test_no_joined_at_returns_false(self) -> None:
+        """joined_at が None なら False。"""
+        cog = _make_cog()
+        rule = _make_rule(
+            rule_type="vc_without_intro",
+            required_channel_id="555",
+            pattern=None,
+        )
+        member = _make_member(joined_at=None)
+        matched, _ = await cog._check_intro_missing(rule, member)
+        assert matched is False
+
+    @pytest.mark.asyncio
+    async def test_old_member_skipped(self) -> None:
+        """ルール作成前に参加したメンバーは対象外。"""
+        cog = _make_cog()
+        rule = _make_rule(
+            rule_type="vc_without_intro",
+            required_channel_id="555",
+            created_at=datetime.now(UTC),
+            pattern=None,
+        )
+        member = _make_member(
+            joined_at=datetime.now(UTC) - timedelta(days=7),
+        )
+        matched, _ = await cog._check_intro_missing(rule, member)
+        assert matched is False
+
+    @pytest.mark.asyncio
+    async def test_not_posted_returns_true(self) -> None:
+        """指定チャンネルに未投稿なら True。"""
+        cog = _make_cog()
+        rule = _make_rule(
+            rule_type="vc_without_intro",
+            required_channel_id="555",
+            created_at=datetime.now(UTC) - timedelta(days=7),
+            pattern=None,
+        )
+        member = _make_member(joined_at=datetime.now(UTC))
+        with patch(
+            "src.cogs.autoban.has_intro_post",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
+            matched, reason = await cog._check_intro_missing(rule, member)
+        assert matched is True
+        assert "555" in reason
+
+    @pytest.mark.asyncio
+    async def test_posted_returns_false(self) -> None:
+        """指定チャンネルに投稿済みなら False。"""
+        cog = _make_cog()
+        rule = _make_rule(
+            rule_type="vc_without_intro",
+            required_channel_id="555",
+            created_at=datetime.now(UTC) - timedelta(days=7),
+            pattern=None,
+        )
+        member = _make_member(joined_at=datetime.now(UTC))
+        with patch(
+            "src.cogs.autoban.has_intro_post",
+            new_callable=AsyncMock,
+            return_value=True,
+        ):
+            matched, _ = await cog._check_intro_missing(rule, member)
+        assert matched is False
+
+
+# ---------------------------------------------------------------------------
+# TestVcWithoutIntro: VC参加時の intro チェック
+# ---------------------------------------------------------------------------
+
+
+class TestVcWithoutIntro:
+    """VC参加 + intro未投稿のテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_vc_without_intro_bans(self) -> None:
+        """指定チャンネル未投稿で VC 参加 → BAN。"""
+        cog = _make_cog()
+        member = _make_member(joined_at=datetime.now(UTC))
+        before = MagicMock(spec=discord.VoiceState)
+        before.channel = None
+        after = MagicMock(spec=discord.VoiceState)
+        after.channel = MagicMock()
+        rule = _make_rule(
+            rule_type="vc_without_intro",
+            required_channel_id="555",
+            pattern=None,
+        )
+        with (
+            patch(
+                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                new_callable=AsyncMock,
+                return_value=[rule],
+            ),
+            patch.object(
+                cog,
+                "_check_intro_missing",
+                new_callable=AsyncMock,
+                return_value=(True, "No post"),
+            ),
+            patch.object(cog, "_execute_action", new_callable=AsyncMock) as mock_exec,
+        ):
+            await cog.on_voice_state_update(member, before, after)
+            mock_exec.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_vc_without_intro_posted(self) -> None:
+        """指定チャンネル投稿済みで VC 参加 → 無視。"""
+        cog = _make_cog()
+        member = _make_member(joined_at=datetime.now(UTC))
+        before = MagicMock(spec=discord.VoiceState)
+        before.channel = None
+        after = MagicMock(spec=discord.VoiceState)
+        after.channel = MagicMock()
+        rule = _make_rule(
+            rule_type="vc_without_intro",
+            required_channel_id="555",
+            pattern=None,
+        )
+        with (
+            patch(
+                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                new_callable=AsyncMock,
+                return_value=[rule],
+            ),
+            patch.object(
+                cog,
+                "_check_intro_missing",
+                new_callable=AsyncMock,
+                return_value=(False, ""),
+            ),
+            patch.object(cog, "_execute_action", new_callable=AsyncMock) as mock_exec,
+        ):
+            await cog.on_voice_state_update(member, before, after)
+            mock_exec.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestMsgWithoutIntro: テキストチャンネル投稿時の intro チェック
+# ---------------------------------------------------------------------------
+
+
+class TestMsgWithoutIntro:
+    """テキストチャンネル投稿 + intro未投稿のテスト。"""
+
+    def _make_message(
+        self,
+        *,
+        joined_at: datetime | None = None,
+        channel_id: int = 999,
+    ) -> MagicMock:
+        msg = MagicMock(spec=discord.Message)
+        msg.guild = MagicMock()
+        msg.guild.id = 789
+        member = _make_member(joined_at=joined_at)
+        msg.author = member
+        msg.channel = MagicMock()
+        msg.channel.id = channel_id
+        return msg
+
+    @pytest.mark.asyncio
+    async def test_msg_without_intro_bans(self) -> None:
+        """指定チャンネル未投稿で別チャンネルに投稿 → BAN。"""
+        cog = _make_cog()
+        msg = self._make_message(
+            joined_at=datetime.now(UTC),
+            channel_id=999,
+        )
+        rule = _make_rule(
+            rule_type="msg_without_intro",
+            required_channel_id="555",
+            pattern=None,
+        )
+        with (
+            patch(
+                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                new_callable=AsyncMock,
+                return_value=[rule],
+            ),
+            patch.object(
+                cog,
+                "_check_intro_missing",
+                new_callable=AsyncMock,
+                return_value=(True, "No post"),
+            ),
+            patch.object(cog, "_execute_action", new_callable=AsyncMock) as mock_exec,
+        ):
+            await cog.on_message(msg)
+            mock_exec.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_msg_without_intro_posted(self) -> None:
+        """指定チャンネル投稿済みで別チャンネルに投稿 → 無視。"""
+        cog = _make_cog()
+        msg = self._make_message(
+            joined_at=datetime.now(UTC),
+            channel_id=999,
+        )
+        rule = _make_rule(
+            rule_type="msg_without_intro",
+            required_channel_id="555",
+            pattern=None,
+        )
+        with (
+            patch(
+                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                new_callable=AsyncMock,
+                return_value=[rule],
+            ),
+            patch.object(
+                cog,
+                "_check_intro_missing",
+                new_callable=AsyncMock,
+                return_value=(False, ""),
+            ),
+            patch.object(cog, "_execute_action", new_callable=AsyncMock) as mock_exec,
+        ):
+            await cog.on_message(msg)
+            mock_exec.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_msg_in_required_channel_records(self) -> None:
+        """指定チャンネルへの投稿 → DB記録、BAN なし。"""
+        cog = _make_cog()
+        msg = self._make_message(
+            joined_at=datetime.now(UTC),
+            channel_id=555,
+        )
+        rule = _make_rule(
+            rule_type="msg_without_intro",
+            required_channel_id="555",
+            pattern=None,
+        )
+        with (
+            patch(
+                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                new_callable=AsyncMock,
+                return_value=[rule],
+            ),
+            patch(
+                "src.cogs.autoban.record_intro_post",
+                new_callable=AsyncMock,
+            ) as mock_record,
+            patch.object(cog, "_execute_action", new_callable=AsyncMock) as mock_exec,
+        ):
+            await cog.on_message(msg)
+            mock_record.assert_called_once()
+            mock_exec.assert_not_called()

@@ -35,6 +35,7 @@ from src.services.db_service import (
     delete_discord_guild,
     delete_discord_role,
     delete_discord_roles_by_guild,
+    delete_intro_posts_by_guild,
     delete_join_role_assignment,
     delete_join_role_config,
     delete_lobbies_by_guild,
@@ -81,6 +82,8 @@ from src.services.db_service import (
     get_sticky_message,
     get_voice_session,
     get_voice_session_members_ordered,
+    has_intro_post,
+    record_intro_post,
     remove_role_panel_item,
     remove_voice_session_member,
     toggle_autoban_rule,
@@ -5401,3 +5404,63 @@ class TestJoinRoleDbService:
         assert a1.id != a2.id
         assert a1.role_id == "r1"
         assert a2.role_id == "r2"
+
+
+# ===========================================================================
+# IntroPost CRUD
+# ===========================================================================
+
+
+class TestIntroPostCRUD:
+    """record_intro_post / has_intro_post / delete_intro_posts_by_guild のテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_record_intro_post(self, db_session: AsyncSession) -> None:
+        """投稿を記録できる。"""
+        await record_intro_post(db_session, "g1", "u1", "c1")
+        result = await has_intro_post(db_session, "g1", "u1", "c1")
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_record_intro_post_duplicate(self, db_session: AsyncSession) -> None:
+        """重複記録はエラーなし。"""
+        await record_intro_post(db_session, "g1", "u1", "c1")
+        await record_intro_post(db_session, "g1", "u1", "c1")
+        result = await has_intro_post(db_session, "g1", "u1", "c1")
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_has_intro_post_not_found(self, db_session: AsyncSession) -> None:
+        """投稿がなければ False。"""
+        result = await has_intro_post(db_session, "g1", "u1", "c1")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_has_intro_post_different_channel(
+        self, db_session: AsyncSession
+    ) -> None:
+        """異なるチャンネルでは False。"""
+        await record_intro_post(db_session, "g1", "u1", "c1")
+        result = await has_intro_post(db_session, "g1", "u1", "c2")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_delete_intro_posts_by_guild(self, db_session: AsyncSession) -> None:
+        """ギルド単位で削除できる。"""
+        await record_intro_post(db_session, "g1", "u1", "c1")
+        await record_intro_post(db_session, "g1", "u2", "c1")
+        await record_intro_post(db_session, "g2", "u1", "c1")
+
+        count = await delete_intro_posts_by_guild(db_session, "g1")
+        assert count == 2
+
+        assert await has_intro_post(db_session, "g1", "u1", "c1") is False
+        assert await has_intro_post(db_session, "g2", "u1", "c1") is True
+
+    @pytest.mark.asyncio
+    async def test_delete_intro_posts_empty_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        """存在しないギルドの削除は 0。"""
+        count = await delete_intro_posts_by_guild(db_session, "nonexistent")
+        assert count == 0

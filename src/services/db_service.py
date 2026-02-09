@@ -40,10 +40,12 @@ Notes:
 from datetime import datetime
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import (
     AutoBanConfig,
+    AutoBanIntroPost,
     AutoBanLog,
     AutoBanRule,
     BanLog,
@@ -2009,6 +2011,61 @@ async def get_all_autoban_configs(session: AsyncSession) -> list[AutoBanConfig]:
     """全 autoban 設定を取得する。"""
     result = await session.execute(select(AutoBanConfig))
     return list(result.scalars().all())
+
+
+# =============================================================================
+# AutoBanIntroPost (投稿追跡) 操作
+# =============================================================================
+
+
+async def record_intro_post(
+    session: AsyncSession,
+    guild_id: str,
+    user_id: str,
+    channel_id: str,
+) -> None:
+    """指定チャンネルへの投稿を記録する (重複は無視)。"""
+    post = AutoBanIntroPost(
+        guild_id=guild_id,
+        user_id=user_id,
+        channel_id=channel_id,
+    )
+    session.add(post)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+
+
+async def has_intro_post(
+    session: AsyncSession,
+    guild_id: str,
+    user_id: str,
+    channel_id: str,
+) -> bool:
+    """指定チャンネルへの投稿があるか確認する。"""
+    result = await session.execute(
+        select(AutoBanIntroPost.id)
+        .where(
+            AutoBanIntroPost.guild_id == guild_id,
+            AutoBanIntroPost.user_id == user_id,
+            AutoBanIntroPost.channel_id == channel_id,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def delete_intro_posts_by_guild(
+    session: AsyncSession,
+    guild_id: str,
+) -> int:
+    """ギルドの全投稿追跡レコードを削除する。"""
+    result = await session.execute(
+        delete(AutoBanIntroPost).where(AutoBanIntroPost.guild_id == guild_id)
+    )
+    await session.commit()
+    return int(result.rowcount)  # type: ignore[attr-defined]
 
 
 # =============================================================================

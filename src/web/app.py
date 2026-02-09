@@ -3008,11 +3008,12 @@ async def autoban_create_get(
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    guilds_map, _ = await _get_discord_guilds_and_channels(db)
+    guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
 
     return HTMLResponse(
         content=autoban_create_page(
             guilds_map=guilds_map,
+            channels_map=channels_map,
             csrf_token=generate_csrf_token(),
         )
     )
@@ -3028,6 +3029,7 @@ async def autoban_create_post(
     use_wildcard: Annotated[str, Form()] = "",
     threshold_hours: Annotated[str, Form()] = "",
     threshold_seconds: Annotated[str, Form()] = "",
+    required_channel_id: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(get_current_user),
     csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
@@ -3053,6 +3055,8 @@ async def autoban_create_post(
         "role_acquired",
         "vc_join",
         "message_post",
+        "vc_without_intro",
+        "msg_without_intro",
     )
     if rule_type not in valid_rule_types:
         return RedirectResponse(url="/autoban/new", status_code=302)
@@ -3083,6 +3087,14 @@ async def autoban_create_post(
         if threshold_seconds_int < 1 or threshold_seconds_int > 3600:
             return RedirectResponse(url="/autoban/new", status_code=302)
 
+    required_channel_id_str: str | None = None
+    if rule_type in ("vc_without_intro", "msg_without_intro"):
+        if not required_channel_id.strip():
+            return RedirectResponse(url="/autoban/new", status_code=302)
+        if not required_channel_id.strip().isdigit():
+            return RedirectResponse(url="/autoban/new", status_code=302)
+        required_channel_id_str = required_channel_id.strip()
+
     async with get_resource_lock(f"autoban:create:{guild_id}"):
         rule = AutoBanRule(
             guild_id=guild_id,
@@ -3094,6 +3106,7 @@ async def autoban_create_post(
             threshold_seconds=threshold_seconds_int
             if rule_type in ("role_acquired", "vc_join", "message_post")
             else None,
+            required_channel_id=required_channel_id_str,
         )
         db.add(rule)
         await db.commit()
@@ -3118,12 +3131,13 @@ async def autoban_edit_get(
     if not rule:
         return RedirectResponse(url="/autoban", status_code=302)
 
-    guilds_map, _ = await _get_discord_guilds_and_channels(db)
+    guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
 
     return HTMLResponse(
         content=autoban_edit_page(
             rule=rule,
             guilds_map=guilds_map,
+            channels_map=channels_map,
             csrf_token=generate_csrf_token(),
         )
     )
@@ -3138,6 +3152,7 @@ async def autoban_edit_post(
     use_wildcard: Annotated[str, Form()] = "",
     threshold_hours: Annotated[str, Form()] = "",
     threshold_seconds: Annotated[str, Form()] = "",
+    required_channel_id: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(get_current_user),
     csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
@@ -3190,6 +3205,13 @@ async def autoban_edit_post(
             if seconds_int < 1 or seconds_int > 3600:
                 return RedirectResponse(url=edit_url, status_code=302)
             rule.threshold_seconds = seconds_int
+
+        elif rule.rule_type in ("vc_without_intro", "msg_without_intro"):
+            if not required_channel_id.strip():
+                return RedirectResponse(url=edit_url, status_code=302)
+            if not required_channel_id.strip().isdigit():
+                return RedirectResponse(url=edit_url, status_code=302)
+            rule.required_channel_id = required_channel_id.strip()
 
         await db.commit()
         record_form_submit(user_email, path)

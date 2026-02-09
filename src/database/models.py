@@ -1129,6 +1129,7 @@ class AutoBanRule(Base):
     use_wildcard: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     threshold_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
     threshold_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    required_channel_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
@@ -1146,6 +1147,8 @@ class AutoBanRule(Base):
             "role_acquired",
             "vc_join",
             "message_post",
+            "vc_without_intro",
+            "msg_without_intro",
         )
         if value not in allowed:
             msg = f"rule_type must be one of {allowed}, got: {value!r}"
@@ -1237,6 +1240,50 @@ class AutoBanLog(Base):
         return (
             f"<AutoBanLog(id={self.id}, guild_id={self.guild_id}, "
             f"user_id={self.user_id}, action={self.action_taken})>"
+        )
+
+
+class AutoBanIntroPost(Base):
+    """Autoban 指定チャンネル投稿追跡テーブル。
+
+    vc_without_intro / msg_without_intro ルール用。
+    メンバーが指定チャンネルに投稿したことを記録する。
+
+    Attributes:
+        id (int): 自動採番の主キー。
+        guild_id (str): Discord サーバーの ID。インデックス付き。
+        user_id (str): 投稿したユーザーの ID。
+        channel_id (str): 投稿先チャンネルの ID。
+        posted_at (datetime): 投稿日時 (UTC)。
+
+    Notes:
+        - テーブル名: ``autoban_intro_posts``
+        - (guild_id, user_id, channel_id) でユニーク制約
+    """
+
+    __tablename__ = "autoban_intro_posts"
+    __table_args__ = (
+        UniqueConstraint(
+            "guild_id",
+            "user_id",
+            "channel_id",
+            name="uq_intro_guild_user_channel",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    channel_id: Mapped[str] = mapped_column(String, nullable=False)
+    posted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return (
+            f"<AutoBanIntroPost(id={self.id}, guild_id={self.guild_id}, "
+            f"user_id={self.user_id}, channel_id={self.channel_id})>"
         )
 
 
