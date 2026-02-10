@@ -155,8 +155,13 @@ class AutoBanCog(commands.Cog):
         if not message.guild or not message.author:
             return
 
-        # Bot やシステムメッセージは無視
+        # Bot は無視
         if message.author.bot:
+            return
+
+        # システムメッセージ (参加通知など) は無視
+        # 参加通知は author=参加メンバー, bot=False で発火するため
+        if message.type != discord.MessageType.default:
             return
 
         # Member オブジェクトが必要 (joined_at を参照するため)
@@ -237,15 +242,18 @@ class AutoBanCog(commands.Cog):
     def _check_rule(
         self, rule: AutoBanRule, member: discord.Member
     ) -> tuple[bool, str]:
-        """ルールに対してメンバーがマッチするかチェックする。"""
+        """JOIN 時にチェックするルール (username_match / account_age / no_avatar のみ)。
+
+        タイミング系ルール (role_acquired / vc_join / message_post) は
+        各イベントリスナー (on_member_update / on_voice_state_update / on_message)
+        でチェックするため、ここでは対象外。
+        """
         if rule.rule_type == "username_match":
             return self._check_username_match(rule, member)
         if rule.rule_type == "account_age":
             return self._check_account_age(rule, member)
         if rule.rule_type == "no_avatar":
             return self._check_no_avatar(member)
-        if rule.rule_type in ("role_acquired", "vc_join", "message_post"):
-            return self._check_join_timing(rule, member)
         return False, ""
 
     def _check_username_match(

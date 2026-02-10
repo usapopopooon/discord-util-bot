@@ -251,8 +251,8 @@ class TestCheckRule:
         matched, _ = cog._check_rule(rule, member)
         assert not matched
 
-    def test_dispatches_role_acquired(self) -> None:
-        """role_acquired タイプは _check_join_timing にディスパッチ。"""
+    def test_skips_role_acquired(self) -> None:
+        """role_acquired は on_member_update でチェック。_check_rule では対象外。"""
         cog = _make_cog()
         member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=5))
         rule = _make_rule(
@@ -260,25 +260,24 @@ class TestCheckRule:
             pattern=None,
             threshold_seconds=10,
         )
-        matched, reason = cog._check_rule(rule, member)
-        assert matched
-        assert "threshold" in reason.lower()
+        matched, _ = cog._check_rule(rule, member)
+        assert not matched
 
-    def test_dispatches_vc_join(self) -> None:
-        """vc_join タイプは _check_join_timing にディスパッチ。"""
+    def test_skips_vc_join(self) -> None:
+        """vc_join は on_voice_state_update でチェック。_check_rule では対象外。"""
         cog = _make_cog()
         member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=3))
         rule = _make_rule(rule_type="vc_join", pattern=None, threshold_seconds=60)
         matched, _ = cog._check_rule(rule, member)
-        assert matched
+        assert not matched
 
-    def test_dispatches_message_post(self) -> None:
-        """message_post タイプは _check_join_timing にディスパッチ。"""
+    def test_skips_message_post(self) -> None:
+        """message_post は on_message でチェック。_check_rule では対象外。"""
         cog = _make_cog()
         member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=1))
         rule = _make_rule(rule_type="message_post", pattern=None, threshold_seconds=30)
         matched, _ = cog._check_rule(rule, member)
-        assert matched
+        assert not matched
 
 
 class TestCheckJoinTiming:
@@ -415,6 +414,42 @@ class TestOnMemberJoin:
             await cog.on_member_join(member)
             member.guild.kick.assert_called_once()
             member.guild.ban.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_timing_rules_ignored_on_join(self) -> None:
+        """タイミング系ルールは on_member_join では無視。"""
+        cog = _make_cog()
+        member = _make_member(
+            name="gooduser",
+            joined_at=datetime.now(UTC),  # 今参加した
+        )
+        rules = [
+            _make_rule(
+                rule_id=1,
+                rule_type="role_acquired",
+                pattern=None,
+                threshold_seconds=60,
+            ),
+            _make_rule(
+                rule_id=2,
+                rule_type="vc_join",
+                pattern=None,
+                threshold_seconds=90,
+            ),
+            _make_rule(
+                rule_id=3,
+                rule_type="message_post",
+                pattern=None,
+                threshold_seconds=30,
+            ),
+        ]
+        with patch(
+            "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+            return_value=rules,
+        ):
+            await cog.on_member_join(member)
+            member.guild.ban.assert_not_called()
+            member.guild.kick.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_creates_log_on_action(self) -> None:
@@ -1685,8 +1720,10 @@ class TestOnMessage:
         is_member: bool = True,
         has_guild: bool = True,
         joined_at: datetime | None = None,
+        message_type: discord.MessageType = discord.MessageType.default,
     ) -> MagicMock:
         msg = MagicMock(spec=discord.Message)
+        msg.type = message_type
         if has_guild:
             msg.guild = MagicMock()
             msg.guild.id = 789
@@ -1720,10 +1757,20 @@ class TestOnMessage:
             mock_get.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_system_message_skips(self) -> None:
+        """システムメッセージ (参加通知など) はスキップ。"""
+        cog = _make_cog()
+        msg = self._make_message(message_type=discord.MessageType.new_member)
+        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+            await cog.on_message(msg)
+            mock_get.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_non_member_author_skips(self) -> None:
         """author が Member でない場合はスキップ。"""
         cog = _make_cog()
         msg = MagicMock(spec=discord.Message)
+        msg.type = discord.MessageType.default
         msg.guild = MagicMock()
         msg.guild.id = 789
         msg.author = MagicMock(spec=discord.User)  # Not a Member
@@ -1737,6 +1784,7 @@ class TestOnMessage:
         cog = _make_cog()
         member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=5))
         msg = MagicMock(spec=discord.Message)
+        msg.type = discord.MessageType.default
         msg.guild = MagicMock()
         msg.guild.id = 789
         msg.author = member
@@ -1752,6 +1800,7 @@ class TestOnMessage:
         cog = _make_cog()
         member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=2))
         msg = MagicMock(spec=discord.Message)
+        msg.type = discord.MessageType.default
         msg.guild = MagicMock()
         msg.guild.id = 789
         msg.author = member
@@ -1772,6 +1821,7 @@ class TestOnMessage:
         cog = _make_cog()
         member = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=2))
         msg = MagicMock(spec=discord.Message)
+        msg.type = discord.MessageType.default
         msg.guild = MagicMock()
         msg.guild.id = 789
         msg.author = member
@@ -2101,6 +2151,7 @@ class TestMsgWithoutIntro:
         channel_id: int = 999,
     ) -> MagicMock:
         msg = MagicMock(spec=discord.Message)
+        msg.type = discord.MessageType.default
         msg.guild = MagicMock()
         msg.guild.id = 789
         member = _make_member(joined_at=joined_at)
