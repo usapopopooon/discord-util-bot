@@ -14,9 +14,8 @@ COPY alembic.ini .
 # Create data directory
 RUN mkdir -p data
 
-# Default: run the bot
-# Railway overrides this per service via start command
-CMD ["python", "-m", "src.main"]
+# Run migrations then start the bot
+CMD ["sh", "-c", "alembic upgrade head && python -m src.main"]
 
 # Development image with dev dependencies
 FROM base AS dev
