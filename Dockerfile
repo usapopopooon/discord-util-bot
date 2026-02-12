@@ -15,7 +15,7 @@ COPY alembic.ini .
 RUN mkdir -p data
 
 # Run migrations, then start the bot and web server
-CMD ["sh", "-c", "alembic upgrade head && (python -m src.main & uvicorn src.web.app:app --host 0.0.0.0 --port ${PORT:-8000} & wait)"]
+CMD ["sh", "-c", "echo '=== Starting alembic ===' && alembic upgrade head && echo '=== Alembic done ===' && (python -m src.main & uvicorn src.web.app:app --host 0.0.0.0 --port ${PORT:-8000} & wait)"]
 
 # Development image with dev dependencies
 FROM base AS dev
