@@ -165,7 +165,10 @@ def _get_connect_args() -> dict[str, Any]:
 # --- 非同期エンジンの作成 ---
 # create_async_engine: 非同期で DB に接続するためのエンジンを作る
 # echo=False: SQL 文をログに出力しない (True にするとデバッグ時に便利)
-# pool_pre_ping=True: 接続プールの接続が有効かチェックする
+# pool_pre_ping=True: 接続プールの接続が有効かチェックするlogger.error("DATABASE_URL raw value: %r", settings.database_url)
+logger.error("DATABASE_URL raw value: %r", settings.database_url)
+logger.error("async_database_url: %r", settings.async_database_url)
+
 engine = create_async_engine(
     settings.async_database_url,
     echo=False,
