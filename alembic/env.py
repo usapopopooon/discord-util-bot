@@ -6,7 +6,6 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
-from src.config import settings
 from src.database.models import Base
 
 config = context.config
@@ -27,6 +26,8 @@ if database_url:
 else:
     # 環境変数がなければ settings からデフォルト URL を使用
     # asyncpg を psycopg2 互換の URL に変換 (alembic は同期接続を使用)
+    from src.config import settings
+
     sync_url = settings.async_database_url.replace("+asyncpg", "")
     config.set_main_option("sqlalchemy.url", sync_url)
 
