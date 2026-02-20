@@ -66,7 +66,7 @@ class TestCreateEmbedPayload:
         assert result["description"] == ""
 
     def test_embed_default_color(self) -> None:
-        """色指定なしの場合はデフォルトの青を使用。"""
+        """色指定なしの場合はデフォルト色を使用。"""
         panel = RolePanel(
             id=1,
             guild_id="123",
@@ -77,10 +77,10 @@ class TestCreateEmbedPayload:
         )
         result = _create_embed_payload(panel, [])
 
-        assert result["color"] == 0x3498DB  # Blue
+        assert result["color"] == 0x85E7AD
 
     def test_embed_color_zero_uses_default(self) -> None:
-        """color=0 の場合はデフォルトの青を使用 (0 は黒で、意図しない可能性が高い)。"""
+        """color=0 の場合はデフォルト色を使用 (0 は黒で、意図しない可能性が高い)。"""
         panel = RolePanel(
             id=1,
             guild_id="123",
@@ -91,7 +91,7 @@ class TestCreateEmbedPayload:
         )
         result = _create_embed_payload(panel, [])
 
-        assert result["color"] == 0x3498DB  # Blue default
+        assert result["color"] == 0x85E7AD
 
     def test_embed_custom_color_preserved(self) -> None:
         """カスタムカラーが正しく保持される。"""

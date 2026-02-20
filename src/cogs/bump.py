@@ -24,6 +24,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.services.db_service import (
     clear_bump_reminder,
@@ -716,7 +717,7 @@ class BumpCog(commands.Cog):
         embed = discord.Embed(
             title="Bump 検知",
             description=description,
-            color=discord.Color.green(),
+            color=DEFAULT_EMBED_COLOR,
             timestamp=datetime.now(UTC),
         )
         embed.set_footer(text=service_name)
@@ -737,7 +738,7 @@ class BumpCog(commands.Cog):
                 f"**{service_name}** の bump ができるようになりました！\n\n"
                 f"サーバーを上位に表示させるために bump しましょう。"
             ),
-            color=discord.Color.blue(),
+            color=DEFAULT_EMBED_COLOR,
             timestamp=datetime.now(UTC),
         )
         embed.set_footer(text=service_name)
@@ -933,7 +934,7 @@ class BumpCog(commands.Cog):
         embed = discord.Embed(
             title="Bump 監視を開始しました",
             description=base_description + (recent_bump_info or ""),
-            color=discord.Color.green(),
+            color=DEFAULT_EMBED_COLOR,
             timestamp=datetime.now(UTC),
         )
         embed.set_footer(text="Bump リマインダー")
@@ -1007,7 +1008,7 @@ class BumpCog(commands.Cog):
                     f"・DISBOARD: {disboard_role}\n"
                     f"・ディス速報: {dissoku_role}"
                 ),
-                color=discord.Color.blue(),
+                color=DEFAULT_EMBED_COLOR,
             )
             embed.set_footer(text="Bump リマインダー")
             await interaction.response.send_message(embed=embed)
@@ -1018,7 +1019,7 @@ class BumpCog(commands.Cog):
                     "このサーバーでは bump 監視が設定されていません。\n\n"
                     "`/bump setup` で設定してください。"
                 ),
-                color=discord.Color.greyple(),
+                color=DEFAULT_EMBED_COLOR,
             )
             embed.set_footer(text="Bump リマインダー")
             await interaction.response.send_message(embed=embed)
@@ -1045,7 +1046,7 @@ class BumpCog(commands.Cog):
             embed = discord.Embed(
                 title="Bump 監視を停止しました",
                 description="このサーバーでの bump 監視を無効にしました。",
-                color=discord.Color.orange(),
+                color=DEFAULT_EMBED_COLOR,
                 timestamp=datetime.now(UTC),
             )
             embed.set_footer(text="Bump リマインダー")
@@ -1055,7 +1056,7 @@ class BumpCog(commands.Cog):
             embed = discord.Embed(
                 title="Bump 監視",
                 description="bump 監視は既に無効になっています。",
-                color=discord.Color.greyple(),
+                color=DEFAULT_EMBED_COLOR,
             )
             embed.set_footer(text="Bump リマインダー")
             await interaction.response.send_message(embed=embed)

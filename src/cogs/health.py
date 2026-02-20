@@ -24,6 +24,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src.config import settings
+from src.constants import DEFAULT_EMBED_COLOR
 
 # ロガーの取得。__name__ でモジュールパスがロガー名になる
 # (例: "src.cogs.health")
@@ -185,7 +186,7 @@ class HealthCog(commands.Cog):
         guild_count = len(self.bot.guilds)
         embed = discord.Embed(
             title="\U0001f680 Deploy Complete",
-            color=discord.Color.blue(),
+            color=DEFAULT_EMBED_COLOR,
             timestamp=datetime.now(UTC),
         )
         embed.add_field(

@@ -30,6 +30,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.database.models import AutoBanRule
 from src.services.db_service import (
@@ -672,7 +673,7 @@ class AutoBanCog(commands.Cog):
             )
             return
 
-        embed = discord.Embed(title="Autoban Rules", color=0xFF4444)
+        embed = discord.Embed(title="Autoban Rules", color=DEFAULT_EMBED_COLOR)
         for rule in rules:
             status = "Enabled" if rule.is_enabled else "Disabled"
             desc = f"Action: {rule.action} | Status: {status}"
@@ -710,7 +711,7 @@ class AutoBanCog(commands.Cog):
             )
             return
 
-        embed = discord.Embed(title="Autoban Logs (Last 10)", color=0xFF4444)
+        embed = discord.Embed(title="Autoban Logs (Last 10)", color=DEFAULT_EMBED_COLOR)
         for log_entry in logs:
             embed.add_field(
                 name=f"{log_entry.username} ({log_entry.user_id})",

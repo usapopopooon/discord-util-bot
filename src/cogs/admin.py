@@ -12,6 +12,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.services.db_service import (
     delete_bump_config,
@@ -154,7 +155,7 @@ class AdminCog(commands.Cog):
                 1 for p in role_panels if p.guild_id not in current_guild_ids
             )
 
-        embed = discord.Embed(title="DB統計情報", color=discord.Color.blue())
+        embed = discord.Embed(title="DB統計情報", color=DEFAULT_EMBED_COLOR)
         embed.add_field(
             name="ロビー",
             value=f"総数: {len(lobbies)}\n孤立: {orphaned_lobbies}",

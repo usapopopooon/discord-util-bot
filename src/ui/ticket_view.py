@@ -18,6 +18,7 @@ import discord
 from sqlalchemy.exc import IntegrityError
 
 from src.config import settings
+from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.database.models import Ticket, TicketCategory, TicketPanel, TicketPanelCategory
 from src.services.db_service import (
@@ -53,7 +54,7 @@ def create_ticket_opening_embed(
     embed = discord.Embed(
         title=f"Ticket #{ticket.ticket_number} - {category.name}",
         description=f"<@{ticket.user_id}> がチケットを作成しました。",
-        color=discord.Color.blue(),
+        color=DEFAULT_EMBED_COLOR,
         timestamp=ticket.created_at,
     )
 
@@ -78,7 +79,7 @@ def create_ticket_panel_embed(
         title=panel.title,
         description=panel.description
         or "下のボタンをクリックしてチケットを作成してください。",
-        color=discord.Color.blue(),
+        color=DEFAULT_EMBED_COLOR,
     )
     return embed
 

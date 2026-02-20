@@ -12,7 +12,6 @@ from discord.ext import commands
 from faker import Faker
 
 from src.cogs.sticky import (
-    DEFAULT_COLOR,
     StickyCog,
     StickyEmbedModal,
     StickySetModal,
@@ -123,7 +122,7 @@ class TestBuildEmbed:
         cog = _make_cog()
         embed = cog._build_embed("Title", "Description", None)
 
-        assert embed.color == discord.Color(DEFAULT_COLOR)
+        assert embed.color == discord.Color(0x85E7AD)
 
 
 # ---------------------------------------------------------------------------
@@ -2820,8 +2819,8 @@ class TestBuildEmbedEdgeCases:
         """color = 0 は falsy なのでデフォルト色が使われる。"""
         cog = _make_cog()
         embed = cog._build_embed("Title", "Description", 0)
-        # 0 is falsy → `color or DEFAULT_COLOR` → DEFAULT_COLOR (0x5865F2)
-        assert embed.color == discord.Color(0x5865F2)
+        # 0 is falsy → `color or DEFAULT_EMBED_COLOR` → DEFAULT_EMBED_COLOR
+        assert embed.color == discord.Color(0x85E7AD)
 
 
 class TestStickySetupCacheVerification:

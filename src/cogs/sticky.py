@@ -22,6 +22,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.services.db_service import (
     create_sticky_message,
@@ -33,9 +34,6 @@ from src.services.db_service import (
 )
 
 logger = logging.getLogger(__name__)
-
-# デフォルトの embed 色 (Discord Blurple)
-DEFAULT_COLOR = 0x5865F2
 
 
 class StickyEmbedModal(discord.ui.Modal, title="Sticky メッセージ設定 (Embed)"):
@@ -532,7 +530,7 @@ class StickyCog(commands.Cog):
         return discord.Embed(
             title=title,
             description=description,
-            color=color or DEFAULT_COLOR,
+            color=color or DEFAULT_EMBED_COLOR,
         )
 
     # ==========================================================================
@@ -652,7 +650,7 @@ class StickyCog(commands.Cog):
         color_hex = f"#{sticky.color:06X}" if sticky.color else "デフォルト"
         embed = discord.Embed(
             title="📌 Sticky メッセージ設定",
-            color=sticky.color or DEFAULT_COLOR,
+            color=sticky.color or DEFAULT_EMBED_COLOR,
         )
         embed.add_field(name="種類", value=message_type_display, inline=True)
         embed.add_field(name="遅延", value=f"{sticky.cooldown_seconds}秒", inline=True)

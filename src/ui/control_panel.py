@@ -24,6 +24,7 @@ from typing import Any
 import discord
 from discord.ext import commands
 
+from src.constants import DEFAULT_EMBED_COLOR
 from src.core.permissions import is_owner
 from src.core.validators import validate_channel_name, validate_user_limit
 from src.database.engine import async_session
@@ -158,7 +159,7 @@ def create_control_panel_embed(
         title="ボイスチャンネル設定",
         # owner.mention → @ユーザー名 のメンション形式 (クリックでプロフィール表示)
         description=f"オーナー: {owner.mention}",
-        color=discord.Color.blue(),
+        color=DEFAULT_EMBED_COLOR,
     )
 
     lock_status = "ロック中" if session.is_locked else "未ロック"

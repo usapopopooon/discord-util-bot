@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from src.config import settings
+from src.constants import DEFAULT_EMBED_COLOR
 from src.database.models import (
     RolePanel,
     RolePanelItem,
@@ -52,7 +53,7 @@ def _create_embed_payload(
     return {
         "title": panel.title,
         "description": panel.description or "",
-        "color": panel.color if panel.color else 0x3498DB,  # Blue default
+        "color": panel.color if panel.color else DEFAULT_EMBED_COLOR,  # Blue default
     }
 
 
@@ -525,7 +526,7 @@ async def post_ticket_panel_to_discord(
                 "title": panel.title,
                 "description": panel.description
                 or "下のボタンをクリックしてチケットを作成してください。",
-                "color": 0x3498DB,
+                "color": DEFAULT_EMBED_COLOR,
             }
         ],
     }
@@ -638,7 +639,7 @@ async def edit_ticket_panel_in_discord(
                 "title": panel.title,
                 "description": panel.description
                 or "下のボタンをクリックしてチケットを作成してください。",
-                "color": 0x3498DB,
+                "color": DEFAULT_EMBED_COLOR,
             }
         ],
     }

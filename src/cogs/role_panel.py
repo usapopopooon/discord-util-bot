@@ -22,6 +22,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from sqlalchemy.exc import IntegrityError
 
+from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.services.db_service import (
     add_role_panel_item,
@@ -349,7 +350,7 @@ class RolePanelCog(commands.Cog):
 
             embed = discord.Embed(
                 title="ロールパネル一覧",
-                color=discord.Color.blue(),
+                color=DEFAULT_EMBED_COLOR,
             )
 
             for panel in panels:

@@ -16,6 +16,7 @@ from typing import Any
 
 import discord
 
+from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.database.models import RolePanel, RolePanelItem
 from src.services.db_service import (
@@ -102,7 +103,9 @@ def create_role_panel_embed(
     embed = discord.Embed(
         title=panel.title,
         description=panel.description or "",
-        color=discord.Color(panel.color) if panel.color else discord.Color.blue(),
+        color=discord.Color(panel.color)
+        if panel.color
+        else discord.Color(DEFAULT_EMBED_COLOR),
     )
 
     # リアクション式の場合はロール一覧を表示

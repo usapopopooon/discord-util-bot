@@ -262,10 +262,10 @@ class TestCreateRolePanelEmbed:
         assert embed.color.value == 0xFF5733
 
     def test_creates_embed_with_default_color(self) -> None:
-        """色未指定時はデフォルト色 (blue) になる。"""
+        """色未指定時はデフォルト色になる。"""
         panel = _make_role_panel(color=None)
         embed = create_role_panel_embed(panel, [])
-        assert embed.color == discord.Color.blue()
+        assert embed.color == discord.Color(0x85E7AD)
 
     def test_creates_embed_without_description(self) -> None:
         """説明文なしの Embed を作成できる。"""
