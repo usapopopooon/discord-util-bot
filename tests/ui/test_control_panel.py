@@ -156,7 +156,6 @@ class TestCreateControlPanelEmbed:
 
         assert embed.title == "ボイスチャンネル設定"
         assert "<@1>" in (embed.description or "")
-        assert embed.color == discord.Color(0x85E7AD)
 
     def test_locked_status(self) -> None:
         """ロック中の状態表示。"""

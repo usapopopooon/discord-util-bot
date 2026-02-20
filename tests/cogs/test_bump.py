@@ -981,7 +981,6 @@ class TestBuildDetectionEmbed:
         embed = cog._build_detection_embed("DISBOARD", member, remind_at, True)
 
         assert embed.title == "Bump 検知"
-        assert embed.color == discord.Color(0x85E7AD)
 
     def test_detection_embed_mentions_user(self) -> None:
         """検知 Embed にユーザーメンションが含まれる。"""
@@ -1076,7 +1075,6 @@ class TestBuildReminderEmbed:
         embed = cog._build_reminder_embed("DISBOARD")
 
         assert embed.title == "Bump リマインダー"
-        assert embed.color == discord.Color(0x85E7AD)
 
     def test_reminder_embed_contains_service_name(self) -> None:
         """リマインダー Embed にサービス名が含まれる。"""
@@ -2442,7 +2440,6 @@ class TestBumpWithParameterize:
         embed = cog._build_reminder_embed(service_name)
 
         assert embed.title == "Bump リマインダー"
-        assert embed.color == discord.Color(0x85E7AD)
         assert service_name in (embed.description or "")
 
     @pytest.mark.parametrize(

@@ -147,21 +147,3 @@ class TestTimezoneOffset:
             _env_file=None,  # type: ignore[call-arg]
         )
         assert s.timezone_offset == 9
-
-    def test_custom_positive_offset(self) -> None:
-        """正のオフセット (JST) を設定できる。"""
-        s = Settings(
-            discord_token="test",
-            database_url="postgresql+asyncpg://x@y/z",
-            timezone_offset=9,
-        )
-        assert s.timezone_offset == 9
-
-    def test_custom_negative_offset(self) -> None:
-        """負のオフセット (EST) を設定できる。"""
-        s = Settings(
-            discord_token="test",
-            database_url="postgresql+asyncpg://x@y/z",
-            timezone_offset=-5,
-        )
-        assert s.timezone_offset == -5

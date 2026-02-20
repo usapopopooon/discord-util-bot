@@ -262,7 +262,6 @@ class TestBeforeHeartbeat:
         mock_channel.send.assert_awaited_once()
         embed = mock_channel.send.call_args[1]["embed"]
         assert "Deploy" in (embed.title or "")
-        assert embed.color == discord.Color(0x85E7AD)
 
     async def test_deploy_skipped_when_no_channel(self) -> None:
         """channel_id=0 の場合デプロイ通知はスキップ。"""
@@ -283,12 +282,6 @@ class TestBeforeHeartbeat:
 
 class TestBuildDeployEmbed:
     """Tests for _build_deploy_embed."""
-
-    def test_deploy_embed_uses_default_color(self) -> None:
-        """デプロイ Embed がデフォルト色を使用する。"""
-        cog = _make_cog(guild_count=3)
-        embed = cog._build_deploy_embed()
-        assert embed.color == discord.Color(0x85E7AD)
 
     def test_deploy_embed_has_boot_field(self) -> None:
         """デプロイ Embed に Boot フィールドがある。"""

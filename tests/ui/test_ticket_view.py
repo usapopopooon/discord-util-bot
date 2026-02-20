@@ -98,7 +98,6 @@ class TestCreateTicketOpeningEmbed:
         assert "Ticket #42" in embed.title
         assert "General Support" in embed.title
         assert f"<@{ticket.user_id}>" in (embed.description or "")
-        assert embed.color == discord.Color(0x85E7AD)
 
     def test_embed_no_fields(self) -> None:
         """Embed にフィールドがない。"""

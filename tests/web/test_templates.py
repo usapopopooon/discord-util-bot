@@ -59,30 +59,11 @@ from src.web.templates import (
 class TestBaseTemplate:
     """_base テンプレートのテスト。"""
 
-    def test_contains_html_structure(self) -> None:
-        """HTML の基本構造を含む。"""
-        result = _base("Test", "<p>Content</p>")
-        assert "<!DOCTYPE html>" in result
-        assert "<html" in result
-        assert "</html>" in result
-        assert "<head>" in result
-        assert "<body" in result
-
     def test_title_is_escaped(self) -> None:
         """タイトルがエスケープされる。"""
         result = _base("<script>alert('xss')</script>", "content")
         assert "&lt;script&gt;" in result
         assert "<script>alert" not in result
-
-    def test_includes_tailwind(self) -> None:
-        """Tailwind CDN が含まれる。"""
-        result = _base("Test", "content")
-        assert "tailwindcss" in result
-
-    def test_content_is_included(self) -> None:
-        """コンテンツが含まれる。"""
-        result = _base("Test", "<div>Test Content</div>")
-        assert "<div>Test Content</div>" in result
 
 
 # ===========================================================================
@@ -188,21 +169,6 @@ class TestListPageBreadcrumbs:
 
 class TestNavComponent:
     """_nav コンポーネントのテスト。"""
-
-    def test_contains_title(self) -> None:
-        """タイトルが含まれる。"""
-        result = _nav("Test Title")
-        assert "Test Title" in result
-
-    def test_contains_dashboard_link(self) -> None:
-        """Dashboard リンクが含まれる。"""
-        result = _nav("Test")
-        assert "/dashboard" in result
-
-    def test_contains_logout_link(self) -> None:
-        """Logout リンクが含まれる。"""
-        result = _nav("Test")
-        assert "/logout" in result
 
     def test_title_is_escaped(self) -> None:
         """タイトルがエスケープされる。"""

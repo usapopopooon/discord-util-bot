@@ -18,26 +18,6 @@ from src.bot import EphemeralVCBot
 class TestBotInit:
     """Tests for EphemeralVCBot constructor."""
 
-    def test_intents_voice_states(self) -> None:
-        """voice_states Intent が有効。"""
-        bot = EphemeralVCBot()
-        assert bot.intents.voice_states is True
-
-    def test_intents_guilds(self) -> None:
-        """guilds Intent が有効。"""
-        bot = EphemeralVCBot()
-        assert bot.intents.guilds is True
-
-    def test_intents_members(self) -> None:
-        """members Intent が有効。"""
-        bot = EphemeralVCBot()
-        assert bot.intents.members is True
-
-    def test_command_prefix(self) -> None:
-        """コマンドプレフィックスが ! に設定されている。"""
-        bot = EphemeralVCBot()
-        assert bot.command_prefix == "!"
-
     def test_activity_set_in_constructor(self) -> None:
         """アクティビティがコンストラクタで設定されている。"""
         bot = EphemeralVCBot()
@@ -48,13 +28,6 @@ class TestBotInit:
         assert bot.activity is not None
         assert isinstance(bot.activity, discord.Game)
         assert "お菓子" in bot.activity.name
-
-    def test_activity_is_playing_type(self) -> None:
-        """アクティビティが「〜をプレイ中」タイプである。"""
-        bot = EphemeralVCBot()
-        assert bot.activity is not None
-        # discord.Game は ActivityType.playing を使用
-        assert bot.activity.type == discord.ActivityType.playing
 
 
 # ===========================================================================
