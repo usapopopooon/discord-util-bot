@@ -1503,6 +1503,59 @@ class TestVcLobbyCommand:
         msg = interaction.response.send_message.call_args[0][0]
         assert "失敗" in msg
 
+    async def test_concurrent_lobby_creation_only_creates_one(self) -> None:
+        """同時に /vc lobby を実行しても、ロビーは1つだけ作成される。"""
+        cog = _make_cog()
+        cog._lobby_channel_ids = set()
+
+        # 1回目は [] を返し (ロビーなし)、2回目以降は [existing] を返す
+        existing_lobby = MagicMock()
+        call_count = 0
+
+        async def get_lobbies_side_effect(
+            _session: MagicMock, _guild_id: str
+        ) -> list[MagicMock]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # ロック内で最初に呼ばれた側はロビーなし
+                return []
+            # 2番目の呼び出しは既にロビーあり
+            return [existing_lobby]
+
+        lobby_channel = MagicMock(spec=discord.VoiceChannel)
+        lobby_channel.id = 500
+        lobby_channel.name = "参加して作成"
+
+        interaction1 = _make_interaction(1)
+        interaction1.guild.create_voice_channel = AsyncMock(return_value=lobby_channel)
+        interaction2 = _make_interaction(2, guild_id=1000)
+        interaction2.guild.create_voice_channel = AsyncMock(return_value=lobby_channel)
+
+        mock_factory, _mock_session = _mock_async_session()
+        with (
+            patch("src.cogs.voice.async_session", mock_factory),
+            patch(
+                "src.cogs.voice.get_lobbies_by_guild",
+                side_effect=get_lobbies_side_effect,
+            ),
+            patch("src.cogs.voice.create_lobby", new_callable=AsyncMock) as mock_create,
+        ):
+            await asyncio.gather(
+                cog.vc_lobby.callback(cog, interaction1),
+                cog.vc_lobby.callback(cog, interaction2),
+            )
+
+            # create_lobby は1回だけ呼ばれる
+            assert mock_create.await_count == 1
+
+        # 1つは成功メッセージ、もう1つは「既に存在」メッセージ
+        msg1 = interaction1.response.send_message.call_args[0][0]
+        msg2 = interaction2.response.send_message.call_args[0][0]
+        messages = [msg1, msg2]
+        assert sum(1 for m in messages if "作成しました" in m) == 1
+        assert sum(1 for m in messages if "既に" in m) == 1
+
 
 # ===========================================================================
 # /vc panel コマンドテスト

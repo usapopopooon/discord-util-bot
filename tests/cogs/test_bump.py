@@ -3755,3 +3755,64 @@ class TestBumpCogSetupCacheVerification:
         cog = mock_bot.add_cog.call_args[0][0]
         assert hasattr(cog, "_bump_guild_ids")
         assert cog._bump_guild_ids == {"guild1", "guild2"}
+
+
+# ---------------------------------------------------------------------------
+# ロックによる同時実行制御テスト
+# ---------------------------------------------------------------------------
+
+
+class TestBumpSetupConcurrency:
+    """Bump setup のロックによる同時実行制御テスト。"""
+
+    async def test_concurrent_setup_serialized(self) -> None:
+        """同ギルドで同時に /bump setup を実行してもシリアライズされる。"""
+        cog = _make_cog()
+        cog._bump_guild_ids = set()
+
+        execution_order: list[str] = []
+
+        async def tracking_upsert(*_args: object, **_kwargs: object) -> None:
+            execution_order.append("upsert_start")
+            await asyncio.sleep(0.01)
+            execution_order.append("upsert_end")
+
+        def make_setup_interaction(guild_id: int = 12345) -> MagicMock:
+            interaction = MagicMock(spec=discord.Interaction)
+            interaction.guild = MagicMock()
+            interaction.guild.id = guild_id
+            interaction.channel_id = 456
+            interaction.channel = MagicMock(spec=discord.TextChannel)
+            interaction.response = MagicMock()
+            interaction.response.send_message = AsyncMock()
+            interaction.followup = MagicMock()
+            interaction.followup.send = AsyncMock()
+            return interaction
+
+        interaction1 = make_setup_interaction()
+        interaction2 = make_setup_interaction()
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.bump.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.bump.upsert_bump_config",
+                side_effect=tracking_upsert,
+            ),
+            patch.object(cog, "_find_recent_bump", return_value=None),
+        ):
+            await asyncio.gather(
+                cog.bump_setup.callback(cog, interaction1),
+                cog.bump_setup.callback(cog, interaction2),
+            )
+
+        # シリアライズされている: upsert_start → upsert_end が連続
+        assert execution_order == [
+            "upsert_start",
+            "upsert_end",
+            "upsert_start",
+            "upsert_end",
+        ]

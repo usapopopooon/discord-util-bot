@@ -784,42 +784,46 @@ class VoiceCog(commands.Cog):
             )
             return
 
-        # --- 重複チェック ---
-        # 1サーバーにつきロビーは1つまで
-        async with async_session() as session:
-            existing = await get_lobbies_by_guild(session, str(interaction.guild_id))
-            if existing:
+        guild_id = str(interaction.guild_id)
+
+        # ギルド単位のロックで重複作成を防止
+        async with get_resource_lock(f"lobby_create:{guild_id}"):
+            # --- 重複チェック ---
+            # 1サーバーにつきロビーは1つまで
+            async with async_session() as session:
+                existing = await get_lobbies_by_guild(session, guild_id)
+                if existing:
+                    await interaction.response.send_message(
+                        "このサーバーには既にロビーが存在します。",
+                        ephemeral=True,
+                    )
+                    return
+
+            # --- VC の作成 ---
+            try:
+                lobby_channel = await interaction.guild.create_voice_channel(
+                    name="参加して作成",
+                )
+            except discord.HTTPException as e:
                 await interaction.response.send_message(
-                    "このサーバーには既にロビーが存在します。",
-                    ephemeral=True,
+                    f"VCの作成に失敗しました: {e}", ephemeral=True
                 )
                 return
 
-        # --- VC の作成 ---
-        try:
-            lobby_channel = await interaction.guild.create_voice_channel(
-                name="参加して作成",
-            )
-        except discord.HTTPException as e:
-            await interaction.response.send_message(
-                f"VCの作成に失敗しました: {e}", ephemeral=True
-            )
-            return
+            # --- DB にロビーとして登録 ---
+            lobby_channel_id_str = str(lobby_channel.id)
+            async with async_session() as session:
+                await create_lobby(
+                    session,
+                    guild_id=guild_id,
+                    lobby_channel_id=lobby_channel_id_str,
+                    category_id=None,
+                    default_user_limit=0,
+                )
 
-        # --- DB にロビーとして登録 ---
-        lobby_channel_id_str = str(lobby_channel.id)
-        async with async_session() as session:
-            await create_lobby(
-                session,
-                guild_id=str(interaction.guild_id),
-                lobby_channel_id=lobby_channel_id_str,
-                category_id=None,
-                default_user_limit=0,
-            )
-
-        # キャッシュに追加
-        if self._lobby_channel_ids is not None:
-            self._lobby_channel_ids.add(lobby_channel_id_str)
+            # キャッシュに追加
+            if self._lobby_channel_ids is not None:
+                self._lobby_channel_ids.add(lobby_channel_id_str)
 
         await interaction.response.send_message(
             f"ロビー **{lobby_channel.name}** を作成しました！\n"

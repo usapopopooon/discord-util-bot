@@ -19,8 +19,16 @@ from src.cogs.sticky import (
     StickyTypeSelect,
     StickyTypeView,
 )
+from src.utils import clear_resource_locks
 
 fake = Faker("ja_JP")
+
+
+@pytest.fixture(autouse=True)
+def _clear_locks() -> None:
+    """Clear resource locks before each test."""
+    clear_resource_locks()
+
 
 # ---------------------------------------------------------------------------
 # テスト用ヘルパー
@@ -2930,3 +2938,73 @@ class TestStickyChannelsCache:
 
         # DB にアクセスしていないことを確認
         mock_session.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# ロックによる同時実行制御テスト
+# ---------------------------------------------------------------------------
+
+
+class TestStickySetConcurrency:
+    """Sticky set のロックによる同時実行制御テスト。"""
+
+    async def test_concurrent_embed_set_serialized(self) -> None:
+        """同チャンネルで同時に Embed 設定しても、ロックでシリアライズされる。"""
+        cog = _make_cog()
+        cog._sticky_channels = set()
+
+        execution_order: list[str] = []
+
+        async def tracking_create(*_args: object, **_kwargs: object) -> None:
+            execution_order.append("create_start")
+            await asyncio.sleep(0.01)
+            execution_order.append("create_end")
+
+        modal1 = StickySetModal(cog)
+        modal1.sticky_title._value = "Title1"
+        modal1.description._value = "Desc1"
+        modal1.color._value = ""
+        modal1.delay._value = "5"
+
+        modal2 = StickySetModal(cog)
+        modal2.sticky_title._value = "Title2"
+        modal2.description._value = "Desc2"
+        modal2.color._value = ""
+        modal2.delay._value = "5"
+
+        # 同じチャンネル ID
+        interaction1 = _make_interaction(channel_id=456)
+        interaction2 = _make_interaction(channel_id=456)
+
+        new_msg = MagicMock()
+        new_msg.id = 111
+        interaction1.channel.send = AsyncMock(return_value=new_msg)
+        interaction2.channel.send = AsyncMock(return_value=new_msg)
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.create_sticky_message",
+                side_effect=tracking_create,
+            ),
+            patch(
+                "src.cogs.sticky.update_sticky_message_id",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await asyncio.gather(
+                modal1.on_submit(interaction1),
+                modal2.on_submit(interaction2),
+            )
+
+        # シリアライズされている: create_start → create_end が連続
+        assert execution_order == [
+            "create_start",
+            "create_end",
+            "create_start",
+            "create_end",
+        ]

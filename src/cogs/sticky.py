@@ -32,6 +32,7 @@ from src.services.db_service import (
     get_sticky_message,
     update_sticky_message_id,
 )
+from src.utils import get_resource_lock
 
 logger = logging.getLogger(__name__)
 
@@ -119,49 +120,51 @@ class StickyEmbedModal(discord.ui.Modal, title="Sticky メッセージ設定 (Em
         guild_id = str(interaction.guild.id)
         channel_id = str(interaction.channel_id)
 
-        # 設定を保存
-        async with async_session() as session:
-            await create_sticky_message(
-                session,
-                channel_id=channel_id,
-                guild_id=guild_id,
-                title=title,
-                description=description,
-                color=color_int,
-                cooldown_seconds=delay_seconds,
-                message_type="embed",
+        # チャンネル単位のロックで重複作成を防止
+        async with get_resource_lock(f"sticky_set:{channel_id}"):
+            # 設定を保存
+            async with async_session() as session:
+                await create_sticky_message(
+                    session,
+                    channel_id=channel_id,
+                    guild_id=guild_id,
+                    title=title,
+                    description=description,
+                    color=color_int,
+                    cooldown_seconds=delay_seconds,
+                    message_type="embed",
+                )
+
+            # キャッシュに追加
+            if self.cog._sticky_channels is not None:
+                self.cog._sticky_channels.add(channel_id)
+
+            # embed を投稿
+            embed = self.cog._build_embed(title, description, color_int)
+            await interaction.response.send_message(
+                "✅ Sticky メッセージ (Embed) を設定しました。", ephemeral=True
             )
 
-        # キャッシュに追加
-        if self.cog._sticky_channels is not None:
-            self.cog._sticky_channels.add(channel_id)
-
-        # embed を投稿
-        embed = self.cog._build_embed(title, description, color_int)
-        await interaction.response.send_message(
-            "✅ Sticky メッセージ (Embed) を設定しました。", ephemeral=True
-        )
-
-        # 実際の sticky メッセージを投稿
-        channel = interaction.channel
-        if channel and hasattr(channel, "send"):
-            try:
-                new_message = await channel.send(embed=embed)
-                async with async_session() as session:
-                    await update_sticky_message_id(
-                        session,
+            # 実際の sticky メッセージを投稿
+            channel = interaction.channel
+            if channel and hasattr(channel, "send"):
+                try:
+                    new_message = await channel.send(embed=embed)
+                    async with async_session() as session:
+                        await update_sticky_message_id(
+                            session,
+                            channel_id,
+                            str(new_message.id),
+                            last_posted_at=datetime.now(UTC),
+                        )
+                    logger.info(
+                        "Sticky message set (embed): guild=%s channel=%s title=%s",
+                        guild_id,
                         channel_id,
-                        str(new_message.id),
-                        last_posted_at=datetime.now(UTC),
+                        title,
                     )
-                logger.info(
-                    "Sticky message set (embed): guild=%s channel=%s title=%s",
-                    guild_id,
-                    channel_id,
-                    title,
-                )
-            except discord.HTTPException as e:
-                logger.error("Failed to post initial sticky message: %s", e)
+                except discord.HTTPException as e:
+                    logger.error("Failed to post initial sticky message: %s", e)
 
 
 class StickyTextModal(discord.ui.Modal, title="Sticky メッセージ設定 (テキスト)"):
@@ -218,46 +221,48 @@ class StickyTextModal(discord.ui.Modal, title="Sticky メッセージ設定 (テ
         guild_id = str(interaction.guild.id)
         channel_id = str(interaction.channel_id)
 
-        # 設定を保存 (title は空文字、color は None)
-        async with async_session() as session:
-            await create_sticky_message(
-                session,
-                channel_id=channel_id,
-                guild_id=guild_id,
-                title="",
-                description=content,
-                color=None,
-                cooldown_seconds=delay_seconds,
-                message_type="text",
+        # チャンネル単位のロックで重複作成を防止
+        async with get_resource_lock(f"sticky_set:{channel_id}"):
+            # 設定を保存 (title は空文字、color は None)
+            async with async_session() as session:
+                await create_sticky_message(
+                    session,
+                    channel_id=channel_id,
+                    guild_id=guild_id,
+                    title="",
+                    description=content,
+                    color=None,
+                    cooldown_seconds=delay_seconds,
+                    message_type="text",
+                )
+
+            # キャッシュに追加
+            if self.cog._sticky_channels is not None:
+                self.cog._sticky_channels.add(channel_id)
+
+            await interaction.response.send_message(
+                "✅ Sticky メッセージ (テキスト) を設定しました。", ephemeral=True
             )
 
-        # キャッシュに追加
-        if self.cog._sticky_channels is not None:
-            self.cog._sticky_channels.add(channel_id)
-
-        await interaction.response.send_message(
-            "✅ Sticky メッセージ (テキスト) を設定しました。", ephemeral=True
-        )
-
-        # 実際の sticky メッセージを投稿
-        channel = interaction.channel
-        if channel and hasattr(channel, "send"):
-            try:
-                new_message = await channel.send(content)
-                async with async_session() as session:
-                    await update_sticky_message_id(
-                        session,
+            # 実際の sticky メッセージを投稿
+            channel = interaction.channel
+            if channel and hasattr(channel, "send"):
+                try:
+                    new_message = await channel.send(content)
+                    async with async_session() as session:
+                        await update_sticky_message_id(
+                            session,
+                            channel_id,
+                            str(new_message.id),
+                            last_posted_at=datetime.now(UTC),
+                        )
+                    logger.info(
+                        "Sticky message set (text): guild=%s channel=%s",
+                        guild_id,
                         channel_id,
-                        str(new_message.id),
-                        last_posted_at=datetime.now(UTC),
                     )
-                logger.info(
-                    "Sticky message set (text): guild=%s channel=%s",
-                    guild_id,
-                    channel_id,
-                )
-            except discord.HTTPException as e:
-                logger.error("Failed to post initial sticky message: %s", e)
+                except discord.HTTPException as e:
+                    logger.error("Failed to post initial sticky message: %s", e)
 
 
 class StickyTypeSelect(discord.ui.Select[discord.ui.View]):
