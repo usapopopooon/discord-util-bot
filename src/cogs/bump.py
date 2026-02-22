@@ -526,6 +526,20 @@ class BumpCog(commands.Cog):
                 )
                 return
 
+            # 別インスタンスが同じ bump を既に処理済みか確認
+            existing = await get_bump_reminder(session, guild_id, service_name)
+            if existing and existing.remind_at:
+                diff = abs((remind_at - existing.remind_at).total_seconds())
+                if diff < 60:
+                    logger.info(
+                        "Bump already processed by another instance: "
+                        "guild=%s service=%s diff=%.1fs",
+                        guild_id,
+                        service_name,
+                        diff,
+                    )
+                    return
+
             logger.info(
                 "Bump success detected: service=%s guild=%s user=%s",
                 service_name,
@@ -768,8 +782,10 @@ class BumpCog(commands.Cog):
             due_reminders = await get_due_bump_reminders(session, now)
 
             for reminder in due_reminders:
-                await self._send_reminder(reminder)
-                await clear_bump_reminder(session, reminder.id)
+                # アトミックにクリア → 成功したインスタンスだけが送信
+                cleared = await clear_bump_reminder(session, reminder.id)
+                if cleared:
+                    await self._send_reminder(reminder)
 
     @_reminder_check.before_loop
     async def _before_reminder_check(self) -> None:

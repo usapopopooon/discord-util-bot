@@ -30,6 +30,17 @@ def _clear_locks() -> None:
     clear_resource_locks()
 
 
+@pytest.fixture(autouse=True)
+def _mock_claim_sticky_repost():
+    """claim_sticky_repost を常に True を返すようにパッチ。"""
+    with patch(
+        "src.cogs.sticky.claim_sticky_repost",
+        new_callable=AsyncMock,
+        return_value=True,
+    ):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # テスト用ヘルパー
 # ---------------------------------------------------------------------------

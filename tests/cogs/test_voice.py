@@ -56,13 +56,21 @@ def _make_cog() -> VoiceCog:
     return VoiceCog(bot)
 
 
-def _make_member(user_id: int, *, bot: bool = False) -> MagicMock:
+def _make_member(
+    user_id: int,
+    *,
+    bot: bool = False,
+    voice_channel: MagicMock | None = None,
+) -> MagicMock:
     """Create a mock discord.Member."""
     member = MagicMock(spec=discord.Member)
     member.id = user_id
     member.bot = bot
     member.display_name = f"User{user_id}"
     member.mention = f"<@{user_id}>"
+    # voice state (lobby join check で使用)
+    member.voice = MagicMock()
+    member.voice.channel = voice_channel
     return member
 
 
@@ -468,6 +476,7 @@ class TestHandleLobbyJoin:
                 new_callable=AsyncMock,
             ) as mock_create,
         ):
+            member.voice.channel = channel
             await cog._handle_lobby_join(member, channel)
             mock_create.assert_not_awaited()
 
@@ -521,6 +530,7 @@ class TestHandleLobbyJoin:
                 return_value=MagicMock(),
             ),
         ):
+            member.voice.channel = channel
             await cog._handle_lobby_join(member, channel)
 
             # VC が作成される
@@ -589,6 +599,7 @@ class TestHandleLobbyJoin:
                 return_value=MagicMock(),
             ),
         ):
+            member.voice.channel = channel
             await cog._handle_lobby_join(member, channel)
 
             # VC 作成時にロビーの overwrites が渡される
@@ -643,6 +654,7 @@ class TestHandleLobbyJoin:
                 new_callable=AsyncMock,
             ) as mock_delete,
         ):
+            member.voice.channel = channel
             await cog._handle_lobby_join(member, channel)
 
             # クリーンアップ: チャンネル削除 + DB レコード削除
@@ -1284,7 +1296,7 @@ class TestVcLobbyCommand:
 
         lobby_channel = MagicMock(spec=discord.VoiceChannel)
         lobby_channel.id = 500
-        lobby_channel.name = "参加して作成"
+        lobby_channel.name = "➕ 新規VC作成"
         interaction.guild.create_voice_channel = AsyncMock(return_value=lobby_channel)
 
         mock_factory, mock_session = _mock_async_session()
@@ -1301,7 +1313,8 @@ class TestVcLobbyCommand:
 
             # VC が作成される
             interaction.guild.create_voice_channel.assert_awaited_once_with(
-                name="参加して作成"
+                name="➕ 新規VC作成",
+                rtc_region="japan",
             )
             # DB にロビーとして登録される
             mock_create.assert_awaited_once_with(
@@ -1316,7 +1329,7 @@ class TestVcLobbyCommand:
             # 完了メッセージ (followup)
             interaction.followup.send.assert_awaited_once()
             msg = interaction.followup.send.call_args[0][0]
-            assert "参加して作成" in msg
+            assert "➕ 新規VC作成" in msg
             assert interaction.followup.send.call_args[1]["ephemeral"] is True
 
     async def test_rejects_dm(self) -> None:
@@ -1409,13 +1422,13 @@ class TestVcLobbyCommand:
             mock_create.assert_not_awaited()
 
     async def test_lobby_channel_has_correct_name(self) -> None:
-        """作成される VC の名前が「参加して作成」。"""
+        """作成される VC の名前が「➕ 新規VC作成」。"""
         cog = _make_cog()
         interaction = _make_interaction(1)
 
         lobby_channel = MagicMock(spec=discord.VoiceChannel)
         lobby_channel.id = 500
-        lobby_channel.name = "参加して作成"
+        lobby_channel.name = "➕ 新規VC作成"
         interaction.guild.create_voice_channel = AsyncMock(return_value=lobby_channel)
 
         mock_factory, mock_session = _mock_async_session()
@@ -1431,7 +1444,7 @@ class TestVcLobbyCommand:
             await cog.vc_lobby.callback(cog, interaction)
 
             call_kwargs = interaction.guild.create_voice_channel.call_args[1]
-            assert call_kwargs["name"] == "参加して作成"
+            assert call_kwargs["name"] == "➕ 新規VC作成"
 
     async def test_db_registers_correct_guild_id(self) -> None:
         """DB に正しい guild_id が登録される。"""
@@ -1440,7 +1453,7 @@ class TestVcLobbyCommand:
 
         lobby_channel = MagicMock(spec=discord.VoiceChannel)
         lobby_channel.id = 500
-        lobby_channel.name = "参加して作成"
+        lobby_channel.name = "➕ 新規VC作成"
         interaction.guild.create_voice_channel = AsyncMock(return_value=lobby_channel)
 
         mock_factory, mock_session = _mock_async_session()
@@ -1465,7 +1478,7 @@ class TestVcLobbyCommand:
 
         lobby_channel = MagicMock(spec=discord.VoiceChannel)
         lobby_channel.id = 500
-        lobby_channel.name = "参加して作成"
+        lobby_channel.name = "➕ 新規VC作成"
         interaction.guild.create_voice_channel = AsyncMock(return_value=lobby_channel)
 
         mock_factory, mock_session = _mock_async_session()
@@ -1481,7 +1494,7 @@ class TestVcLobbyCommand:
             await cog.vc_lobby.callback(cog, interaction)
 
         msg = interaction.followup.send.call_args[0][0]
-        assert "参加して作成" in msg
+        assert "➕ 新規VC作成" in msg
         assert "カテゴリ" in msg
 
     async def test_error_message_contains_exception_text(self) -> None:
@@ -1530,7 +1543,7 @@ class TestVcLobbyCommand:
 
         lobby_channel = MagicMock(spec=discord.VoiceChannel)
         lobby_channel.id = 500
-        lobby_channel.name = "参加して作成"
+        lobby_channel.name = "➕ 新規VC作成"
 
         interaction1 = _make_interaction(1)
         interaction1.guild.create_voice_channel = AsyncMock(return_value=lobby_channel)
@@ -1785,6 +1798,7 @@ class TestHandleLobbyJoinCategory:
                 return_value=MagicMock(),
             ),
         ):
+            member.voice.channel = channel
             await cog._handle_lobby_join(member, channel)
 
         guild.get_channel.assert_called_once_with(999)
@@ -1844,6 +1858,7 @@ class TestHandleLobbyJoinCategory:
                 return_value=MagicMock(),
             ),
         ):
+            member.voice.channel = channel
             await cog._handle_lobby_join(member, channel)
 
         call_kwargs = guild.create_voice_channel.call_args[1]
@@ -1884,6 +1899,7 @@ class TestHandleLobbyJoinCategory:
             ),
             contextlib.suppress(RuntimeError),
         ):
+            member.voice.channel = channel
             await cog._handle_lobby_join(member, channel)
 
         new_channel.delete.assert_awaited_once()
@@ -2433,6 +2449,7 @@ class TestVoiceCogWithFaker:
                 return_value=MagicMock(),
             ),
         ):
+            member.voice.channel = channel
             await cog._handle_lobby_join(member, channel)
 
             guild.create_voice_channel.assert_awaited_once()
@@ -2633,6 +2650,7 @@ class TestVoiceCogWithParametrize:
                 return_value=MagicMock(),
             ),
         ):
+            member.voice.channel = channel
             await cog._handle_lobby_join(member, channel)
 
             mock_create.assert_awaited_once()
@@ -2925,6 +2943,7 @@ class TestVcCreateCooldownIntegration:
         record_vc_create_cooldown(member.id)
 
         # ロビー参加処理を実行
+        member.voice.channel = channel
         await cog._handle_lobby_join(member, channel)
 
         # DMで通知が送信される
@@ -2999,6 +3018,7 @@ class TestVcCreateCooldownIntegration:
         assert on_cooldown is False
 
         # ロビー参加処理を実行
+        member.voice.channel = channel
         await cog._handle_lobby_join(member, channel)
 
         # VC作成後はクールダウン中
@@ -3034,6 +3054,7 @@ class TestVcCreateCooldownIntegration:
         record_vc_create_cooldown(member.id)
 
         # ロビー参加処理を実行 (例外は発生しない)
+        member.voice.channel = channel
         await cog._handle_lobby_join(member, channel)
 
         # ロビーから切断される

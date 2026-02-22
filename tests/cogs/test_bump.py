@@ -16,6 +16,7 @@ from src.cogs.bump import (
     DISBOARD_SUCCESS_KEYWORD,
     DISSOKU_BOT_ID,
     DISSOKU_SUCCESS_KEYWORD,
+    REMINDER_HOURS,
     TARGET_ROLE_NAME,
     BumpCog,
     BumpNotificationView,
@@ -532,6 +533,11 @@ class TestOnMessage:
                 return_value=mock_config,
             ),
             patch(
+                "src.cogs.bump.get_bump_reminder",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
                 "src.cogs.bump.upsert_bump_reminder",
                 new_callable=AsyncMock,
                 return_value=mock_reminder,
@@ -579,6 +585,11 @@ class TestOnMessage:
                 return_value=mock_config,
             ),
             patch(
+                "src.cogs.bump.get_bump_reminder",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
                 "src.cogs.bump.upsert_bump_reminder",
                 new_callable=AsyncMock,
                 return_value=mock_reminder,
@@ -622,6 +633,11 @@ class TestOnMessage:
                 "src.cogs.bump.get_bump_config",
                 new_callable=AsyncMock,
                 return_value=mock_config,
+            ),
+            patch(
+                "src.cogs.bump.get_bump_reminder",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
             patch(
                 "src.cogs.bump.upsert_bump_reminder",
@@ -683,6 +699,11 @@ class TestOnMessageEdit:
                 "src.cogs.bump.get_bump_config",
                 new_callable=AsyncMock,
                 return_value=mock_config,
+            ),
+            patch(
+                "src.cogs.bump.get_bump_reminder",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
             patch(
                 "src.cogs.bump.upsert_bump_reminder",
@@ -790,6 +811,11 @@ class TestOnMessageEdit:
                 "src.cogs.bump.get_bump_config",
                 new_callable=AsyncMock,
                 return_value=mock_config,
+            ),
+            patch(
+                "src.cogs.bump.get_bump_reminder",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
             patch(
                 "src.cogs.bump.upsert_bump_reminder",
@@ -2341,6 +2367,11 @@ class TestBumpWithFaker:
                 return_value=mock_config,
             ),
             patch(
+                "src.cogs.bump.get_bump_reminder",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
                 "src.cogs.bump.upsert_bump_reminder",
                 new_callable=AsyncMock,
                 return_value=mock_reminder,
@@ -2578,10 +2609,12 @@ class TestProcessBumpMessageHttpException:
 
     @patch("src.cogs.bump.async_session")
     @patch("src.cogs.bump.get_bump_config")
+    @patch("src.cogs.bump.get_bump_reminder", new_callable=AsyncMock, return_value=None)
     @patch("src.cogs.bump.upsert_bump_reminder")
     async def test_handles_http_exception_when_sending(
         self,
         mock_upsert: MagicMock,
+        _mock_get_reminder: MagicMock,
         mock_get_config: MagicMock,
         mock_session: MagicMock,
     ) -> None:
@@ -3884,3 +3917,108 @@ class TestBumpDeferFailure:
             mock_toggle.assert_not_awaited()
             interaction.message.edit.assert_not_awaited()
             interaction.followup.send.assert_not_awaited()
+
+
+class TestBumpDetectionDuplicateGuard:
+    """別インスタンスが同じ bump を既に処理済みの場合のテスト。"""
+
+    async def test_skips_when_reminder_already_exists_within_60s(self) -> None:
+        """remind_at が 60 秒以内の既存リマインダーがある場合はスキップ。"""
+        from datetime import UTC, datetime, timedelta
+
+        cog = _make_cog()
+        member = _make_member(has_target_role=True)
+        message = _make_message(
+            author_id=DISBOARD_BOT_ID,
+            channel_id=456,
+            guild_id=12345,
+            embed_description=DISBOARD_SUCCESS_KEYWORD,
+            interaction_user=member,
+        )
+        message.channel.send = AsyncMock()
+
+        mock_config = _make_bump_config(guild_id="12345", channel_id="456")
+
+        # 別インスタンスが 5 秒前に処理済み
+        existing_reminder = MagicMock()
+        existing_reminder.remind_at = datetime.now(UTC) + timedelta(
+            hours=REMINDER_HOURS, seconds=-5
+        )
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.bump.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.bump.get_bump_config",
+                new_callable=AsyncMock,
+                return_value=mock_config,
+            ),
+            patch(
+                "src.cogs.bump.get_bump_reminder",
+                new_callable=AsyncMock,
+                return_value=existing_reminder,
+            ),
+            patch(
+                "src.cogs.bump.upsert_bump_reminder",
+                new_callable=AsyncMock,
+            ) as mock_upsert,
+        ):
+            await cog.on_message(message)
+
+        # DB 書き込みもメッセージ送信もされない
+        mock_upsert.assert_not_awaited()
+        message.channel.send.assert_not_awaited()
+
+    async def test_processes_when_reminder_is_old(self) -> None:
+        """remind_at が 60 秒以上離れている場合は処理する。"""
+        from datetime import UTC, datetime, timedelta
+
+        cog = _make_cog()
+        member = _make_member(has_target_role=True)
+        message = _make_message(
+            author_id=DISBOARD_BOT_ID,
+            channel_id=456,
+            guild_id=12345,
+            embed_description=DISBOARD_SUCCESS_KEYWORD,
+            interaction_user=member,
+        )
+        message.channel.send = AsyncMock()
+
+        mock_config = _make_bump_config(guild_id="12345", channel_id="456")
+
+        # 前回の bump は 1 時間前 (remind_at は 1 時間後)
+        existing_reminder = MagicMock()
+        existing_reminder.remind_at = datetime.now(UTC) + timedelta(hours=1)
+
+        mock_new_reminder = _make_reminder(is_enabled=True)
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.bump.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.bump.get_bump_config",
+                new_callable=AsyncMock,
+                return_value=mock_config,
+            ),
+            patch(
+                "src.cogs.bump.get_bump_reminder",
+                new_callable=AsyncMock,
+                return_value=existing_reminder,
+            ),
+            patch(
+                "src.cogs.bump.upsert_bump_reminder",
+                new_callable=AsyncMock,
+                return_value=mock_new_reminder,
+            ) as mock_upsert,
+        ):
+            await cog.on_message(message)
+
+        # 古いリマインダーなので処理される
+        mock_upsert.assert_awaited_once()
+        message.channel.send.assert_awaited_once()

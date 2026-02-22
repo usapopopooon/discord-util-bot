@@ -496,6 +496,15 @@ class VoiceCog(commands.Cog):
                     )
                 return
 
+            # 別インスタンスが既にメンバーを移動済みか確認
+            if member.voice is None or member.voice.channel != channel:
+                logger.info(
+                    "Member %s no longer in lobby %s, skipping VC creation",
+                    member.id,
+                    channel.id,
+                )
+                return
+
             guild = member.guild
 
             # --- カテゴリの決定 ---
@@ -811,7 +820,8 @@ class VoiceCog(commands.Cog):
             # --- VC の作成 ---
             try:
                 lobby_channel = await interaction.guild.create_voice_channel(
-                    name="参加して作成",
+                    name="➕ 新規VC作成",
+                    rtc_region=DEFAULT_RTC_REGION,
                 )
             except discord.HTTPException as e:
                 await interaction.followup.send(

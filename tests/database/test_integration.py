@@ -2474,7 +2474,7 @@ class TestBumpReminderEdgeCases:
     async def test_clear_already_cleared_reminder(
         self, db_session: AsyncSession
     ) -> None:
-        """既に cleared のリマインダーを再度 clear しても成功する。"""
+        """既に cleared のリマインダーを再度 clear すると False を返す。"""
         guild_id = snowflake()
         reminder = await upsert_bump_reminder(
             db_session,
@@ -2490,8 +2490,8 @@ class TestBumpReminderEdgeCases:
         assert fetched is not None
         assert fetched.remind_at is None
 
-        # 2回目のクリア（既に None）
-        assert await clear_bump_reminder(db_session, reminder.id) is True
+        # 2回目のクリア（既に None → アトミックに False）
+        assert await clear_bump_reminder(db_session, reminder.id) is False
 
     async def test_toggle_nonexistent_reminder_creates_disabled(
         self, db_session: AsyncSession

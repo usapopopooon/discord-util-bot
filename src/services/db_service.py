@@ -39,7 +39,8 @@ Notes:
 
 from datetime import datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
+from sqlalchemy import or_ as db_or
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -674,26 +675,28 @@ async def get_due_bump_reminders(
 
 
 async def clear_bump_reminder(session: AsyncSession, reminder_id: int) -> bool:
-    """bump リマインダーの remind_at をクリアする。
+    """bump リマインダーの remind_at をアトミックにクリアする。
 
-    リマインド送信後に呼ばれる。レコードは削除せず、remind_at を None にする。
+    リマインド送信前に呼ばれる。レコードは削除せず、remind_at を None にする。
+    複数インスタンス実行時、最初にクリアしたインスタンスのみ True を返す。
 
     Args:
         session: DB セッション
         reminder_id: クリアするリマインダーの ID
 
     Returns:
-        クリアできたら True、見つからなければ False
+        クリアできたら True、既にクリア済みなら False
     """
     result = await session.execute(
-        select(BumpReminder).where(BumpReminder.id == reminder_id)
+        update(BumpReminder)
+        .where(
+            BumpReminder.id == reminder_id,
+            BumpReminder.remind_at.isnot(None),
+        )
+        .values(remind_at=None)
     )
-    reminder = result.scalar_one_or_none()
-    if reminder:
-        reminder.remind_at = None
-        await session.commit()
-        return True
-    return False
+    await session.commit()
+    return bool(result.rowcount)  # type: ignore[attr-defined]
 
 
 async def get_bump_reminder(
@@ -1003,6 +1006,44 @@ async def update_sticky_message_id(
         return True
 
     return False
+
+
+async def claim_sticky_repost(
+    session: AsyncSession,
+    channel_id: str,
+    now: datetime,
+    cooldown_seconds: int,
+) -> bool:
+    """sticky 再投稿の権利をアトミックに取得する。
+
+    複数インスタンス実行時、最初に claim したインスタンスだけが True を返す。
+    last_posted_at が cooldown 以内に更新済みの場合は False を返す。
+
+    Args:
+        session: DB セッション
+        channel_id: Discord チャンネルの ID
+        now: 現在時刻 (UTC)
+        cooldown_seconds: 再投稿の最小間隔 (秒)
+
+    Returns:
+        claim 成功なら True、既に別インスタンスが処理済みなら False
+    """
+    from datetime import timedelta
+
+    threshold = now - timedelta(seconds=cooldown_seconds)
+    result = await session.execute(
+        update(StickyMessage)
+        .where(
+            StickyMessage.channel_id == channel_id,
+            db_or(
+                StickyMessage.last_posted_at.is_(None),
+                StickyMessage.last_posted_at <= threshold,
+            ),
+        )
+        .values(last_posted_at=now)
+    )
+    await session.commit()
+    return bool(result.rowcount)  # type: ignore[attr-defined]
 
 
 async def delete_sticky_message(

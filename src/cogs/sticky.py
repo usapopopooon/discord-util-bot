@@ -25,6 +25,7 @@ from discord.ext import commands
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.services.db_service import (
+    claim_sticky_repost,
     create_sticky_message,
     delete_sticky_message,
     delete_sticky_messages_by_guild,
@@ -458,6 +459,19 @@ class StickyCog(commands.Cog):
             sticky = await get_sticky_message(session, channel_id)
 
         if not sticky:
+            return
+
+        # 再投稿の権利をアトミックに取得 (複数インスタンス実行時の重複防止)
+        now = datetime.now(UTC)
+        async with async_session() as session:
+            claimed = await claim_sticky_repost(
+                session, channel_id, now, sticky.cooldown_seconds
+            )
+        if not claimed:
+            logger.info(
+                "Sticky repost already claimed by another instance: channel=%s",
+                channel_id,
+            )
             return
 
         # 古い sticky メッセージを確認・削除
