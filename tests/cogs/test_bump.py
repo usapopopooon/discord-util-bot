@@ -1123,7 +1123,9 @@ class TestBumpNotificationView:
 
         mock_interaction = MagicMock(spec=discord.Interaction)
         mock_interaction.response = MagicMock()
-        mock_interaction.response.edit_message = AsyncMock()
+        mock_interaction.response.defer = AsyncMock()
+        mock_interaction.message = MagicMock()
+        mock_interaction.message.edit = AsyncMock()
         mock_interaction.followup = MagicMock()
         mock_interaction.followup.send = AsyncMock()
 
@@ -1142,7 +1144,7 @@ class TestBumpNotificationView:
             await view.toggle_button.callback(mock_interaction)
 
         mock_toggle.assert_awaited_once_with(mock_session, "12345", "DISBOARD")
-        mock_interaction.response.edit_message.assert_awaited_once()
+        mock_interaction.message.edit.assert_awaited_once()
         mock_interaction.followup.send.assert_awaited_once()
 
         # Button should now show "enable"
@@ -1772,7 +1774,7 @@ class TestBumpSetupCommand:
         mock_interaction.guild.id = 12345
         mock_interaction.channel_id = 456
         mock_interaction.response = MagicMock()
-        mock_interaction.response.send_message = AsyncMock()
+        mock_interaction.response.defer = AsyncMock()
         mock_interaction.followup = MagicMock()
         mock_interaction.followup.send = AsyncMock()
 
@@ -1790,7 +1792,7 @@ class TestBumpSetupCommand:
             await cog.bump_setup.callback(cog, mock_interaction)
 
         mock_upsert.assert_awaited_once_with(mock_session, "12345", "456")
-        mock_interaction.response.send_message.assert_awaited_once()
+        mock_interaction.followup.send.assert_awaited()
 
     async def test_setup_requires_guild(self) -> None:
         """ギルド外では実行できない。"""
@@ -1823,7 +1825,9 @@ class TestBumpSetupCommand:
         mock_interaction.guild.id = 12345
         mock_interaction.channel_id = 456
         mock_interaction.response = MagicMock()
-        mock_interaction.response.send_message = AsyncMock()
+        mock_interaction.response.defer = AsyncMock()
+        mock_interaction.followup = MagicMock()
+        mock_interaction.followup.send = AsyncMock()
 
         # TextChannel をモック
         mock_channel = MagicMock(spec=discord.TextChannel)
@@ -1850,7 +1854,7 @@ class TestBumpSetupCommand:
         assert call_kwargs["service_name"] == "DISBOARD"
 
         # Embed に直近の bump 情報が含まれる
-        send_kwargs = mock_interaction.response.send_message.call_args[1]
+        send_kwargs = mock_interaction.followup.send.call_args[1]
         embed = send_kwargs["embed"]
         assert "直近の bump を検出" in embed.description
         assert "リマインダーを自動設定しました" in embed.description
@@ -1878,7 +1882,9 @@ class TestBumpSetupCommand:
         mock_interaction.guild.id = 12345
         mock_interaction.channel_id = 456
         mock_interaction.response = MagicMock()
-        mock_interaction.response.send_message = AsyncMock()
+        mock_interaction.response.defer = AsyncMock()
+        mock_interaction.followup = MagicMock()
+        mock_interaction.followup.send = AsyncMock()
 
         # TextChannel をモック
         mock_channel = MagicMock(spec=discord.TextChannel)
@@ -1903,7 +1909,7 @@ class TestBumpSetupCommand:
         mock_upsert_reminder.assert_not_awaited()
 
         # Embed に bump 可能であることが含まれる
-        send_kwargs = mock_interaction.response.send_message.call_args[1]
+        send_kwargs = mock_interaction.followup.send.call_args[1]
         embed = send_kwargs["embed"]
         assert "直近の bump を検出" in embed.description
         assert "現在 bump 可能です" in embed.description
@@ -1917,7 +1923,7 @@ class TestBumpSetupCommand:
         mock_interaction.guild.id = 12345
         mock_interaction.channel_id = 456
         mock_interaction.response = MagicMock()
-        mock_interaction.response.send_message = AsyncMock()
+        mock_interaction.response.defer = AsyncMock()
         mock_interaction.followup = MagicMock()
         mock_interaction.followup.send = AsyncMock()
 
@@ -1943,14 +1949,14 @@ class TestBumpSetupCommand:
         # リマインダーは作成されない
         mock_upsert_reminder.assert_not_awaited()
 
-        # Embed に bump 情報が含まれない
-        send_kwargs = mock_interaction.response.send_message.call_args[1]
+        # Embed に bump 情報が含まれない — followup.send の最初の呼び出しを検査
+        send_kwargs = mock_interaction.followup.send.call_args_list[0][1]
         embed = send_kwargs["embed"]
         assert "直近の bump を検出" not in embed.description
         assert "Bump 監視を開始しました" in embed.title
 
-        # 両方のサービスの通知設定が followup で送信される
-        assert mock_interaction.followup.send.await_count == 2
+        # followup: main embed + 2 notification views = 3
+        assert mock_interaction.followup.send.await_count == 3
 
     async def test_setup_skips_history_for_non_text_channel(self) -> None:
         """TextChannel 以外ではチャンネル履歴をスキップする。"""
@@ -1961,7 +1967,7 @@ class TestBumpSetupCommand:
         mock_interaction.guild.id = 12345
         mock_interaction.channel_id = 456
         mock_interaction.response = MagicMock()
-        mock_interaction.response.send_message = AsyncMock()
+        mock_interaction.response.defer = AsyncMock()
         mock_interaction.followup = MagicMock()
         mock_interaction.followup.send = AsyncMock()
 
@@ -1989,7 +1995,7 @@ class TestBumpSetupCommand:
         mock_find.assert_not_awaited()
 
         # Embed に bump 情報が含まれない
-        send_kwargs = mock_interaction.response.send_message.call_args[1]
+        send_kwargs = mock_interaction.followup.send.call_args_list[0][1]
         embed = send_kwargs["embed"]
         assert "直近の bump を検出" not in embed.description
 
@@ -2002,7 +2008,7 @@ class TestBumpSetupCommand:
         mock_interaction.guild.id = 12345
         mock_interaction.channel_id = 456
         mock_interaction.response = MagicMock()
-        mock_interaction.response.send_message = AsyncMock()
+        mock_interaction.response.defer = AsyncMock()
         mock_interaction.followup = MagicMock()
         mock_interaction.followup.send = AsyncMock()
 
@@ -2021,7 +2027,7 @@ class TestBumpSetupCommand:
             await cog.bump_setup.callback(cog, mock_interaction)
 
         # Embed に通知先ロールが表示される
-        send_kwargs = mock_interaction.response.send_message.call_args[1]
+        send_kwargs = mock_interaction.followup.send.call_args_list[0][1]
         embed = send_kwargs["embed"]
         assert "現在の通知先:" in embed.description
         assert f"@{TARGET_ROLE_NAME}" in embed.description
@@ -2040,7 +2046,9 @@ class TestBumpSetupCommand:
         mock_interaction.guild.id = 12345
         mock_interaction.channel_id = 456
         mock_interaction.response = MagicMock()
-        mock_interaction.response.send_message = AsyncMock()
+        mock_interaction.response.defer = AsyncMock()
+        mock_interaction.followup = MagicMock()
+        mock_interaction.followup.send = AsyncMock()
 
         # カスタムロールを設定
         mock_custom_role = MagicMock()
@@ -2072,7 +2080,7 @@ class TestBumpSetupCommand:
             await cog.bump_setup.callback(cog, mock_interaction)
 
         # Embed にカスタムロール名が表示される
-        send_kwargs = mock_interaction.response.send_message.call_args[1]
+        send_kwargs = mock_interaction.followup.send.call_args[1]
         embed = send_kwargs["embed"]
         assert "現在の通知先:" in embed.description
         assert "@カスタムロール" in embed.description
@@ -2729,7 +2737,9 @@ class TestBumpSetupWithRecentBump:
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.channel_id = 456
         interaction.response = MagicMock()
-        interaction.response.send_message = AsyncMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         # _find_recent_bump のモック (bump 検出)
         bump_time = datetime.now(UTC) - timedelta(hours=1)
@@ -2742,7 +2752,7 @@ class TestBumpSetupWithRecentBump:
 
         await cog.bump_setup.callback(cog, interaction)
 
-        interaction.response.send_message.assert_called_once()
+        interaction.followup.send.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -2922,7 +2932,9 @@ class TestBumpNotificationCooldownIntegration:
         mock_interaction.user = MagicMock()
         mock_interaction.user.id = 88888
         mock_interaction.response = MagicMock()
-        mock_interaction.response.edit_message = AsyncMock()
+        mock_interaction.response.defer = AsyncMock()
+        mock_interaction.message = MagicMock()
+        mock_interaction.message.edit = AsyncMock()
         mock_interaction.followup = MagicMock()
         mock_interaction.followup.send = AsyncMock()
 
@@ -2941,7 +2953,7 @@ class TestBumpNotificationCooldownIntegration:
             await view.toggle_button.callback(mock_interaction)
 
         # 正常にトグル操作が行われる
-        mock_interaction.response.edit_message.assert_awaited_once()
+        mock_interaction.message.edit.assert_awaited_once()
         mock_interaction.followup.send.assert_awaited_once()
 
     async def test_different_users_can_operate_simultaneously(self) -> None:
@@ -2956,7 +2968,9 @@ class TestBumpNotificationCooldownIntegration:
         mock_interaction.user = MagicMock()
         mock_interaction.user.id = 22222
         mock_interaction.response = MagicMock()
-        mock_interaction.response.edit_message = AsyncMock()
+        mock_interaction.response.defer = AsyncMock()
+        mock_interaction.message = MagicMock()
+        mock_interaction.message.edit = AsyncMock()
         mock_interaction.followup = MagicMock()
         mock_interaction.followup.send = AsyncMock()
 
@@ -2975,7 +2989,7 @@ class TestBumpNotificationCooldownIntegration:
             await view.toggle_button.callback(mock_interaction)
 
         # ユーザー2は操作可能
-        mock_interaction.response.edit_message.assert_awaited_once()
+        mock_interaction.message.edit.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -3784,7 +3798,7 @@ class TestBumpSetupConcurrency:
             interaction.channel_id = 456
             interaction.channel = MagicMock(spec=discord.TextChannel)
             interaction.response = MagicMock()
-            interaction.response.send_message = AsyncMock()
+            interaction.response.defer = AsyncMock()
             interaction.followup = MagicMock()
             interaction.followup.send = AsyncMock()
             return interaction
@@ -3816,3 +3830,57 @@ class TestBumpSetupConcurrency:
             "upsert_start",
             "upsert_end",
         ]
+
+
+class TestBumpDeferFailure:
+    """defer() 失敗時（別インスタンスが先に応答）のテスト。"""
+
+    async def test_setup_defer_failure_aborts(self) -> None:
+        """bump_setup で defer 失敗時、DB 書き込みせず終了する。"""
+        cog = _make_cog()
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock()
+        interaction.guild.id = 12345
+        interaction.channel_id = 456
+        interaction.response = MagicMock()
+        interaction.response.defer = AsyncMock(
+            side_effect=discord.HTTPException(
+                MagicMock(status=400), "already acknowledged"
+            )
+        )
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        with patch(
+            "src.cogs.bump.upsert_bump_config",
+            new_callable=AsyncMock,
+        ) as mock_upsert:
+            await cog.bump_setup.callback(cog, interaction)
+            mock_upsert.assert_not_awaited()
+            interaction.followup.send.assert_not_awaited()
+
+    async def test_toggle_defer_failure_aborts(self) -> None:
+        """toggle_button で defer 失敗時、DB 変更せず終了する。"""
+        view = BumpNotificationView("12345", "DISBOARD", True)
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.response = MagicMock()
+        interaction.response.defer = AsyncMock(
+            side_effect=discord.HTTPException(
+                MagicMock(status=400), "already acknowledged"
+            )
+        )
+        interaction.message = MagicMock()
+        interaction.message.edit = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        with patch(
+            "src.cogs.bump.toggle_bump_reminder",
+            new_callable=AsyncMock,
+        ) as mock_toggle:
+            await view.toggle_button.callback(interaction)
+            mock_toggle.assert_not_awaited()
+            interaction.message.edit.assert_not_awaited()
+            interaction.followup.send.assert_not_awaited()

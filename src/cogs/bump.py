@@ -286,6 +286,12 @@ class BumpNotificationView(discord.ui.View):
             )
             return
 
+        # インタラクションを即座に確認 (複数インスタンス実行時の重複防止)
+        try:
+            await interaction.response.defer()
+        except (discord.HTTPException, discord.InteractionResponded):
+            return
+
         # ギルド・サービスごとのロックで並行リクエストをシリアライズ
         async with get_resource_lock(
             f"bump_notification:{self.guild_id}:{self.service_name}"
@@ -298,7 +304,8 @@ class BumpNotificationView(discord.ui.View):
             self._update_toggle_button(new_state)
 
             status = "有効" if new_state else "無効"
-            await interaction.response.edit_message(view=self)
+            if interaction.message:
+                await interaction.message.edit(view=self)
             await interaction.followup.send(
                 f"**{self.service_name}** の通知を **{status}** にしました。",
                 ephemeral=True,
@@ -856,6 +863,12 @@ class BumpCog(commands.Cog):
             )
             return
 
+        # インタラクションを即座に確認 (複数インスタンス実行時の重複防止)
+        try:
+            await interaction.response.defer()
+        except (discord.HTTPException, discord.InteractionResponded):
+            return
+
         guild_id = str(interaction.guild.id)
         channel_id = str(interaction.channel_id)
 
@@ -945,10 +958,10 @@ class BumpCog(commands.Cog):
             # 直近の bump が検出された場合、そのサービスのボタンを表示
             view = BumpNotificationView(guild_id, detected_service, is_enabled)
             self.bot.add_view(view)
-            await interaction.response.send_message(embed=embed, view=view)
+            await interaction.followup.send(embed=embed, view=view)
         else:
             # 検出されなかった場合、両方のサービスのボタンを表示
-            await interaction.response.send_message(embed=embed)
+            await interaction.followup.send(embed=embed)
             # DISBOARD 用
             view_disboard = BumpNotificationView(guild_id, "DISBOARD", True)
             self.bot.add_view(view_disboard)

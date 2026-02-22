@@ -105,6 +105,9 @@ def _make_interaction(
     interaction.channel_id = channel_id
     interaction.response = MagicMock()
     interaction.response.send_message = AsyncMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
     return interaction
 
 
@@ -751,7 +754,7 @@ class TestStickySetModal:
             await modal.on_submit(interaction)
 
         mock_create.assert_called_once()
-        interaction.response.send_message.assert_called_once()
+        interaction.followup.send.assert_called_once()
 
     async def test_parses_hex_color(self) -> None:
         """16進数の色をパースする。"""
@@ -1333,7 +1336,7 @@ class TestStickyTextModal:
         assert call_kwargs["message_type"] == "text"
         assert call_kwargs["title"] == ""
         assert call_kwargs["description"] == "Test content"
-        interaction.response.send_message.assert_called_once()
+        interaction.followup.send.assert_called_once()
 
     async def test_uses_delay_parameter(self) -> None:
         """delay パラメータを使用する。"""
@@ -2057,7 +2060,7 @@ class TestStickyModalChannelBranches:
         ):
             await modal.on_submit(interaction)
 
-        interaction.response.send_message.assert_called_once()
+        interaction.followup.send.assert_called_once()
 
     async def test_text_modal_channel_no_send_method(
         self,
@@ -2087,7 +2090,7 @@ class TestStickyModalChannelBranches:
         ):
             await modal.on_submit(interaction)
 
-        interaction.response.send_message.assert_called_once()
+        interaction.followup.send.assert_called_once()
 
 
 class TestRemoveStickyBranches:
@@ -2632,8 +2635,8 @@ class TestStickyEmbedModalEdgeCases:
         ):
             await modal.on_submit(interaction)
 
-        interaction.response.send_message.assert_called_once()
-        call_args = interaction.response.send_message.call_args
+        interaction.followup.send.assert_called_once()
+        call_args = interaction.followup.send.call_args
         # エラーメッセージではないことを確認
         assert "無効" not in str(call_args)
 
@@ -2658,8 +2661,8 @@ class TestStickyEmbedModalEdgeCases:
         ):
             await modal.on_submit(interaction)
 
-        interaction.response.send_message.assert_called_once()
-        call_args = interaction.response.send_message.call_args
+        interaction.followup.send.assert_called_once()
+        call_args = interaction.followup.send.call_args
         assert "無効" not in str(call_args)
 
     async def test_delay_float_rejected(self) -> None:
@@ -2716,8 +2719,8 @@ class TestStickyEmbedModalEdgeCases:
         ):
             await modal.on_submit(interaction)
 
-        interaction.response.send_message.assert_called_once()
-        call_args = interaction.response.send_message.call_args
+        interaction.followup.send.assert_called_once()
+        call_args = interaction.followup.send.call_args
         assert "無効な色形式" not in str(call_args)
 
     async def test_color_with_0x_prefix(self) -> None:
@@ -2741,8 +2744,8 @@ class TestStickyEmbedModalEdgeCases:
         ):
             await modal.on_submit(interaction)
 
-        interaction.response.send_message.assert_called_once()
-        call_args = interaction.response.send_message.call_args
+        interaction.followup.send.assert_called_once()
+        call_args = interaction.followup.send.call_args
         assert "無効な色形式" not in str(call_args)
 
 
@@ -2943,6 +2946,60 @@ class TestStickyChannelsCache:
 # ---------------------------------------------------------------------------
 # ロックによる同時実行制御テスト
 # ---------------------------------------------------------------------------
+
+
+class TestStickyDeferFailure:
+    """defer() 失敗時（別インスタンスが先に応答）のテスト。"""
+
+    async def test_embed_modal_defer_failure_aborts(self) -> None:
+        """Embed モーダル: defer() 失敗時、DB 書き込みもメッセージ送信もしない。"""
+        cog = _make_cog()
+        modal = StickyEmbedModal(cog)
+        interaction = _make_interaction()
+
+        modal.sticky_title._value = "Title"
+        modal.description._value = "Description"
+        modal.color._value = ""
+        modal.delay._value = "5"
+
+        interaction.response.defer = AsyncMock(
+            side_effect=discord.HTTPException(
+                MagicMock(status=400), "already acknowledged"
+            )
+        )
+
+        with patch(
+            "src.cogs.sticky.create_sticky_message", new_callable=AsyncMock
+        ) as mock_create:
+            await modal.on_submit(interaction)
+
+            mock_create.assert_not_awaited()
+            interaction.followup.send.assert_not_awaited()
+            interaction.channel.send.assert_not_awaited()
+
+    async def test_text_modal_defer_failure_aborts(self) -> None:
+        """テキストモーダル: defer() 失敗時、DB 書き込みもメッセージ送信もしない。"""
+        cog = _make_cog()
+        modal = StickyTextModal(cog)
+        interaction = _make_interaction()
+
+        modal.content._value = "Test content"
+        modal.delay._value = "5"
+
+        interaction.response.defer = AsyncMock(
+            side_effect=discord.HTTPException(
+                MagicMock(status=400), "already acknowledged"
+            )
+        )
+
+        with patch(
+            "src.cogs.sticky.create_sticky_message", new_callable=AsyncMock
+        ) as mock_create:
+            await modal.on_submit(interaction)
+
+            mock_create.assert_not_awaited()
+            interaction.followup.send.assert_not_awaited()
+            interaction.channel.send.assert_not_awaited()
 
 
 class TestStickySetConcurrency:

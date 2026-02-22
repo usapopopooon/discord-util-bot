@@ -1254,6 +1254,9 @@ def _make_interaction(
     interaction.channel_id = channel.id if channel else None
     interaction.response = MagicMock()
     interaction.response.send_message = AsyncMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
 
     if guild == "default":
         g = MagicMock(spec=discord.Guild)
@@ -1308,11 +1311,13 @@ class TestVcLobbyCommand:
                 category_id=None,
                 default_user_limit=0,
             )
-            # 完了メッセージ
-            interaction.response.send_message.assert_awaited_once()
-            msg = interaction.response.send_message.call_args[0][0]
+            # defer が呼ばれる
+            interaction.response.defer.assert_awaited_once_with(ephemeral=True)
+            # 完了メッセージ (followup)
+            interaction.followup.send.assert_awaited_once()
+            msg = interaction.followup.send.call_args[0][0]
             assert "参加して作成" in msg
-            assert interaction.response.send_message.call_args[1]["ephemeral"] is True
+            assert interaction.followup.send.call_args[1]["ephemeral"] is True
 
     async def test_rejects_dm(self) -> None:
         """DM からの実行は拒否される。"""
@@ -1347,10 +1352,10 @@ class TestVcLobbyCommand:
         ):
             await cog.vc_lobby.callback(cog, interaction)
 
-        interaction.response.send_message.assert_awaited_once()
-        msg = interaction.response.send_message.call_args[0][0]
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
         assert "失敗" in msg
-        assert interaction.response.send_message.call_args[1]["ephemeral"] is True
+        assert interaction.followup.send.call_args[1]["ephemeral"] is True
 
     async def test_rejects_duplicate_lobby(self) -> None:
         """既にロビーが存在するサーバーでは作成を拒否する。"""
@@ -1376,11 +1381,11 @@ class TestVcLobbyCommand:
             interaction.guild.create_voice_channel.assert_not_awaited()
             # DB 登録も呼ばれない
             mock_create.assert_not_awaited()
-            # エラーメッセージ
-            interaction.response.send_message.assert_awaited_once()
-            msg = interaction.response.send_message.call_args[0][0]
+            # エラーメッセージ (followup)
+            interaction.followup.send.assert_awaited_once()
+            msg = interaction.followup.send.call_args[0][0]
             assert "既に" in msg
-            assert interaction.response.send_message.call_args[1]["ephemeral"] is True
+            assert interaction.followup.send.call_args[1]["ephemeral"] is True
 
     async def test_no_db_call_on_vc_creation_failure(self) -> None:
         """VC 作成失敗時は DB 登録が呼ばれない。"""
@@ -1475,7 +1480,7 @@ class TestVcLobbyCommand:
         ):
             await cog.vc_lobby.callback(cog, interaction)
 
-        msg = interaction.response.send_message.call_args[0][0]
+        msg = interaction.followup.send.call_args[0][0]
         assert "参加して作成" in msg
         assert "カテゴリ" in msg
 
@@ -1500,7 +1505,7 @@ class TestVcLobbyCommand:
         ):
             await cog.vc_lobby.callback(cog, interaction)
 
-        msg = interaction.response.send_message.call_args[0][0]
+        msg = interaction.followup.send.call_args[0][0]
         assert "失敗" in msg
 
     async def test_concurrent_lobby_creation_only_creates_one(self) -> None:
@@ -1549,12 +1554,36 @@ class TestVcLobbyCommand:
             # create_lobby は1回だけ呼ばれる
             assert mock_create.await_count == 1
 
-        # 1つは成功メッセージ、もう1つは「既に存在」メッセージ
-        msg1 = interaction1.response.send_message.call_args[0][0]
-        msg2 = interaction2.response.send_message.call_args[0][0]
+        # 1つは成功メッセージ、もう1つは「既に存在」メッセージ (followup)
+        msg1 = interaction1.followup.send.call_args[0][0]
+        msg2 = interaction2.followup.send.call_args[0][0]
         messages = [msg1, msg2]
         assert sum(1 for m in messages if "作成しました" in m) == 1
         assert sum(1 for m in messages if "既に" in m) == 1
+
+    async def test_defer_failure_aborts_without_creating(self) -> None:
+        """defer() が失敗した場合 (別インスタンスが先に応答)、何も作成しない。"""
+        cog = _make_cog()
+        interaction = _make_interaction(1)
+        interaction.response.defer = AsyncMock(
+            side_effect=discord.HTTPException(
+                MagicMock(status=400), "interaction has already been acknowledged"
+            )
+        )
+
+        mock_factory, _mock_session = _mock_async_session()
+        with (
+            patch("src.cogs.voice.async_session", mock_factory),
+            patch("src.cogs.voice.create_lobby", new_callable=AsyncMock) as mock_create,
+        ):
+            await cog.vc_lobby.callback(cog, interaction)
+
+            # VC は作成されない
+            interaction.guild.create_voice_channel.assert_not_awaited()
+            # DB 登録も呼ばれない
+            mock_create.assert_not_awaited()
+            # followup も呼ばれない
+            interaction.followup.send.assert_not_awaited()
 
 
 # ===========================================================================

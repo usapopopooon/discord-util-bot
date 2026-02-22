@@ -756,6 +756,8 @@ class TestCreateCommand:
         interaction = MagicMock(spec=discord.Interaction)
         interaction.channel = MagicMock(spec=discord.VoiceChannel)
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         await cog.create.callback(cog, interaction, "button", None, False)
 
@@ -774,6 +776,8 @@ class TestCreateCommand:
         mock_channel.id = 123
         interaction.channel = mock_channel
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         await cog.create.callback(cog, interaction, "button", None, False)
 
@@ -797,6 +801,8 @@ class TestAddCommand:
         interaction = MagicMock(spec=discord.Interaction)
         interaction.channel = None
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_role = MagicMock(spec=discord.Role)
 
@@ -815,6 +821,8 @@ class TestAddCommand:
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.channel.id = 123
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_role = MagicMock(spec=discord.Role)
 
@@ -831,8 +839,8 @@ class TestAddCommand:
                     cog, interaction, mock_role, "🎮", None, "secondary"
                 )
 
-        interaction.response.send_message.assert_awaited_once()
-        call_args = interaction.response.send_message.call_args
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
         assert "ロールパネルがありません" in call_args.args[0]
 
     async def test_add_duplicate_emoji_error(self, mock_bot: MagicMock) -> None:
@@ -844,6 +852,8 @@ class TestAddCommand:
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.channel.id = 123
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_role = MagicMock(spec=discord.Role)
         mock_panel = RolePanel(
@@ -870,8 +880,8 @@ class TestAddCommand:
                         cog, interaction, mock_role, "🎮", None, "secondary"
                     )
 
-        interaction.response.send_message.assert_awaited_once()
-        call_args = interaction.response.send_message.call_args
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
         assert "既に使用されています" in call_args.args[0]
 
     async def test_add_invalid_emoji_error(self, mock_bot: MagicMock) -> None:
@@ -883,6 +893,8 @@ class TestAddCommand:
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.channel.id = 123
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_role = MagicMock(spec=discord.Role)
 
@@ -905,6 +917,8 @@ class TestAddCommand:
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.channel.id = 123
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_role = MagicMock(spec=discord.Role)
 
@@ -923,6 +937,8 @@ class TestAddCommand:
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.channel.id = 123
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
         interaction.guild = MagicMock()
         interaction.guild.get_channel.return_value = None
 
@@ -966,7 +982,7 @@ class TestAddCommand:
                     mock_add_item.assert_awaited_once()
 
         # エラーメッセージではなく成功メッセージ
-        call_args = interaction.response.send_message.call_args
+        call_args = interaction.followup.send.call_args
         assert "追加しました" in call_args.args[0]
 
     async def test_add_keycap_emoji_valid(self, mock_bot: MagicMock) -> None:
@@ -978,6 +994,8 @@ class TestAddCommand:
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.channel.id = 123
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
         interaction.guild = MagicMock()
         interaction.guild.get_channel.return_value = None
 
@@ -1019,7 +1037,7 @@ class TestAddCommand:
 
                     mock_add_item.assert_awaited_once()
 
-        call_args = interaction.response.send_message.call_args
+        call_args = interaction.followup.send.call_args
         assert "追加しました" in call_args.args[0]
 
     async def test_add_integrity_error_race_condition(
@@ -1035,6 +1053,8 @@ class TestAddCommand:
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.channel.id = 123
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_role = MagicMock(spec=discord.Role)
         mock_role.id = 111
@@ -1070,8 +1090,8 @@ class TestAddCommand:
                             cog, interaction, mock_role, "🎮", None, "secondary"
                         )
 
-        interaction.response.send_message.assert_awaited_once()
-        call_args = interaction.response.send_message.call_args
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
         assert "既に使用されています" in call_args.args[0]
         assert call_args.kwargs.get("ephemeral") is True
 
@@ -1092,6 +1112,8 @@ class TestRemoveCommand:
         interaction = MagicMock(spec=discord.Interaction)
         interaction.channel = None
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         await cog.remove.callback(cog, interaction, "🎮")
 
@@ -1108,6 +1130,8 @@ class TestRemoveCommand:
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.channel.id = 123
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         with patch("src.cogs.role_panel.async_session") as mock_session:
             mock_db = AsyncMock()
@@ -1120,8 +1144,8 @@ class TestRemoveCommand:
 
                 await cog.remove.callback(cog, interaction, "🎮")
 
-        interaction.response.send_message.assert_awaited_once()
-        call_args = interaction.response.send_message.call_args
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
         assert "ロールパネルがありません" in call_args.args[0]
 
     async def test_remove_emoji_not_found_error(self, mock_bot: MagicMock) -> None:
@@ -1133,6 +1157,8 @@ class TestRemoveCommand:
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.channel.id = 123
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_panel = RolePanel(
             id=1, guild_id="123", channel_id="123", panel_type="button", title="Test"
@@ -1152,8 +1178,8 @@ class TestRemoveCommand:
 
                     await cog.remove.callback(cog, interaction, "🎮")
 
-        interaction.response.send_message.assert_awaited_once()
-        call_args = interaction.response.send_message.call_args
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
         assert "見つかりません" in call_args.args[0]
 
 
@@ -1173,6 +1199,8 @@ class TestDeleteCommand:
         interaction = MagicMock(spec=discord.Interaction)
         interaction.channel = None
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         await cog.delete.callback(cog, interaction)
 
@@ -1189,6 +1217,8 @@ class TestDeleteCommand:
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.channel.id = 123
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         with patch("src.cogs.role_panel.async_session") as mock_session:
             mock_db = AsyncMock()
@@ -1201,8 +1231,8 @@ class TestDeleteCommand:
 
                 await cog.delete.callback(cog, interaction)
 
-        interaction.response.send_message.assert_awaited_once()
-        call_args = interaction.response.send_message.call_args
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
         assert "ロールパネルがありません" in call_args.args[0]
 
 
@@ -1222,6 +1252,8 @@ class TestListCommand:
         interaction = MagicMock(spec=discord.Interaction)
         interaction.guild = None
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         await cog.list_panels.callback(cog, interaction)
 
@@ -1238,6 +1270,8 @@ class TestListCommand:
         interaction.guild = MagicMock(spec=discord.Guild)
         interaction.guild.id = 123
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         with patch("src.cogs.role_panel.async_session") as mock_session:
             mock_db = AsyncMock()
@@ -1383,6 +1417,8 @@ class TestRoleButtonCallback:
         interaction = MagicMock(spec=discord.Interaction)
         interaction.guild = None
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         await button.callback(interaction)
 
@@ -1403,6 +1439,8 @@ class TestRoleButtonCallback:
         interaction.guild = MagicMock(spec=discord.Guild)
         interaction.user = MagicMock(spec=discord.User)  # Member ではない
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         await button.callback(interaction)
 
@@ -1424,6 +1462,8 @@ class TestRoleButtonCallback:
         interaction.guild.get_role.return_value = None
         interaction.user = MagicMock(spec=discord.Member)
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         await button.callback(interaction)
 
@@ -1456,6 +1496,8 @@ class TestRoleButtonCallback:
         interaction.guild.me.top_role = mock_bot_top_role
         interaction.user = MagicMock(spec=discord.Member)
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         await button.callback(interaction)
 
@@ -1493,6 +1535,8 @@ class TestRoleButtonCallback:
         interaction.guild.me.top_role = mock_bot_top_role
         interaction.user = mock_member
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         await button.callback(interaction)
 
@@ -1533,6 +1577,8 @@ class TestRoleButtonCallback:
         interaction.guild.me.top_role = mock_bot_top_role
         interaction.user = mock_member
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         await button.callback(interaction)
 
@@ -1577,6 +1623,8 @@ class TestRoleButtonCallback:
         interaction.guild.me.top_role = mock_bot_top_role
         interaction.user = mock_member
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         await button.callback(interaction)
 
@@ -1798,6 +1846,8 @@ class TestAddCommandSuccess:
         interaction.guild = MagicMock(spec=discord.Guild)
         interaction.guild.get_channel.return_value = mock_channel
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_role = MagicMock(spec=discord.Role)
         mock_role.id = 456
@@ -1856,8 +1906,8 @@ class TestAddCommandSuccess:
                                     "primary",
                                 )
 
-        interaction.response.send_message.assert_awaited_once()
-        call_args = interaction.response.send_message.call_args
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
         assert "追加しました" in call_args.args[0]
 
 
@@ -1884,6 +1934,8 @@ class TestRemoveCommandSuccess:
         interaction.guild = MagicMock(spec=discord.Guild)
         interaction.guild.get_channel.return_value = mock_channel
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_panel = RolePanel(
             id=1,
@@ -1918,8 +1970,8 @@ class TestRemoveCommandSuccess:
 
                             await cog.remove.callback(cog, interaction, "🎮")
 
-        interaction.response.send_message.assert_awaited_once()
-        call_args = interaction.response.send_message.call_args
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
         assert "削除しました" in call_args.args[0]
 
 
@@ -1945,6 +1997,8 @@ class TestDeleteCommandSuccess:
         interaction.guild = MagicMock(spec=discord.Guild)
         interaction.guild.get_channel.return_value = mock_channel
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_panel = RolePanel(
             id=1,
@@ -1975,8 +2029,8 @@ class TestDeleteCommandSuccess:
 
                         await cog.delete.callback(cog, interaction)
 
-        interaction.response.send_message.assert_awaited_once()
-        call_args = interaction.response.send_message.call_args
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
         assert "削除しました" in call_args.args[0]
 
 
@@ -2001,6 +2055,8 @@ class TestListCommandSuccess:
         interaction.guild.id = 123
         interaction.guild.get_channel.return_value = mock_channel
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_panels = [
             RolePanel(
@@ -2712,6 +2768,8 @@ class TestRoleButtonHTTPException:
         interaction.guild.me.top_role = mock_bot_top_role
         interaction.user = mock_member
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         await button.callback(interaction)
 
@@ -2723,6 +2781,87 @@ class TestRoleButtonHTTPException:
 # =============================================================================
 # Delete Command Message Delete Exception Test
 # =============================================================================
+
+
+class TestDeferFailure:
+    """defer() 失敗時（別インスタンスが先に応答）のテスト。"""
+
+    async def test_add_defer_failure_aborts(self) -> None:
+        """add: defer() 失敗時、DB 書き込みもパネル更新もしない。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        bot = MagicMock(spec=commands.Bot)
+        cog = RolePanelCog(bot)
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.channel = MagicMock(spec=discord.TextChannel)
+        interaction.channel.id = 123
+        interaction.response = AsyncMock()
+        interaction.response.defer = AsyncMock(
+            side_effect=discord.HTTPException(
+                MagicMock(status=400), "already acknowledged"
+            )
+        )
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_role = MagicMock(spec=discord.Role)
+
+        with patch(
+            "src.cogs.role_panel.add_role_panel_item", new_callable=AsyncMock
+        ) as mock_add:
+            await cog.add.callback(cog, interaction, mock_role, "🎮", None, "secondary")
+            mock_add.assert_not_awaited()
+            interaction.followup.send.assert_not_awaited()
+
+    async def test_remove_defer_failure_aborts(self) -> None:
+        """remove: defer() 失敗時、DB 削除もパネル更新もしない。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        bot = MagicMock(spec=commands.Bot)
+        cog = RolePanelCog(bot)
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.channel = MagicMock(spec=discord.TextChannel)
+        interaction.channel.id = 123
+        interaction.response = AsyncMock()
+        interaction.response.defer = AsyncMock(
+            side_effect=discord.HTTPException(
+                MagicMock(status=400), "already acknowledged"
+            )
+        )
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        with patch(
+            "src.cogs.role_panel.remove_role_panel_item", new_callable=AsyncMock
+        ) as mock_remove:
+            await cog.remove.callback(cog, interaction, "🎮")
+            mock_remove.assert_not_awaited()
+            interaction.followup.send.assert_not_awaited()
+
+    async def test_delete_defer_failure_aborts(self) -> None:
+        """delete: defer() 失敗時、メッセージ削除も DB 削除もしない。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        bot = MagicMock(spec=commands.Bot)
+        cog = RolePanelCog(bot)
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.channel = MagicMock(spec=discord.TextChannel)
+        interaction.channel.id = 123
+        interaction.response = AsyncMock()
+        interaction.response.defer = AsyncMock(
+            side_effect=discord.HTTPException(
+                MagicMock(status=400), "already acknowledged"
+            )
+        )
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        with patch(
+            "src.cogs.role_panel.delete_role_panel", new_callable=AsyncMock
+        ) as mock_delete:
+            await cog.delete.callback(cog, interaction)
+            mock_delete.assert_not_awaited()
+            interaction.followup.send.assert_not_awaited()
 
 
 class TestDeleteCommandException:
@@ -2754,6 +2893,8 @@ class TestDeleteCommandException:
         interaction.guild = MagicMock(spec=discord.Guild)
         interaction.guild.get_channel.return_value = mock_channel
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_panel = RolePanel(
             id=1,
@@ -2778,8 +2919,8 @@ class TestDeleteCommandException:
 
                     await cog.delete.callback(cog, interaction)
 
-        interaction.response.send_message.assert_awaited_once()
-        call_args = interaction.response.send_message.call_args
+        interaction.followup.send.assert_awaited_once()
+        call_args = interaction.followup.send.call_args
         assert "削除しました" in call_args.args[0]
 
 
@@ -3990,6 +4131,8 @@ class TestRolePanelCreateModal:
         interaction.guild = None
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         await modal.on_submit(interaction)
 
@@ -4014,6 +4157,8 @@ class TestRolePanelCreateModal:
         interaction.guild.get_channel.return_value = None  # チャンネルなし
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_panel = RolePanel(
             id=1, guild_id="456", channel_id="123", panel_type="button", title="Test"
@@ -4057,6 +4202,8 @@ class TestRolePanelCreateModal:
         interaction.guild.get_channel.return_value = mock_channel
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_panel = RolePanel(
             id=1, guild_id="456", channel_id="123", panel_type="button", title="Test"
@@ -4108,6 +4255,8 @@ class TestRolePanelCreateModal:
         interaction.guild.get_channel.return_value = mock_channel
         interaction.channel = MagicMock(spec=discord.TextChannel)
         interaction.response = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
 
         mock_panel = RolePanel(
             id=1,

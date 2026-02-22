@@ -117,6 +117,12 @@ class StickyEmbedModal(discord.ui.Modal, title="Sticky メッセージ設定 (Em
         if delay_seconds > 3600:
             delay_seconds = 3600
 
+        # インタラクションを即座に確認 (複数インスタンス実行時の重複防止)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.HTTPException, discord.InteractionResponded):
+            return
+
         guild_id = str(interaction.guild.id)
         channel_id = str(interaction.channel_id)
 
@@ -141,7 +147,7 @@ class StickyEmbedModal(discord.ui.Modal, title="Sticky メッセージ設定 (Em
 
             # embed を投稿
             embed = self.cog._build_embed(title, description, color_int)
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "✅ Sticky メッセージ (Embed) を設定しました。", ephemeral=True
             )
 
@@ -218,6 +224,12 @@ class StickyTextModal(discord.ui.Modal, title="Sticky メッセージ設定 (テ
         if delay_seconds > 3600:
             delay_seconds = 3600
 
+        # インタラクションを即座に確認 (複数インスタンス実行時の重複防止)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.HTTPException, discord.InteractionResponded):
+            return
+
         guild_id = str(interaction.guild.id)
         channel_id = str(interaction.channel_id)
 
@@ -240,7 +252,7 @@ class StickyTextModal(discord.ui.Modal, title="Sticky メッセージ設定 (テ
             if self.cog._sticky_channels is not None:
                 self.cog._sticky_channels.add(channel_id)
 
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "✅ Sticky メッセージ (テキスト) を設定しました。", ephemeral=True
             )
 

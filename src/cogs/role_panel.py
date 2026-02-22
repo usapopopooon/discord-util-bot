@@ -185,13 +185,19 @@ class RolePanelCog(commands.Cog):
         # 絵文字を正規化 (DB保存時の一貫性確保)
         emoji = normalize_emoji(emoji)
 
+        # インタラクションを即座に確認 (複数インスタンス実行時の重複防止)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.HTTPException, discord.InteractionResponded):
+            return
+
         async with async_session() as db_session:
             # チャンネル内のパネルを取得
             panels = await get_role_panels_by_channel(
                 db_session, str(interaction.channel.id)
             )
             if not panels:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "このチャンネルにロールパネルがありません。\n"
                     "先に `/rolepanel create` でパネルを作成してください。",
                     ephemeral=True,
@@ -204,7 +210,7 @@ class RolePanelCog(commands.Cog):
             # 既に同じ絵文字が使われていないか確認
             existing = await get_role_panel_item_by_emoji(db_session, panel.id, emoji)
             if existing:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"絵文字 {emoji} は既に使用されています。", ephemeral=True
                 )
                 return
@@ -221,7 +227,7 @@ class RolePanelCog(commands.Cog):
                 )
             except IntegrityError:
                 # レースコンディション: チェック後に別のリクエストで追加された
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"絵文字 {emoji} は既に使用されています。", ephemeral=True
                 )
                 return
@@ -236,7 +242,7 @@ class RolePanelCog(commands.Cog):
             if isinstance(channel, discord.TextChannel):
                 await refresh_role_panel(channel, panel, items, self.bot)
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"ロール {role.mention} ({emoji}) を追加しました。",
             ephemeral=True,
         )
@@ -255,12 +261,18 @@ class RolePanelCog(commands.Cog):
             )
             return
 
+        # インタラクションを即座に確認 (複数インスタンス実行時の重複防止)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.HTTPException, discord.InteractionResponded):
+            return
+
         async with async_session() as db_session:
             panels = await get_role_panels_by_channel(
                 db_session, str(interaction.channel.id)
             )
             if not panels:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "このチャンネルにロールパネルがありません。", ephemeral=True
                 )
                 return
@@ -270,7 +282,7 @@ class RolePanelCog(commands.Cog):
             # ロールを削除
             success = await remove_role_panel_item(db_session, panel.id, emoji)
             if not success:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"絵文字 {emoji} のロールが見つかりません。", ephemeral=True
                 )
                 return
@@ -285,7 +297,7 @@ class RolePanelCog(commands.Cog):
             if isinstance(channel, discord.TextChannel):
                 await refresh_role_panel(channel, panel, items, self.bot)
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"ロール ({emoji}) を削除しました。", ephemeral=True
         )
 
@@ -298,12 +310,18 @@ class RolePanelCog(commands.Cog):
             )
             return
 
+        # インタラクションを即座に確認 (複数インスタンス実行時の重複防止)
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.HTTPException, discord.InteractionResponded):
+            return
+
         async with async_session() as db_session:
             panels = await get_role_panels_by_channel(
                 db_session, str(interaction.channel.id)
             )
             if not panels:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "このチャンネルにロールパネルがありません。", ephemeral=True
                 )
                 return
@@ -323,9 +341,7 @@ class RolePanelCog(commands.Cog):
             # DB からパネルを削除
             await delete_role_panel(db_session, panel.id)
 
-        await interaction.response.send_message(
-            "ロールパネルを削除しました。", ephemeral=True
-        )
+        await interaction.followup.send("ロールパネルを削除しました。", ephemeral=True)
 
     @rolepanel.command(name="list", description="ロールパネルの一覧を表示する")
     async def list_panels(self, interaction: discord.Interaction) -> None:

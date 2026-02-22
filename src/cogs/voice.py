@@ -773,15 +773,24 @@ class VoiceCog(commands.Cog):
 
         処理の流れ:
           1. サーバー内でのみ実行可能かチェック
-          2. 「参加して作成」という名前の VC を新規作成
-          3. DB にロビーとして登録
-          4. 管理者に完了メッセージを表示
+          2. defer() でインタラクションを即座に確認
+          3. 「参加して作成」という名前の VC を新規作成
+          4. DB にロビーとして登録
+          5. 管理者に完了メッセージを表示
         """
         # DM (ダイレクトメッセージ) からの実行を拒否
         if not interaction.guild:
             await interaction.response.send_message(
                 "このコマンドはサーバー内でのみ使用できます。", ephemeral=True
             )
+            return
+
+        # インタラクションを即座に確認 (複数インスタンス実行時の重複防止)
+        # Discord は1つのインタラクションに対して1回しか応答を許可しないため、
+        # 先に defer() した方だけが処理を続行できる
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.HTTPException, discord.InteractionResponded):
             return
 
         guild_id = str(interaction.guild_id)
@@ -793,7 +802,7 @@ class VoiceCog(commands.Cog):
             async with async_session() as session:
                 existing = await get_lobbies_by_guild(session, guild_id)
                 if existing:
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         "このサーバーには既にロビーが存在します。",
                         ephemeral=True,
                     )
@@ -805,7 +814,7 @@ class VoiceCog(commands.Cog):
                     name="参加して作成",
                 )
             except discord.HTTPException as e:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"VCの作成に失敗しました: {e}", ephemeral=True
                 )
                 return
@@ -825,7 +834,7 @@ class VoiceCog(commands.Cog):
             if self._lobby_channel_ids is not None:
                 self._lobby_channel_ids.add(lobby_channel_id_str)
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"ロビー **{lobby_channel.name}** を作成しました！\n"
             f"お好みのカテゴリに手動で移動してください。",
             ephemeral=True,
