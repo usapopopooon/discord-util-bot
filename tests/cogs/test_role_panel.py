@@ -4291,3 +4291,200 @@ class TestRolePanelCreateModal:
         assert "作成しました" in call_args.args[0]
         # created_panel がセットされたことを確認
         assert modal.created_panel == mock_panel
+
+
+# ===========================================================================
+# イベント台帳による重複防止テスト
+# ===========================================================================
+
+
+class TestReactionEventLedgerDuplicateGuard:
+    """claim_event による重複防止のテスト (reaction)。"""
+
+    async def test_reaction_add_skips_on_duplicate_claim(self) -> None:
+        """claim_event が False → ロール操作をスキップ。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        bot = MagicMock(spec=commands.Bot)
+        bot.user = MagicMock(spec=discord.User)
+        bot.user.id = 9999
+        cog = RolePanelCog(bot)
+
+        payload = MagicMock(spec=discord.RawReactionActionEvent)
+        payload.user_id = 1
+        payload.guild_id = 100
+        payload.message_id = 200
+        payload.channel_id = 300
+        payload.emoji = MagicMock()
+        payload.emoji.__str__ = MagicMock(return_value="⭐")
+
+        panel = MagicMock()
+        panel.id = 10
+        panel.panel_type = "reaction"
+        panel.remove_reaction = False
+
+        item = MagicMock()
+        item.role_id = "999"
+
+        member = MagicMock(spec=discord.Member)
+        member.bot = False
+        member.roles = []
+        member.add_roles = AsyncMock()
+
+        role = MagicMock(spec=discord.Role)
+        role.id = 999
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.get_member = MagicMock(return_value=member)
+        guild.get_role = MagicMock(return_value=role)
+        bot.get_guild = MagicMock(return_value=guild)
+
+        mock_factory = MagicMock()
+        mock_db_session = AsyncMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_db_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.role_panel.async_session", mock_factory),
+            patch(
+                "src.cogs.role_panel.get_role_panel_by_message_id",
+                new_callable=AsyncMock,
+                return_value=panel,
+            ),
+            patch(
+                "src.cogs.role_panel.get_role_panel_item_by_emoji",
+                new_callable=AsyncMock,
+                return_value=item,
+            ),
+            patch(
+                "src.cogs.role_panel.claim_event",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            await cog._handle_reaction(payload, "add")
+            member.add_roles.assert_not_awaited()
+
+    async def test_reaction_remove_skips_on_duplicate_claim(self) -> None:
+        """claim_event が False → remove アクションもスキップ。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        bot = MagicMock(spec=commands.Bot)
+        bot.user = MagicMock(spec=discord.User)
+        bot.user.id = 9999
+        cog = RolePanelCog(bot)
+
+        payload = MagicMock(spec=discord.RawReactionActionEvent)
+        payload.user_id = 1
+        payload.guild_id = 100
+        payload.message_id = 200
+        payload.channel_id = 300
+        payload.emoji = MagicMock()
+        payload.emoji.__str__ = MagicMock(return_value="⭐")
+
+        panel = MagicMock()
+        panel.id = 10
+        panel.panel_type = "reaction"
+        panel.remove_reaction = False
+
+        item = MagicMock()
+        item.role_id = "999"
+
+        role = MagicMock(spec=discord.Role)
+        member = MagicMock(spec=discord.Member)
+        member.bot = False
+        member.roles = [role]
+        member.remove_roles = AsyncMock()
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.get_member = MagicMock(return_value=member)
+        guild.get_role = MagicMock(return_value=role)
+        bot.get_guild = MagicMock(return_value=guild)
+
+        mock_factory = MagicMock()
+        mock_db_session = AsyncMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_db_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.role_panel.async_session", mock_factory),
+            patch(
+                "src.cogs.role_panel.get_role_panel_by_message_id",
+                new_callable=AsyncMock,
+                return_value=panel,
+            ),
+            patch(
+                "src.cogs.role_panel.get_role_panel_item_by_emoji",
+                new_callable=AsyncMock,
+                return_value=item,
+            ),
+            patch(
+                "src.cogs.role_panel.claim_event",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            await cog._handle_reaction(payload, "remove")
+            member.remove_roles.assert_not_awaited()
+
+    async def test_remove_reaction_mode_skips_on_duplicate_claim(self) -> None:
+        """remove_reaction モードでも claim_event=False → スキップ。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        bot = MagicMock(spec=commands.Bot)
+        bot.user = MagicMock(spec=discord.User)
+        bot.user.id = 9999
+        cog = RolePanelCog(bot)
+
+        payload = MagicMock(spec=discord.RawReactionActionEvent)
+        payload.user_id = 1
+        payload.guild_id = 100
+        payload.message_id = 200
+        payload.channel_id = 300
+        payload.emoji = MagicMock()
+        payload.emoji.__str__ = MagicMock(return_value="⭐")
+
+        panel = MagicMock()
+        panel.id = 10
+        panel.panel_type = "reaction"
+        panel.remove_reaction = True  # remove_reaction モード
+
+        item = MagicMock()
+        item.role_id = "999"
+
+        role = MagicMock(spec=discord.Role)
+        member = MagicMock(spec=discord.Member)
+        member.bot = False
+        member.roles = []
+        member.add_roles = AsyncMock()
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.get_member = MagicMock(return_value=member)
+        guild.get_role = MagicMock(return_value=role)
+        bot.get_guild = MagicMock(return_value=guild)
+
+        mock_factory = MagicMock()
+        mock_db_session = AsyncMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_db_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.role_panel.async_session", mock_factory),
+            patch(
+                "src.cogs.role_panel.get_role_panel_by_message_id",
+                new_callable=AsyncMock,
+                return_value=panel,
+            ),
+            patch(
+                "src.cogs.role_panel.get_role_panel_item_by_emoji",
+                new_callable=AsyncMock,
+                return_value=item,
+            ),
+            patch(
+                "src.cogs.role_panel.claim_event",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            await cog._handle_reaction(payload, "add")
+            member.add_roles.assert_not_awaited()

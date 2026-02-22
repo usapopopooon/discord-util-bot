@@ -351,7 +351,7 @@ class TestOnMemberJoin:
                 "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
                 return_value=[rule],
             ),
-            patch("src.cogs.autoban.create_autoban_log", new_callable=AsyncMock),
+            patch("src.cogs.autoban.claim_autoban_log", new_callable=AsyncMock),
             patch(
                 "src.cogs.autoban.get_autoban_config",
                 new_callable=AsyncMock,
@@ -371,7 +371,7 @@ class TestOnMemberJoin:
                 "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
                 return_value=[rule],
             ),
-            patch("src.cogs.autoban.create_autoban_log", new_callable=AsyncMock),
+            patch("src.cogs.autoban.claim_autoban_log", new_callable=AsyncMock),
             patch(
                 "src.cogs.autoban.get_autoban_config",
                 new_callable=AsyncMock,
@@ -404,7 +404,7 @@ class TestOnMemberJoin:
                 "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
                 return_value=[rule1, rule2],
             ),
-            patch("src.cogs.autoban.create_autoban_log", new_callable=AsyncMock),
+            patch("src.cogs.autoban.claim_autoban_log", new_callable=AsyncMock),
             patch(
                 "src.cogs.autoban.get_autoban_config",
                 new_callable=AsyncMock,
@@ -462,7 +462,7 @@ class TestOnMemberJoin:
                 return_value=[rule],
             ),
             patch(
-                "src.cogs.autoban.create_autoban_log",
+                "src.cogs.autoban.claim_autoban_log",
                 new_callable=AsyncMock,
             ) as mock_log,
             patch(
@@ -476,6 +476,7 @@ class TestOnMemberJoin:
 
     @pytest.mark.asyncio
     async def test_forbidden_error_handled(self) -> None:
+        """BAN が Forbidden でも claim 済み — エラーログのみ出力。"""
         cog = _make_cog()
         member = _make_member(name="spammer")
         member.guild.ban = AsyncMock(
@@ -488,15 +489,22 @@ class TestOnMemberJoin:
                 return_value=[rule],
             ),
             patch(
-                "src.cogs.autoban.create_autoban_log",
+                "src.cogs.autoban.claim_autoban_log",
                 new_callable=AsyncMock,
             ) as mock_log,
+            patch(
+                "src.cogs.autoban.get_autoban_config",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
             await cog.on_member_join(member)
-            mock_log.assert_not_called()
+            # claim は ban の前に呼ばれる
+            mock_log.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_http_exception_handled(self) -> None:
+        """BAN が HTTPException でも claim 済み — エラーログのみ出力。"""
         cog = _make_cog()
         member = _make_member(name="spammer")
         member.guild.ban = AsyncMock(
@@ -509,12 +517,18 @@ class TestOnMemberJoin:
                 return_value=[rule],
             ),
             patch(
-                "src.cogs.autoban.create_autoban_log",
+                "src.cogs.autoban.claim_autoban_log",
                 new_callable=AsyncMock,
             ) as mock_log,
+            patch(
+                "src.cogs.autoban.get_autoban_config",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
             await cog.on_member_join(member)
-            mock_log.assert_not_called()
+            # claim は ban の前に呼ばれる
+            mock_log.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -821,7 +835,7 @@ class TestFirstMatchWins:
                 "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
                 return_value=[enabled_rule],
             ),
-            patch("src.cogs.autoban.create_autoban_log", new_callable=AsyncMock),
+            patch("src.cogs.autoban.claim_autoban_log", new_callable=AsyncMock),
             patch(
                 "src.cogs.autoban.get_autoban_config",
                 new_callable=AsyncMock,
@@ -853,7 +867,7 @@ class TestFirstMatchWins:
                 "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
                 return_value=[rule1, rule2],
             ),
-            patch("src.cogs.autoban.create_autoban_log", new_callable=AsyncMock),
+            patch("src.cogs.autoban.claim_autoban_log", new_callable=AsyncMock),
             patch(
                 "src.cogs.autoban.get_autoban_config",
                 new_callable=AsyncMock,
@@ -991,8 +1005,8 @@ class TestOnMemberJoinEdgeCases:
             member.guild.kick.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_log_creation_failure_propagates_after_ban(self) -> None:
-        """ログ作成失敗時、BAN は実行されるがエラーが伝播する。"""
+    async def test_log_creation_failure_propagates_no_ban(self) -> None:
+        """claim 失敗時は BAN も実行されずエラーが伝播する。"""
         cog = _make_cog()
         member = _make_member(name="spammer")
         rule = _make_rule(action="ban", pattern="spammer")
@@ -1002,15 +1016,72 @@ class TestOnMemberJoinEdgeCases:
                 return_value=[rule],
             ),
             patch(
-                "src.cogs.autoban.create_autoban_log",
+                "src.cogs.autoban.claim_autoban_log",
                 new_callable=AsyncMock,
                 side_effect=Exception("DB error"),
             ),
         ):
             with pytest.raises(Exception, match="DB error"):
                 await cog.on_member_join(member)
-            # BAN は実行されている
-            member.guild.ban.assert_called_once()
+            # claim が先なので BAN は実行されない
+            member.guild.ban.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestDuplicateGuard: 重複インスタンス防止のテスト
+# ---------------------------------------------------------------------------
+
+
+class TestDuplicateGuard:
+    """claim が None (別インスタンスが先に処理) ならスキップ。"""
+
+    @pytest.mark.asyncio
+    async def test_execute_action_skips_all_on_duplicate(self) -> None:
+        """claim_autoban_log が None → ban/kick も embed も実行しない。"""
+        cog = _make_cog()
+        member = _make_member(name="spammer")
+        rule = _make_rule(action="ban", pattern="spammer")
+
+        with (
+            patch(
+                "src.cogs.autoban.claim_autoban_log",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "src.cogs.autoban.get_autoban_config",
+                new_callable=AsyncMock,
+            ) as mock_cfg,
+            patch.object(cog, "_send_log_embed", new_callable=AsyncMock) as mock_send,
+        ):
+            await cog._execute_action(member, rule, "test reason")
+            member.guild.ban.assert_not_called()
+            mock_cfg.assert_not_called()
+            mock_send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_member_ban_skips_on_duplicate(self) -> None:
+        """claim_ban_log が None → 重複ログを作成しない。"""
+        cog = _make_cog()
+        guild, user = _make_guild_and_user()
+        ban_entry = MagicMock()
+        ban_entry.reason = "Spam"
+        guild.fetch_ban.return_value = ban_entry
+        mock_session = _make_mock_session()
+
+        with (
+            patch(
+                "src.cogs.autoban.async_session",
+                return_value=mock_session,
+            ),
+            patch(
+                "src.cogs.autoban.claim_ban_log",
+                new_callable=AsyncMock,
+                return_value=None,
+            ) as mock_claim,
+        ):
+            await cog.on_member_ban(guild, user)
+            mock_claim.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1206,7 +1277,7 @@ class TestExecuteActionWithLogChannel:
         """共通 patch オブジェクトを返す。"""
         return (
             patch(
-                "src.cogs.autoban.create_autoban_log",
+                "src.cogs.autoban.claim_autoban_log",
                 new_callable=AsyncMock,
             ),
             patch(
@@ -1347,7 +1418,7 @@ class TestOnMemberBan:
                 return_value=mock_session,
             ),
             patch(
-                "src.cogs.autoban.create_ban_log",
+                "src.cogs.autoban.claim_ban_log",
                 new_callable=AsyncMock,
             ) as mock_create,
         ):
@@ -1377,7 +1448,7 @@ class TestOnMemberBan:
                 return_value=mock_session,
             ),
             patch(
-                "src.cogs.autoban.create_ban_log",
+                "src.cogs.autoban.claim_ban_log",
                 new_callable=AsyncMock,
             ) as mock_create,
         ):
@@ -1407,7 +1478,7 @@ class TestOnMemberBan:
                 return_value=mock_session,
             ),
             patch(
-                "src.cogs.autoban.create_ban_log",
+                "src.cogs.autoban.claim_ban_log",
                 new_callable=AsyncMock,
             ) as mock_create,
         ):
@@ -1438,7 +1509,7 @@ class TestOnMemberBan:
                 return_value=mock_session,
             ),
             patch(
-                "src.cogs.autoban.create_ban_log",
+                "src.cogs.autoban.claim_ban_log",
                 new_callable=AsyncMock,
             ) as mock_create,
         ):
@@ -1449,8 +1520,8 @@ class TestOnMemberBan:
             assert call_kwargs.kwargs["is_autoban"] is False
 
     @pytest.mark.asyncio
-    async def test_create_ban_log_exception_handled(self) -> None:
-        """create_ban_log が例外を出しても伝播しない。"""
+    async def test_claim_ban_log_exception_handled(self) -> None:
+        """claim_ban_log が例外を出しても伝播しない。"""
         cog = _make_cog()
         guild, user = _make_guild_and_user()
         ban_entry = MagicMock()
@@ -1464,7 +1535,7 @@ class TestOnMemberBan:
                 return_value=mock_session,
             ),
             patch(
-                "src.cogs.autoban.create_ban_log",
+                "src.cogs.autoban.claim_ban_log",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("DB error"),
             ),
@@ -1488,7 +1559,7 @@ class TestOnMemberBan:
                 return_value=mock_session,
             ),
             patch(
-                "src.cogs.autoban.create_ban_log",
+                "src.cogs.autoban.claim_ban_log",
                 new_callable=AsyncMock,
             ) as mock_create,
         ):

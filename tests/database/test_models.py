@@ -26,6 +26,7 @@ from src.database.models import (
     JoinRoleAssignment,
     JoinRoleConfig,
     Lobby,
+    ProcessedEvent,
     RolePanel,
     RolePanelItem,
     StickyMessage,
@@ -2830,6 +2831,54 @@ class TestAutoBanIntroPost:
         await db_session.commit()
         text = repr(post)
         assert "AutoBanIntroPost" in text
+
+
+class TestProcessedEventModel:
+    """ProcessedEvent モデルのテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_create_processed_event(self, db_session: AsyncSession) -> None:
+        """イベントレコードを作成できる。"""
+        event = ProcessedEvent(event_key="test:event:1")
+        db_session.add(event)
+        await db_session.commit()
+        await db_session.refresh(event)
+        assert event.id is not None
+        assert event.event_key == "test:event:1"
+        assert event.created_at is not None
+
+    @pytest.mark.asyncio
+    async def test_created_at_uses_utc(self, db_session: AsyncSession) -> None:
+        """created_at が UTC タイムゾーン付きで設定される。"""
+        event = ProcessedEvent(event_key="test:utc:1")
+        db_session.add(event)
+        await db_session.commit()
+        await db_session.refresh(event)
+        assert event.created_at.tzinfo is not None
+
+    @pytest.mark.asyncio
+    async def test_unique_constraint_on_event_key(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同一 event_key の重複は IntegrityError。"""
+        e1 = ProcessedEvent(event_key="dup:key")
+        db_session.add(e1)
+        await db_session.commit()
+
+        e2 = ProcessedEvent(event_key="dup:key")
+        db_session.add(e2)
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    @pytest.mark.asyncio
+    async def test_repr(self, db_session: AsyncSession) -> None:
+        """__repr__ にモデル名と event_key が含まれる。"""
+        event = ProcessedEvent(event_key="test:repr:1")
+        db_session.add(event)
+        await db_session.commit()
+        text = repr(event)
+        assert "ProcessedEvent" in text
+        assert "test:repr:1" in text
 
 
 class TestAutoBanRuleNewTypes:

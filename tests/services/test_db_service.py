@@ -17,6 +17,11 @@ from src.database.models import Base
 from src.services.db_service import (
     add_role_panel_item,
     add_voice_session_member,
+    claim_autoban_log,
+    claim_ban_log,
+    claim_event,
+    claim_join_role_assignment,
+    cleanup_expired_events,
     clear_bump_reminder,
     create_autoban_log,
     create_autoban_rule,
@@ -4549,6 +4554,155 @@ class TestAutobanDbService:
         assert logs == []
 
 
+class TestClaimAutobanLog:
+    """claim_autoban_log のアトミック重複防止テスト。"""
+
+    async def test_first_claim_creates_log(self, db_session: AsyncSession) -> None:
+        """初回 claim はログを作成する。"""
+        rule = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="username_match", pattern="spam"
+        )
+        log = await claim_autoban_log(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            username="spammer",
+            rule_id=rule.id,
+            action_taken="banned",
+            reason="test",
+        )
+        assert log is not None
+        assert log.guild_id == "123"
+        assert log.user_id == "u1"
+        assert log.action_taken == "banned"
+
+    async def test_duplicate_claim_returns_none(self, db_session: AsyncSession) -> None:
+        """10 秒以内の同一 claim は None を返す。"""
+        rule = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="username_match", pattern="spam"
+        )
+        log1 = await claim_autoban_log(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            username="spammer",
+            rule_id=rule.id,
+            action_taken="banned",
+            reason="test",
+        )
+        assert log1 is not None
+
+        log2 = await claim_autoban_log(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            username="spammer",
+            rule_id=rule.id,
+            action_taken="banned",
+            reason="test",
+        )
+        assert log2 is None
+
+    async def test_different_user_not_duplicate(self, db_session: AsyncSession) -> None:
+        """異なるユーザーなら重複にならない。"""
+        rule = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="username_match", pattern="spam"
+        )
+        log1 = await claim_autoban_log(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            username="spammer1",
+            rule_id=rule.id,
+            action_taken="banned",
+            reason="test",
+        )
+        log2 = await claim_autoban_log(
+            db_session,
+            guild_id="123",
+            user_id="u2",
+            username="spammer2",
+            rule_id=rule.id,
+            action_taken="banned",
+            reason="test",
+        )
+        assert log1 is not None
+        assert log2 is not None
+
+    async def test_deleted_rule_returns_none(self, db_session: AsyncSession) -> None:
+        """削除済みルールの claim は None を返す。"""
+        rule = await create_autoban_rule(
+            db_session, guild_id="123", rule_type="username_match", pattern="spam"
+        )
+        rule_id = rule.id
+        await delete_autoban_rule(db_session, rule_id)
+        log = await claim_autoban_log(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            username="spammer",
+            rule_id=rule_id,
+            action_taken="banned",
+            reason="test",
+        )
+        assert log is None
+
+
+class TestClaimBanLog:
+    """claim_ban_log のアトミック重複防止テスト。"""
+
+    async def test_first_claim_creates_log(self, db_session: AsyncSession) -> None:
+        """初回 claim はログを作成する。"""
+        log = await claim_ban_log(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            username="spammer",
+            reason="test",
+            is_autoban=False,
+        )
+        assert log is not None
+        assert log.guild_id == "123"
+        assert log.user_id == "u1"
+
+    async def test_duplicate_claim_returns_none(self, db_session: AsyncSession) -> None:
+        """10 秒以内の同一 claim は None を返す。"""
+        log1 = await claim_ban_log(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            username="spammer",
+            reason="test",
+        )
+        assert log1 is not None
+
+        log2 = await claim_ban_log(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            username="spammer",
+            reason="test",
+        )
+        assert log2 is None
+
+    async def test_different_user_not_duplicate(self, db_session: AsyncSession) -> None:
+        """異なるユーザーなら重複にならない。"""
+        log1 = await claim_ban_log(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            username="spammer1",
+        )
+        log2 = await claim_ban_log(
+            db_session,
+            guild_id="123",
+            user_id="u2",
+            username="spammer2",
+        )
+        assert log1 is not None
+        assert log2 is not None
+
+
 class TestAutobanConfigDbService:
     """Tests for autoban config CRUD database operations."""
 
@@ -5406,6 +5560,78 @@ class TestJoinRoleDbService:
         assert a2.role_id == "r2"
 
 
+class TestClaimJoinRoleAssignment:
+    """claim_join_role_assignment のアトミック重複防止テスト。"""
+
+    async def test_first_claim_creates_assignment(
+        self, db_session: AsyncSession
+    ) -> None:
+        """初回 claim はレコードを作成する。"""
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        a = await claim_join_role_assignment(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            role_id="r1",
+            assigned_at=now,
+            expires_at=now + timedelta(hours=24),
+        )
+        assert a is not None
+        assert a.guild_id == "123"
+        assert a.user_id == "u1"
+
+    async def test_duplicate_claim_returns_none(self, db_session: AsyncSession) -> None:
+        """10 秒以内の同一 claim は None を返す。"""
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        a1 = await claim_join_role_assignment(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            role_id="r1",
+            assigned_at=now,
+            expires_at=now + timedelta(hours=24),
+        )
+        assert a1 is not None
+
+        a2 = await claim_join_role_assignment(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            role_id="r1",
+            assigned_at=now,
+            expires_at=now + timedelta(hours=24),
+        )
+        assert a2 is None
+
+    async def test_different_role_not_duplicate(self, db_session: AsyncSession) -> None:
+        """異なるロールなら重複にならない。"""
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        a1 = await claim_join_role_assignment(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            role_id="r1",
+            assigned_at=now,
+            expires_at=now + timedelta(hours=24),
+        )
+        a2 = await claim_join_role_assignment(
+            db_session,
+            guild_id="123",
+            user_id="u1",
+            role_id="r2",
+            assigned_at=now,
+            expires_at=now + timedelta(hours=24),
+        )
+        assert a1 is not None
+        assert a2 is not None
+
+
 # ===========================================================================
 # IntroPost CRUD
 # ===========================================================================
@@ -5464,3 +5690,187 @@ class TestIntroPostCRUD:
         """存在しないギルドの削除は 0。"""
         count = await delete_intro_posts_by_guild(db_session, "nonexistent")
         assert count == 0
+
+
+# ===========================================================================
+# ProcessedEvent (イベント台帳) 操作
+# ===========================================================================
+
+
+class TestClaimEvent:
+    """claim_event のアトミック重複防止テスト。"""
+
+    @pytest.mark.asyncio
+    async def test_first_claim_succeeds(self, db_session: AsyncSession) -> None:
+        """初回 claim は True を返す。"""
+        result = await claim_event(db_session, "test:event:1")
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_duplicate_claim_returns_false(
+        self, db_session: AsyncSession
+    ) -> None:
+        """同一 event_key の2回目の claim は False を返す。"""
+        result1 = await claim_event(db_session, "test:event:dup")
+        assert result1 is True
+
+        result2 = await claim_event(db_session, "test:event:dup")
+        assert result2 is False
+
+    @pytest.mark.asyncio
+    async def test_different_keys_both_succeed(self, db_session: AsyncSession) -> None:
+        """異なる event_key なら両方 claim 成功。"""
+        r1 = await claim_event(db_session, "test:event:a")
+        r2 = await claim_event(db_session, "test:event:b")
+        assert r1 is True
+        assert r2 is True
+
+    @pytest.mark.asyncio
+    async def test_claim_after_duplicate_still_works(
+        self, db_session: AsyncSession
+    ) -> None:
+        """重複 claim (rollback) 後でも別キーの claim が成功する。"""
+        await claim_event(db_session, "test:event:first")
+        await claim_event(db_session, "test:event:first")  # False + rollback
+
+        result = await claim_event(db_session, "test:event:second")
+        assert result is True
+
+
+class TestCleanupExpiredEvents:
+    """cleanup_expired_events のテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_cleanup_deletes_old_records(self, db_session: AsyncSession) -> None:
+        """古いレコードが削除される。"""
+        from datetime import UTC, datetime, timedelta
+
+        from src.database.models import ProcessedEvent
+
+        # 2時間前のレコードを直接挿入
+        old_event = ProcessedEvent(
+            event_key="old:event",
+            created_at=datetime.now(UTC) - timedelta(hours=2),
+        )
+        db_session.add(old_event)
+        await db_session.commit()
+
+        deleted = await cleanup_expired_events(db_session, max_age_seconds=3600)
+        assert deleted == 1
+
+    @pytest.mark.asyncio
+    async def test_cleanup_keeps_recent_records(self, db_session: AsyncSession) -> None:
+        """新しいレコードは削除されない。"""
+        await claim_event(db_session, "recent:event")
+
+        deleted = await cleanup_expired_events(db_session, max_age_seconds=3600)
+        assert deleted == 0
+
+    @pytest.mark.asyncio
+    async def test_cleanup_returns_zero_when_empty(
+        self, db_session: AsyncSession
+    ) -> None:
+        """テーブルが空なら 0。"""
+        deleted = await cleanup_expired_events(db_session)
+        assert deleted == 0
+
+    @pytest.mark.asyncio
+    async def test_cleanup_mixed_old_and_recent(self, db_session: AsyncSession) -> None:
+        """古いレコードのみ削除し、新しいレコードは残す。"""
+        from datetime import UTC, datetime, timedelta
+
+        from src.database.models import ProcessedEvent
+
+        # 古いレコード 3 件
+        for i in range(3):
+            db_session.add(
+                ProcessedEvent(
+                    event_key=f"old:{i}",
+                    created_at=datetime.now(UTC) - timedelta(hours=2),
+                )
+            )
+        await db_session.commit()
+
+        # 新しいレコード 2 件
+        for i in range(2):
+            await claim_event(db_session, f"recent:{i}")
+
+        deleted = await cleanup_expired_events(db_session, max_age_seconds=3600)
+        assert deleted == 3
+
+    @pytest.mark.asyncio
+    async def test_cleanup_respects_custom_max_age(
+        self, db_session: AsyncSession
+    ) -> None:
+        """カスタム max_age_seconds が正しく適用される。"""
+        from datetime import UTC, datetime, timedelta
+
+        from src.database.models import ProcessedEvent
+
+        # 45分前 (30分以上、1時間未満)
+        db_session.add(
+            ProcessedEvent(
+                event_key="mid:age",
+                created_at=datetime.now(UTC) - timedelta(minutes=45),
+            )
+        )
+        await db_session.commit()
+
+        # デフォルト (1時間) では削除されない
+        deleted = await cleanup_expired_events(db_session, max_age_seconds=3600)
+        assert deleted == 0
+
+        # 30分指定なら削除される
+        deleted = await cleanup_expired_events(db_session, max_age_seconds=1800)
+        assert deleted == 1
+
+    @pytest.mark.asyncio
+    async def test_cleanup_boundary_not_deleted(self, db_session: AsyncSession) -> None:
+        """ちょうどカットオフ時刻のレコードは削除されない (< 条件)。"""
+        from datetime import UTC, datetime, timedelta
+
+        from src.database.models import ProcessedEvent
+
+        # ちょうど 1秒前 (max_age=3600 → カットオフより新しい)
+        db_session.add(
+            ProcessedEvent(
+                event_key="boundary:event",
+                created_at=datetime.now(UTC) - timedelta(seconds=3599),
+            )
+        )
+        await db_session.commit()
+
+        deleted = await cleanup_expired_events(db_session, max_age_seconds=3600)
+        assert deleted == 0
+
+
+class TestClaimEventSessionRecovery:
+    """claim_event の IntegrityError 後のセッション復旧テスト。"""
+
+    @pytest.mark.asyncio
+    async def test_session_usable_after_duplicate_claim(
+        self, db_session: AsyncSession
+    ) -> None:
+        """重複 claim (rollback) 後も他の DB 操作が可能。"""
+        await claim_event(db_session, "key:recovery:1")
+        result = await claim_event(db_session, "key:recovery:1")  # False + rollback
+        assert result is False
+
+        # rollback 後にロビー作成が成功することを確認
+        lobby = await create_lobby(db_session, guild_id="111", lobby_channel_id="222")
+        assert lobby.id is not None
+
+    @pytest.mark.asyncio
+    async def test_different_operations_after_rollback(
+        self, db_session: AsyncSession
+    ) -> None:
+        """重複 claim の rollback 後に異なる DB 操作が連続で成功する。"""
+        await claim_event(db_session, "ops:after:rollback")
+        await claim_event(db_session, "ops:after:rollback")  # False + rollback
+
+        # rollback 後にロビー作成 → 更にイベント claim → 両方成功
+        lobby = await create_lobby(db_session, guild_id="333", lobby_channel_id="444")
+        assert lobby.id is not None
+
+        result = await claim_event(db_session, "ops:after:rollback:2")
+        assert result is True

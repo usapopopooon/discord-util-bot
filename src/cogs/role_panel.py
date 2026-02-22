@@ -15,6 +15,7 @@
 """
 
 import logging
+import time
 from typing import Literal
 
 import discord
@@ -26,6 +27,7 @@ from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.services.db_service import (
     add_role_panel_item,
+    claim_event,
     delete_discord_channel,
     delete_discord_channels_by_guild,
     delete_discord_guild,
@@ -454,6 +456,20 @@ class RolePanelCog(commands.Cog):
         if role is None:
             logger.warning("Role %s not found for panel %d", item.role_id, panel.id)
             return
+
+        # イベント台帳で重複防止 (マルチインスタンス)
+        bucket = int(time.time()) // 5
+        event_key = (
+            f"reaction:{payload.message_id}:{payload.user_id}"
+            f":{emoji_str}:{action}:{bucket}"
+        )
+        async with async_session() as claim_session:
+            if not await claim_event(claim_session, event_key):
+                logger.info(
+                    "Reaction event already claimed by another instance: %s",
+                    event_key,
+                )
+                return
 
         try:
             if remove_reaction_mode:

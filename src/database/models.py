@@ -1613,3 +1613,34 @@ class JoinRoleAssignment(Base):
             f"<JoinRoleAssignment(id={self.id}, guild_id={self.guild_id}, "
             f"user_id={self.user_id}, role_id={self.role_id})>"
         )
+
+
+class ProcessedEvent(Base):
+    """イベント台帳テーブル (マルチインスタンス重複防止)。
+
+    複数インスタンスが同じ Discord Gateway イベントを受信した際に、
+    1 インスタンスだけが処理を実行するための台帳。
+    event_key の UNIQUE 制約により、INSERT の IntegrityError で
+    アトミックに重複を検出する。
+
+    Attributes:
+        id (int): 自動採番の主キー。
+        event_key (str): イベントを一意に識別するキー。UNIQUE 制約付き。
+        created_at (datetime): レコード作成日時 (UTC)。cleanup 用。
+
+    Notes:
+        - テーブル名: ``processed_events``
+        - 古いレコードは health cog の heartbeat で定期削除される
+    """
+
+    __tablename__ = "processed_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_key: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return f"<ProcessedEvent(id={self.id}, event_key={self.event_key})>"

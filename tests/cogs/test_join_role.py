@@ -120,7 +120,7 @@ class TestOnMemberJoin:
                 return_value=[config],
             ),
             patch(
-                "src.cogs.join_role.create_join_role_assignment",
+                "src.cogs.join_role.claim_join_role_assignment",
                 new_callable=AsyncMock,
             ) as mock_create,
         ):
@@ -144,7 +144,7 @@ class TestOnMemberJoin:
                 return_value=[config],
             ),
             patch(
-                "src.cogs.join_role.create_join_role_assignment",
+                "src.cogs.join_role.claim_join_role_assignment",
                 new_callable=AsyncMock,
             ) as mock_create,
         ):
@@ -154,7 +154,7 @@ class TestOnMemberJoin:
 
     @pytest.mark.asyncio
     async def test_add_roles_http_error(self) -> None:
-        """ロール付与失敗時はスキップしてログ出力。"""
+        """ロール付与失敗でも DB レコードは作成済み。"""
         cog = _make_cog()
         member = _make_member()
         role = MagicMock(spec=discord.Role)
@@ -168,12 +168,13 @@ class TestOnMemberJoin:
                 return_value=[config],
             ),
             patch(
-                "src.cogs.join_role.create_join_role_assignment",
+                "src.cogs.join_role.claim_join_role_assignment",
                 new_callable=AsyncMock,
-            ) as mock_create,
+            ) as mock_claim,
         ):
             await cog.on_member_join(member)
-            mock_create.assert_not_called()
+            # claim は add_roles の前に呼ばれる
+            mock_claim.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_multiple_configs(self) -> None:
@@ -192,7 +193,7 @@ class TestOnMemberJoin:
                 return_value=[config1, config2],
             ),
             patch(
-                "src.cogs.join_role.create_join_role_assignment",
+                "src.cogs.join_role.claim_join_role_assignment",
                 new_callable=AsyncMock,
             ) as mock_create,
         ):
@@ -450,7 +451,7 @@ class TestOnMemberJoinEdgeCases:
 
     @pytest.mark.asyncio
     async def test_assignment_creation_failure(self) -> None:
-        """DB レコード作成失敗時もロール付与は完了している。"""
+        """DB レコード作成失敗時はロール付与もスキップ。"""
         cog = _make_cog()
         member = _make_member()
         role = MagicMock(spec=discord.Role)
@@ -463,14 +464,14 @@ class TestOnMemberJoinEdgeCases:
                 return_value=[config],
             ),
             patch(
-                "src.cogs.join_role.create_join_role_assignment",
+                "src.cogs.join_role.claim_join_role_assignment",
                 new_callable=AsyncMock,
                 side_effect=Exception("DB error"),
             ),
         ):
             await cog.on_member_join(member)
-            # ロールは付与済み
-            member.add_roles.assert_called_once()
+            # claim 失敗 → add_roles は呼ばれない
+            member.add_roles.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_multiple_configs_one_role_fails(self) -> None:
@@ -493,10 +494,71 @@ class TestOnMemberJoinEdgeCases:
                 return_value=[config1, config2],
             ),
             patch(
-                "src.cogs.join_role.create_join_role_assignment",
+                "src.cogs.join_role.claim_join_role_assignment",
                 new_callable=AsyncMock,
-            ) as mock_create,
+            ) as mock_claim,
         ):
             await cog.on_member_join(member)
-            # 2回目のロール付与は成功 → assignment も 1 件作成
-            assert mock_create.call_count == 1
+            # claim は add_roles の前に呼ばれるので両方 claim される
+            assert mock_claim.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# TestDuplicateGuard: 重複インスタンス防止のテスト
+# ---------------------------------------------------------------------------
+
+
+class TestDuplicateGuard:
+    """claim が None (別インスタンスが先に処理) ならスキップ。"""
+
+    @pytest.mark.asyncio
+    async def test_on_member_join_skips_on_duplicate(self) -> None:
+        """claim が None → add_roles を呼ばない。"""
+        cog = _make_cog()
+        member = _make_member()
+        role = MagicMock(spec=discord.Role)
+        member.guild.get_role.return_value = role
+        config = _make_config()
+
+        with (
+            patch(
+                "src.cogs.join_role.get_enabled_join_role_configs",
+                return_value=[config],
+            ),
+            patch(
+                "src.cogs.join_role.claim_join_role_assignment",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            await cog.on_member_join(member)
+            member.add_roles.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_check_expired_skips_on_already_deleted(self) -> None:
+        """delete が False → remove_roles を呼ばない。"""
+        cog = _make_cog()
+        member = MagicMock(spec=discord.Member)
+        member.remove_roles = AsyncMock()
+        role = MagicMock(spec=discord.Role)
+        guild = MagicMock(spec=discord.Guild)
+        guild.get_member.return_value = member
+        guild.get_role.return_value = role
+        cog.bot.get_guild.return_value = guild
+
+        assignment = _make_assignment()
+
+        with (
+            patch(
+                "src.cogs.join_role.get_expired_join_role_assignments",
+                new_callable=AsyncMock,
+                return_value=[assignment],
+            ),
+            patch(
+                "src.cogs.join_role.delete_join_role_assignment",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            await cog._check_expired_roles()
+            member.remove_roles.assert_not_called()

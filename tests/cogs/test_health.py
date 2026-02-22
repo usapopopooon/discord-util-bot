@@ -482,6 +482,55 @@ class TestBeforeHeartbeatBranches:
             mock_logger.error.assert_called()
 
 
+class TestHeartbeatEventCleanup:
+    """ハートビートのイベント台帳クリーンアップテスト。"""
+
+    async def test_cleanup_called_during_heartbeat(self) -> None:
+        """ハートビートでイベント台帳のクリーンアップが呼ばれる。"""
+        cog = _make_cog()
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=5,
+            ) as mock_cleanup,
+        ):
+            mock_settings.health_channel_id = 0
+            await cog._heartbeat()
+
+        mock_cleanup.assert_awaited_once_with(mock_session)
+
+    async def test_cleanup_exception_does_not_crash_heartbeat(self) -> None:
+        """クリーンアップが例外を投げてもハートビートは止まらない。"""
+        cog = _make_cog()
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                side_effect=Exception("DB error"),
+            ),
+        ):
+            mock_settings.health_channel_id = 0
+            # 例外が伝搬しないことを確認
+            await cog._heartbeat()
+
+
 class TestSetupFunction:
     """setup 関数のテスト。"""
 

@@ -25,6 +25,8 @@ from discord.ext import commands, tasks
 
 from src.config import settings
 from src.constants import DEFAULT_EMBED_COLOR
+from src.database.engine import async_session
+from src.services.db_service import cleanup_expired_events
 
 # ロガーの取得。__name__ でモジュールパスがロガー名になる
 # (例: "src.cogs.health")
@@ -133,6 +135,15 @@ class HealthCog(commands.Cog):
                         settings.health_channel_id,
                         e,
                     )
+
+        # --- イベント台帳のクリーンアップ ---
+        try:
+            async with async_session() as session:
+                deleted = await cleanup_expired_events(session)
+                if deleted > 0:
+                    logger.info("Cleaned up %d expired event records", deleted)
+        except Exception:
+            logger.exception("Failed to cleanup expired events")
 
     @_heartbeat.before_loop
     async def _before_heartbeat(self) -> None:

@@ -3878,3 +3878,269 @@ class TestVoiceSetupCacheVerification:
 
         await setup(mock_bot)
         mock_bot.add_cog.assert_called_once()
+
+
+# ===========================================================================
+# イベント台帳による重複防止テスト
+# ===========================================================================
+
+
+class TestEventLedgerDuplicateGuard:
+    """claim_event による重複防止のテスト (voice cog)。"""
+
+    async def test_lobby_join_skips_on_duplicate_claim(self) -> None:
+        """claim_event が False → VC 作成をスキップ。"""
+        cog = _make_cog()
+        member = _make_member(1)
+        channel = _make_channel(100)
+        channel.category = MagicMock(spec=discord.CategoryChannel)
+
+        lobby = MagicMock()
+        lobby.id = 10
+        lobby.category_id = None
+        lobby.default_user_limit = 5
+
+        mock_factory, mock_session = _mock_async_session()
+        with (
+            patch("src.cogs.voice.async_session", mock_factory),
+            patch(
+                "src.cogs.voice.get_lobby_by_channel_id",
+                new_callable=AsyncMock,
+                return_value=lobby,
+            ),
+            patch(
+                "src.cogs.voice.claim_event",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "src.cogs.voice.create_voice_session",
+                new_callable=AsyncMock,
+            ) as mock_create,
+        ):
+            member.voice.channel = channel
+            await cog._handle_lobby_join(member, channel)
+            mock_create.assert_not_awaited()
+
+    async def test_channel_leave_skips_delete_on_duplicate_claim(self) -> None:
+        """claim_event が False → チャンネル削除をスキップ。"""
+        cog = _make_cog()
+        member = _make_member(1)
+        channel = _make_channel(100, members=[])
+        channel.delete = AsyncMock()
+
+        voice_session = _make_voice_session(channel_id="100")
+
+        mock_factory, mock_session = _mock_async_session()
+        with (
+            patch("src.cogs.voice.async_session", mock_factory),
+            patch(
+                "src.cogs.voice.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.cogs.voice.claim_event",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            await cog._handle_channel_leave(member, channel)
+            channel.delete.assert_not_awaited()
+
+    async def test_transfer_ownership_skips_on_duplicate_claim(self) -> None:
+        """claim_event が False → 引き継ぎをスキップ。"""
+        cog = _make_cog()
+        old_owner = _make_member(1)
+        channel = _make_channel(100, members=[_make_member(2)])
+
+        voice_session = _make_voice_session(channel_id="100", owner_id="1")
+        mock_session = AsyncMock()
+
+        new_owner = _make_member(2)
+        with (
+            patch.object(
+                cog,
+                "_get_longest_member",
+                new_callable=AsyncMock,
+                return_value=new_owner,
+            ),
+            patch(
+                "src.cogs.voice.claim_event",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "src.cogs.voice.update_voice_session",
+                new_callable=AsyncMock,
+            ) as mock_update,
+        ):
+            await cog._transfer_ownership(
+                mock_session, voice_session, old_owner, channel
+            )
+            mock_update.assert_not_awaited()
+
+    async def test_enforce_restrictions_skips_kick_on_duplicate_claim(self) -> None:
+        """claim_event が False → キックをスキップ。"""
+        cog = _make_cog()
+        member = _make_member(1)
+        member.guild_permissions = MagicMock()
+        member.guild_permissions.administrator = False
+        member.move_to = AsyncMock()
+
+        channel = _make_channel(100)
+        overwrites = MagicMock()
+        overwrites.connect = None  # 許可されていない
+        channel.overwrites_for = MagicMock(return_value=overwrites)
+
+        voice_session = _make_voice_session(
+            channel_id="100", owner_id="999", is_locked=True
+        )
+
+        mock_factory, mock_session = _mock_async_session()
+        with (
+            patch("src.cogs.voice.async_session", mock_factory),
+            patch(
+                "src.cogs.voice.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.cogs.voice.claim_event",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            result = await cog._enforce_channel_restrictions(member, channel)
+            assert result is False
+            member.move_to.assert_not_awaited()
+
+
+class TestEventLedgerClaimSucceeds:
+    """claim_event=True 時のハッピーパス検証。
+
+    claim_event が呼ばれ、成功時にアクションが実行されることを明示的にテスト。
+    """
+
+    async def test_lobby_join_claim_called_on_success(self) -> None:
+        """VC 作成成功時に claim_event が呼ばれる。"""
+        cog = _make_cog()
+        member = _make_member(1)
+        channel = _make_channel(100)
+        channel.category = MagicMock(spec=discord.CategoryChannel)
+
+        lobby = MagicMock()
+        lobby.id = 10
+        lobby.category_id = None
+        lobby.default_user_limit = 5
+
+        new_channel = _make_channel(200)
+        new_channel.send = AsyncMock(return_value=MagicMock(pin=AsyncMock()))
+        new_channel.set_permissions = AsyncMock()
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.create_voice_channel = AsyncMock(return_value=new_channel)
+        guild.default_role = MagicMock()
+        member.guild = guild
+        member.move_to = AsyncMock()
+
+        voice_session = _make_voice_session(channel_id="200", owner_id="1")
+
+        mock_factory, mock_session = _mock_async_session()
+        with (
+            patch("src.cogs.voice.async_session", mock_factory),
+            patch(
+                "src.cogs.voice.get_lobby_by_channel_id",
+                new_callable=AsyncMock,
+                return_value=lobby,
+            ),
+            patch(
+                "src.cogs.voice.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_claim,
+            patch(
+                "src.cogs.voice.create_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch("src.cogs.voice.add_voice_session_member", new_callable=AsyncMock),
+            patch(
+                "src.cogs.voice.create_control_panel_embed",
+                return_value=MagicMock(),
+            ),
+            patch("src.cogs.voice.ControlPanelView", return_value=MagicMock()),
+        ):
+            member.voice.channel = channel
+            await cog._handle_lobby_join(member, channel)
+
+            mock_claim.assert_awaited_once()
+            guild.create_voice_channel.assert_awaited_once()
+
+    async def test_channel_leave_claim_called_and_deletes(self) -> None:
+        """空チャンネル退出時に claim_event が呼ばれ、削除される。"""
+        cog = _make_cog()
+        member = _make_member(1)
+        channel = _make_channel(100, members=[])
+        channel.delete = AsyncMock()
+
+        voice_session = _make_voice_session(channel_id="100")
+
+        mock_factory, mock_session = _mock_async_session()
+        with (
+            patch("src.cogs.voice.async_session", mock_factory),
+            patch(
+                "src.cogs.voice.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.cogs.voice.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_claim,
+            patch("src.cogs.voice.delete_voice_session", new_callable=AsyncMock),
+        ):
+            await cog._handle_channel_leave(member, channel)
+
+            mock_claim.assert_awaited_once()
+            channel.delete.assert_awaited_once()
+
+    async def test_enforce_restrictions_claim_called_and_kicks(self) -> None:
+        """キック実行時に claim_event が呼ばれ、move_to(None) が実行される。"""
+        cog = _make_cog()
+        member = _make_member(1)
+        member.guild_permissions = MagicMock()
+        member.guild_permissions.administrator = False
+        member.move_to = AsyncMock()
+        member.send = AsyncMock()
+
+        channel = _make_channel(100)
+        channel.send = AsyncMock()
+        overwrites = MagicMock()
+        overwrites.connect = None
+        channel.overwrites_for = MagicMock(return_value=overwrites)
+
+        voice_session = _make_voice_session(
+            channel_id="100", owner_id="999", is_locked=True
+        )
+
+        mock_factory, mock_session = _mock_async_session()
+        with (
+            patch("src.cogs.voice.async_session", mock_factory),
+            patch(
+                "src.cogs.voice.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.cogs.voice.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_claim,
+        ):
+            result = await cog._enforce_channel_restrictions(member, channel)
+
+            assert result is True
+            mock_claim.assert_awaited_once()
+            member.move_to.assert_awaited_once_with(None)

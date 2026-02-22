@@ -27,6 +27,7 @@ from discord.ext import commands, tasks
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.services.db_service import (
+    claim_bump_detection,
     clear_bump_reminder,
     delete_bump_config,
     delete_bump_reminders_by_guild,
@@ -509,7 +510,7 @@ class BumpCog(commands.Cog):
             )
             return
 
-        # 1セッションで設定確認 + リマインダー保存
+        # 1セッションで設定確認 + アトミックなリマインダー登録
         remind_at = datetime.now(UTC) + timedelta(hours=REMINDER_HOURS)
         async with async_session() as session:
             # このギルドの bump 監視設定を確認
@@ -526,19 +527,22 @@ class BumpCog(commands.Cog):
                 )
                 return
 
-            # 別インスタンスが同じ bump を既に処理済みか確認
-            existing = await get_bump_reminder(session, guild_id, service_name)
-            if existing and existing.remind_at:
-                diff = abs((remind_at - existing.remind_at).total_seconds())
-                if diff < 60:
-                    logger.info(
-                        "Bump already processed by another instance: "
-                        "guild=%s service=%s diff=%.1fs",
-                        guild_id,
-                        service_name,
-                        diff,
-                    )
-                    return
+            # アトミックに bump 検知の権利を取得
+            # (複数インスタンス実行時、最初に claim したインスタンスだけが続行する)
+            reminder = await claim_bump_detection(
+                session,
+                guild_id=guild_id,
+                channel_id=str(message.channel.id),
+                service_name=service_name,
+                remind_at=remind_at,
+            )
+            if not reminder:
+                logger.info(
+                    "Bump already processed by another instance: guild=%s service=%s",
+                    guild_id,
+                    service_name,
+                )
+                return
 
             logger.info(
                 "Bump success detected: service=%s guild=%s user=%s",
@@ -547,14 +551,6 @@ class BumpCog(commands.Cog):
                 user.name,
             )
 
-            # リマインダーを DB に保存
-            reminder = await upsert_bump_reminder(
-                session,
-                guild_id=guild_id,
-                channel_id=str(message.channel.id),
-                service_name=service_name,
-                remind_at=remind_at,
-            )
             is_enabled = reminder.is_enabled
             custom_role_id = reminder.role_id
 

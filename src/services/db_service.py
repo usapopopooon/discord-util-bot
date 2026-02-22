@@ -37,7 +37,7 @@ Notes:
     - 複数操作をトランザクションで束ねる場合は、commit を最後にまとめる
 """
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy import or_ as db_or
@@ -58,6 +58,7 @@ from src.database.models import (
     JoinRoleAssignment,
     JoinRoleConfig,
     Lobby,
+    ProcessedEvent,
     RolePanel,
     RolePanelItem,
     StickyMessage,
@@ -697,6 +698,69 @@ async def clear_bump_reminder(session: AsyncSession, reminder_id: int) -> bool:
     )
     await session.commit()
     return bool(result.rowcount)  # type: ignore[attr-defined]
+
+
+async def claim_bump_detection(
+    session: AsyncSession,
+    guild_id: str,
+    channel_id: str,
+    service_name: str,
+    remind_at: datetime,
+) -> BumpReminder | None:
+    """bump 検知の権利をアトミックに取得する。
+
+    複数インスタンス実行時、最初に claim したインスタンスだけがリマインダーを返す。
+    remind_at が直近 60 秒以内に更新済みの場合は None を返す。
+
+    Args:
+        session: DB セッション
+        guild_id: Discord サーバーの ID
+        channel_id: bump を検知したチャンネルの ID
+        service_name: サービス名 ("DISBOARD" または "ディス速報")
+        remind_at: リマインド予定時刻 (UTC)
+
+    Returns:
+        claim 成功なら BumpReminder、既に別インスタンスが処理済みなら None
+    """
+    from datetime import timedelta
+
+    threshold = remind_at - timedelta(seconds=60)
+
+    # アトミック UPDATE: remind_at が古い or NULL の場合のみ成功する
+    result = await session.execute(
+        update(BumpReminder)
+        .where(
+            BumpReminder.guild_id == guild_id,
+            BumpReminder.service_name == service_name,
+            db_or(
+                BumpReminder.remind_at.is_(None),
+                BumpReminder.remind_at <= threshold,
+            ),
+        )
+        .values(remind_at=remind_at, channel_id=channel_id)
+    )
+    await session.commit()
+
+    if result.rowcount > 0:  # type: ignore[attr-defined]
+        # claim 成功 — is_enabled/role_id を取得して返す
+        return await get_bump_reminder(session, guild_id, service_name)
+
+    # レコードが存在するが直近で更新済み (別インスタンスが先に処理)
+    existing = await get_bump_reminder(session, guild_id, service_name)
+    if existing is not None:
+        return None
+
+    # レコードが存在しない (初回検知) — 新規作成
+    reminder = BumpReminder(
+        guild_id=guild_id,
+        channel_id=channel_id,
+        service_name=service_name,
+        remind_at=remind_at,
+    )
+    session.add(reminder)
+    await session.commit()
+    await session.refresh(reminder)
+    return reminder
 
 
 async def get_bump_reminder(
@@ -1995,6 +2059,56 @@ async def create_autoban_log(
     return log
 
 
+async def claim_autoban_log(
+    session: AsyncSession,
+    guild_id: str,
+    user_id: str,
+    username: str,
+    rule_id: int,
+    action_taken: str,
+    reason: str,
+) -> AutoBanLog | None:
+    """autoban 実行ログをアトミックに作成する。
+
+    同一 (guild_id, user_id, rule_id) のログが直近 10 秒以内に存在する場合は
+    重複と見なし None を返す (別インスタンスが先に処理済み)。
+    ルール行を FOR UPDATE でロックし並行書き込みを直列化する。
+    """
+    from datetime import UTC, timedelta
+
+    # ルール行をロックして並行書き込みを直列化
+    rule_result = await session.execute(
+        select(AutoBanRule).where(AutoBanRule.id == rule_id).with_for_update()
+    )
+    if not rule_result.scalar_one_or_none():
+        return None  # ルールが削除済み
+
+    threshold = datetime.now(UTC) - timedelta(seconds=10)
+    dup = await session.execute(
+        select(AutoBanLog.id).where(
+            AutoBanLog.guild_id == guild_id,
+            AutoBanLog.user_id == user_id,
+            AutoBanLog.rule_id == rule_id,
+            AutoBanLog.created_at >= threshold,
+        )
+    )
+    if dup.scalar_one_or_none() is not None:
+        return None  # 別インスタンスが先に処理済み
+
+    log = AutoBanLog(
+        guild_id=guild_id,
+        user_id=user_id,
+        username=username,
+        rule_id=rule_id,
+        action_taken=action_taken,
+        reason=reason,
+    )
+    session.add(log)
+    await session.commit()
+    await session.refresh(log)
+    return log
+
+
 async def get_autoban_logs_by_guild(
     session: AsyncSession, guild_id: str, limit: int = 50
 ) -> list[AutoBanLog]:
@@ -2123,6 +2237,45 @@ async def create_ban_log(
     is_autoban: bool = False,
 ) -> BanLog:
     """BAN ログを作成する。"""
+    log = BanLog(
+        guild_id=guild_id,
+        user_id=user_id,
+        username=username,
+        reason=reason,
+        is_autoban=is_autoban,
+    )
+    session.add(log)
+    await session.commit()
+    await session.refresh(log)
+    return log
+
+
+async def claim_ban_log(
+    session: AsyncSession,
+    guild_id: str,
+    user_id: str,
+    username: str,
+    reason: str | None = None,
+    is_autoban: bool = False,
+) -> BanLog | None:
+    """BAN ログをアトミックに作成する。
+
+    同一 (guild_id, user_id) のログが直近 10 秒以内に存在する場合は
+    重複と見なし None を返す (別インスタンスが先に処理済み)。
+    """
+    from datetime import UTC, timedelta
+
+    threshold = datetime.now(UTC) - timedelta(seconds=10)
+    dup = await session.execute(
+        select(BanLog.id).where(
+            BanLog.guild_id == guild_id,
+            BanLog.user_id == user_id,
+            BanLog.created_at >= threshold,
+        )
+    )
+    if dup.scalar_one_or_none() is not None:
+        return None  # 別インスタンスが先に処理済み
+
     log = BanLog(
         guild_id=guild_id,
         user_id=user_id,
@@ -2599,6 +2752,46 @@ async def create_join_role_assignment(
     return assignment
 
 
+async def claim_join_role_assignment(
+    session: AsyncSession,
+    guild_id: str,
+    user_id: str,
+    role_id: str,
+    assigned_at: datetime,
+    expires_at: datetime,
+) -> JoinRoleAssignment | None:
+    """JoinRole 付与レコードをアトミックに作成する。
+
+    同一 (guild_id, user_id, role_id) のレコードが直近 10 秒以内に存在する場合は
+    重複と見なし None を返す (別インスタンスが先に処理済み)。
+    """
+    from datetime import timedelta
+
+    threshold = assigned_at - timedelta(seconds=10)
+    dup = await session.execute(
+        select(JoinRoleAssignment.id).where(
+            JoinRoleAssignment.guild_id == guild_id,
+            JoinRoleAssignment.user_id == user_id,
+            JoinRoleAssignment.role_id == role_id,
+            JoinRoleAssignment.assigned_at >= threshold,
+        )
+    )
+    if dup.scalar_one_or_none() is not None:
+        return None  # 別インスタンスが先に処理済み
+
+    assignment = JoinRoleAssignment(
+        guild_id=guild_id,
+        user_id=user_id,
+        role_id=role_id,
+        assigned_at=assigned_at,
+        expires_at=expires_at,
+    )
+    session.add(assignment)
+    await session.commit()
+    await session.refresh(assignment)
+    return assignment
+
+
 async def get_expired_join_role_assignments(
     session: AsyncSession, now: datetime
 ) -> list[JoinRoleAssignment]:
@@ -2620,3 +2813,50 @@ async def delete_join_role_assignment(
     result = await session.execute(stmt)
     await session.commit()
     return int(result.rowcount) > 0  # type: ignore[attr-defined]
+
+
+# =============================================================================
+# ProcessedEvent (イベント台帳) 操作
+# =============================================================================
+
+
+async def claim_event(session: AsyncSession, event_key: str) -> bool:
+    """イベントをアトミックに claim する。
+
+    UNIQUE 制約 (event_key) を利用し、INSERT の IntegrityError で
+    「既に別インスタンスが処理済み」をアトミックに判定する。
+
+    Args:
+        session: DB セッション。
+        event_key: イベントを一意に識別するキー。
+
+    Returns:
+        True: このインスタンスが claim に成功 (処理を続行すべき)。
+        False: 別インスタンスが既に claim 済み (処理をスキップすべき)。
+    """
+    try:
+        session.add(ProcessedEvent(event_key=event_key))
+        await session.flush()
+        return True
+    except IntegrityError:
+        await session.rollback()
+        return False
+
+
+async def cleanup_expired_events(
+    session: AsyncSession, max_age_seconds: int = 3600
+) -> int:
+    """期限切れのイベント台帳レコードを削除する。
+
+    Args:
+        session: DB セッション。
+        max_age_seconds: レコードの最大保持期間 (秒)。デフォルト 3600 (1時間)。
+
+    Returns:
+        削除されたレコード数。
+    """
+    cutoff = datetime.now(tz=UTC) - timedelta(seconds=max_age_seconds)
+    stmt = delete(ProcessedEvent).where(ProcessedEvent.created_at < cutoff)
+    result = await session.execute(stmt)
+    await session.commit()
+    return int(result.rowcount)  # type: ignore[attr-defined]

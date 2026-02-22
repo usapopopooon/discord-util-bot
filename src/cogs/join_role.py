@@ -20,7 +20,7 @@ from discord.ext import commands, tasks
 
 from src.database.engine import async_session
 from src.services.db_service import (
-    create_join_role_assignment,
+    claim_join_role_assignment,
     delete_join_role_assignment,
     get_enabled_join_role_configs,
     get_expired_join_role_assignments,
@@ -75,21 +75,11 @@ class JoinRoleCog(commands.Cog):
                 )
                 continue
 
-            try:
-                await member.add_roles(role, reason="JoinRole: 自動ロール付与")
-            except discord.HTTPException:
-                logger.exception(
-                    "JoinRole: Failed to add role %s to member %s in guild %s",
-                    config.role_id,
-                    member.id,
-                    guild_id,
-                )
-                continue
-
+            # DB レコードを先に作成 (claim) — 成功インスタンスのみ add_roles
             expires_at = now + timedelta(hours=config.duration_hours)
             try:
                 async with async_session() as session:
-                    await create_join_role_assignment(
+                    assignment = await claim_join_role_assignment(
                         session,
                         guild_id=guild_id,
                         user_id=str(member.id),
@@ -103,6 +93,27 @@ class JoinRoleCog(commands.Cog):
                     "member %s role %s in guild %s",
                     member.id,
                     config.role_id,
+                    guild_id,
+                )
+                continue
+
+            if not assignment:
+                logger.info(
+                    "JoinRole: Already processed by another instance: "
+                    "member=%s role=%s guild=%s",
+                    member.id,
+                    config.role_id,
+                    guild_id,
+                )
+                continue
+
+            try:
+                await member.add_roles(role, reason="JoinRole: 自動ロール付与")
+            except discord.HTTPException:
+                logger.exception(
+                    "JoinRole: Failed to add role %s to member %s in guild %s",
+                    config.role_id,
+                    member.id,
                     guild_id,
                 )
 
@@ -137,6 +148,12 @@ class JoinRoleCog(commands.Cog):
                     await delete_join_role_assignment(session, assignment.id)
                 continue
 
+            # DB レコードを先に削除 (アトミック) — 成功インスタンスのみ remove_roles
+            async with async_session() as session:
+                deleted = await delete_join_role_assignment(session, assignment.id)
+            if not deleted:
+                continue  # 別インスタンスが先に処理済み
+
             try:
                 await member.remove_roles(role, reason="JoinRole: 期限切れロール削除")
             except discord.HTTPException:
@@ -146,9 +163,6 @@ class JoinRoleCog(commands.Cog):
                     assignment.user_id,
                     assignment.guild_id,
                 )
-
-            async with async_session() as session:
-                await delete_join_role_assignment(session, assignment.id)
 
     @_check_expired_roles.before_loop
     async def _before_check_expired_roles(self) -> None:

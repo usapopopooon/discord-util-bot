@@ -27,6 +27,7 @@ from src.database.engine import async_session
 from src.database.models import VoiceSession
 from src.services.db_service import (
     add_voice_session_member,
+    claim_event,
     create_lobby,
     create_voice_session,
     delete_lobbies_by_guild,
@@ -398,6 +399,16 @@ class VoiceCog(commands.Cog):
                         reason = "人数制限を超えているため"
 
             if should_kick:
+                # イベント台帳で重複防止 (マルチインスタンス)
+                bucket = int(time.time()) // 5
+                event_key = f"vc_kick:{channel.id}:{member.id}:{bucket}"
+                if not await claim_event(session, event_key):
+                    logger.info(
+                        "VC kick already claimed by another instance: %s",
+                        event_key,
+                    )
+                    return False
+
                 logger.info(
                     "Kicking member %s from channel %s: %s",
                     member.id,
@@ -502,6 +513,16 @@ class VoiceCog(commands.Cog):
                     "Member %s no longer in lobby %s, skipping VC creation",
                     member.id,
                     channel.id,
+                )
+                return
+
+            # イベント台帳で重複防止 (マルチインスタンス)
+            bucket = int(time.time()) // 5
+            event_key = f"vc_lobby:{member.id}:{channel.id}:{bucket}"
+            if not await claim_event(session, event_key):
+                logger.info(
+                    "VC lobby join already claimed by another instance: %s",
+                    event_key,
                 )
                 return
 
@@ -637,6 +658,15 @@ class VoiceCog(commands.Cog):
 
             # --- 全員退出 → チャンネル削除 ---
             if len(channel.members) == 0:
+                # イベント台帳で重複防止 (マルチインスタンス)
+                event_key = f"vc_delete:{channel.id}"
+                if not await claim_event(session, event_key):
+                    logger.info(
+                        "VC delete already claimed by another instance: %s",
+                        event_key,
+                    )
+                    return
+
                 logger.info(
                     "Deleting empty ephemeral VC %s (last member: %s)",
                     channel.id,
@@ -727,6 +757,16 @@ class VoiceCog(commands.Cog):
                 channel.id,
             )
             return  # 人間のメンバーが誰もいない
+
+        # イベント台帳で重複防止 (マルチインスタンス)
+        bucket = int(time.time()) // 5
+        event_key = f"vc_transfer:{channel.id}:{old_owner.id}:{bucket}"
+        if not await claim_event(session, event_key):
+            logger.info(
+                "VC transfer already claimed by another instance: %s",
+                event_key,
+            )
+            return
 
         logger.info(
             "Transferring ownership of channel %s from %s to %s",

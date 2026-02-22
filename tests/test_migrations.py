@@ -143,8 +143,8 @@ class TestMigrationChain:
     def test_revision_count(self, script_directory: ScriptDirectory) -> None:
         """マイグレーションの数を確認する。"""
         revisions = list(script_directory.walk_revisions())
-        # 26 個のマイグレーションファイルがあることを確認
-        expected = 26
+        # 27 個のマイグレーションファイルがあることを確認
+        expected = 27
         assert len(revisions) == expected, f"リビジョン数: {len(revisions)}"
 
 
@@ -264,6 +264,24 @@ class TestMigrationUpgrade:
         columns = {col["name"] for col in inspector.get_columns("voice_sessions")}
 
         assert "is_hidden" in columns, "is_hidden カラムが見つかりません"
+        engine.dispose()
+
+    @pytest.mark.usefixtures("clean_db")
+    def test_upgrade_creates_processed_events_table(
+        self, alembic_config: Config
+    ) -> None:
+        """processed_events テーブルが正しいカラムで作成される。"""
+        command.upgrade(alembic_config, "head")
+
+        engine = create_engine(TEST_DATABASE_URL)
+        inspector = inspect(engine)
+
+        tables = inspector.get_table_names()
+        assert "processed_events" in tables, "processed_events テーブルが見つかりません"
+
+        columns = {col["name"] for col in inspector.get_columns("processed_events")}
+        expected_columns = {"id", "event_key", "created_at"}
+        assert expected_columns <= columns, f"不足カラム: {expected_columns - columns}"
         engine.dispose()
 
 

@@ -34,9 +34,9 @@ from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.database.models import AutoBanRule
 from src.services.db_service import (
-    create_autoban_log,
+    claim_autoban_log,
+    claim_ban_log,
     create_autoban_rule,
-    create_ban_log,
     delete_autoban_rule,
     get_autoban_config,
     get_autoban_logs_by_guild,
@@ -225,7 +225,7 @@ class AutoBanCog(commands.Cog):
 
         try:
             async with async_session() as session:
-                await create_ban_log(
+                log = await claim_ban_log(
                     session,
                     guild_id=str(guild.id),
                     user_id=str(user.id),
@@ -233,6 +233,12 @@ class AutoBanCog(commands.Cog):
                     reason=reason,
                     is_autoban=is_autoban,
                 )
+                if not log:
+                    logger.info(
+                        "Ban log already created by another instance: guild=%s user=%s",
+                        guild.id,
+                        user.id,
+                    )
         except Exception:
             logger.exception("Failed to create ban log for user %s", user.id)
 
@@ -359,6 +365,30 @@ class AutoBanCog(commands.Cog):
         member_created_at = member.created_at
         member_joined_at = member.joined_at
 
+        # アトミックにログを作成 — claim 成功インスタンスのみが BAN/KICK を実行
+        async with async_session() as session:
+            log = await claim_autoban_log(
+                session,
+                guild_id=str(guild.id),
+                user_id=str(member_id),
+                username=member_name,
+                rule_id=rule.id,
+                action_taken=action_taken,
+                reason=reason,
+            )
+            if not log:
+                logger.info(
+                    "Autoban already processed by another instance: "
+                    "guild=%s user=%s rule=%s",
+                    guild.id,
+                    member_id,
+                    rule.id,
+                )
+                return
+
+            # ログチャンネルに通知を送信
+            config = await get_autoban_config(session, str(guild.id))
+
         try:
             if rule.action == "ban":
                 await guild.ban(member, reason=full_reason)
@@ -392,20 +422,6 @@ class AutoBanCog(commands.Cog):
                 e,
             )
             return
-
-        async with async_session() as session:
-            await create_autoban_log(
-                session,
-                guild_id=str(guild.id),
-                user_id=str(member_id),
-                username=member_name,
-                rule_id=rule.id,
-                action_taken=action_taken,
-                reason=reason,
-            )
-
-            # ログチャンネルに通知を送信
-            config = await get_autoban_config(session, str(guild.id))
 
         if config and config.log_channel_id:
             await self._send_log_embed(

@@ -16,7 +16,6 @@ from src.cogs.bump import (
     DISBOARD_SUCCESS_KEYWORD,
     DISSOKU_BOT_ID,
     DISSOKU_SUCCESS_KEYWORD,
-    REMINDER_HOURS,
     TARGET_ROLE_NAME,
     BumpCog,
     BumpNotificationView,
@@ -394,10 +393,10 @@ class TestOnMessage:
         )
         message.guild = None  # DM
 
-        with patch("src.cogs.bump.upsert_bump_reminder") as mock_upsert:
+        with patch("src.cogs.bump.claim_bump_detection") as mock_claim:
             await cog.on_message(message)
 
-        mock_upsert.assert_not_called()
+        mock_claim.assert_not_called()
 
     async def test_skips_when_channel_not_configured(self) -> None:
         """bump 監視設定がないギルドは無視。"""
@@ -421,11 +420,11 @@ class TestOnMessage:
                 new_callable=AsyncMock,
                 return_value=None,  # 設定なし
             ),
-            patch("src.cogs.bump.upsert_bump_reminder") as mock_upsert,
+            patch("src.cogs.bump.claim_bump_detection") as mock_claim,
         ):
             await cog.on_message(message)
 
-        mock_upsert.assert_not_called()
+        mock_claim.assert_not_called()
 
     async def test_skips_wrong_channel(self) -> None:
         """設定されたチャンネル以外は無視。"""
@@ -452,11 +451,11 @@ class TestOnMessage:
                 new_callable=AsyncMock,
                 return_value=mock_config,
             ),
-            patch("src.cogs.bump.upsert_bump_reminder") as mock_upsert,
+            patch("src.cogs.bump.claim_bump_detection") as mock_claim,
         ):
             await cog.on_message(message)
 
-        mock_upsert.assert_not_called()
+        mock_claim.assert_not_called()
 
     async def test_skips_wrong_bot(self) -> None:
         """DISBOARD/ディス速報以外の Bot は無視。"""
@@ -470,10 +469,10 @@ class TestOnMessage:
         )
 
         # Bot ID が違うので get_bump_config は呼ばれない
-        with patch("src.cogs.bump.upsert_bump_reminder") as mock_upsert:
+        with patch("src.cogs.bump.claim_bump_detection") as mock_claim:
             await cog.on_message(message)
 
-        mock_upsert.assert_not_called()
+        mock_claim.assert_not_called()
 
     async def test_skips_user_without_role(self) -> None:
         """Server Bumper ロールを持たないユーザーは無視。"""
@@ -499,11 +498,11 @@ class TestOnMessage:
                 new_callable=AsyncMock,
                 return_value=mock_config,
             ),
-            patch("src.cogs.bump.upsert_bump_reminder") as mock_upsert,
+            patch("src.cogs.bump.claim_bump_detection") as mock_claim,
         ):
             await cog.on_message(message)
 
-        mock_upsert.assert_not_called()
+        mock_claim.assert_not_called()
 
     async def test_creates_reminder_on_valid_bump(
         self, mock_db_session: MagicMock
@@ -533,20 +532,15 @@ class TestOnMessage:
                 return_value=mock_config,
             ),
             patch(
-                "src.cogs.bump.get_bump_reminder",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "src.cogs.bump.upsert_bump_reminder",
+                "src.cogs.bump.claim_bump_detection",
                 new_callable=AsyncMock,
                 return_value=mock_reminder,
-            ) as mock_upsert,
+            ) as mock_claim,
         ):
             await cog.on_message(message)
 
-        mock_upsert.assert_awaited_once()
-        call_kwargs = mock_upsert.call_args[1]
+        mock_claim.assert_awaited_once()
+        call_kwargs = mock_claim.call_args[1]
         assert call_kwargs["guild_id"] == "12345"
         assert call_kwargs["channel_id"] == "456"
         assert call_kwargs["service_name"] == "DISBOARD"
@@ -585,12 +579,7 @@ class TestOnMessage:
                 return_value=mock_config,
             ),
             patch(
-                "src.cogs.bump.get_bump_reminder",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "src.cogs.bump.upsert_bump_reminder",
+                "src.cogs.bump.claim_bump_detection",
                 new_callable=AsyncMock,
                 return_value=mock_reminder,
             ),
@@ -635,12 +624,7 @@ class TestOnMessage:
                 return_value=mock_config,
             ),
             patch(
-                "src.cogs.bump.get_bump_reminder",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "src.cogs.bump.upsert_bump_reminder",
+                "src.cogs.bump.claim_bump_detection",
                 new_callable=AsyncMock,
                 return_value=mock_reminder,
             ),
@@ -701,20 +685,15 @@ class TestOnMessageEdit:
                 return_value=mock_config,
             ),
             patch(
-                "src.cogs.bump.get_bump_reminder",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "src.cogs.bump.upsert_bump_reminder",
+                "src.cogs.bump.claim_bump_detection",
                 new_callable=AsyncMock,
                 return_value=mock_reminder,
-            ) as mock_upsert,
+            ) as mock_claim,
         ):
             await cog.on_message_edit(before, after)
 
         # リマインダーが登録される
-        mock_upsert.assert_called_once()
+        mock_claim.assert_called_once()
         after.channel.send.assert_called_once()
 
     async def test_skips_when_embed_already_exists(self) -> None:
@@ -738,11 +717,11 @@ class TestOnMessageEdit:
             interaction_user=member,
         )
 
-        with patch("src.cogs.bump.upsert_bump_reminder") as mock_upsert:
+        with patch("src.cogs.bump.claim_bump_detection") as mock_claim:
             await cog.on_message_edit(before, after)
 
         # 既に embed があったのでスキップ
-        mock_upsert.assert_not_called()
+        mock_claim.assert_not_called()
 
     async def test_skips_when_no_embed_added(self) -> None:
         """embed が追加されなかった場合はスキップ。"""
@@ -763,11 +742,11 @@ class TestOnMessageEdit:
         )
         after.embeds = []
 
-        with patch("src.cogs.bump.upsert_bump_reminder") as mock_upsert:
+        with patch("src.cogs.bump.claim_bump_detection") as mock_claim:
             await cog.on_message_edit(before, after)
 
         # embed が追加されてないのでスキップ
-        mock_upsert.assert_not_called()
+        mock_claim.assert_not_called()
 
     async def test_detects_dissoku_success_in_fields_via_edit(self) -> None:
         """on_message_edit で fields 内の「アップ」を検知する。"""
@@ -813,21 +792,16 @@ class TestOnMessageEdit:
                 return_value=mock_config,
             ),
             patch(
-                "src.cogs.bump.get_bump_reminder",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "src.cogs.bump.upsert_bump_reminder",
+                "src.cogs.bump.claim_bump_detection",
                 new_callable=AsyncMock,
                 return_value=mock_reminder,
-            ) as mock_upsert,
+            ) as mock_claim,
         ):
             await cog.on_message_edit(before, after)
 
         # ディス速報の bump が検知されてリマインダー登録
-        mock_upsert.assert_called_once()
-        call_kwargs = mock_upsert.call_args[1]
+        mock_claim.assert_called_once()
+        call_kwargs = mock_claim.call_args[1]
         assert call_kwargs["service_name"] == "ディス速報"
 
 
@@ -2367,20 +2341,15 @@ class TestBumpWithFaker:
                 return_value=mock_config,
             ),
             patch(
-                "src.cogs.bump.get_bump_reminder",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            patch(
-                "src.cogs.bump.upsert_bump_reminder",
+                "src.cogs.bump.claim_bump_detection",
                 new_callable=AsyncMock,
                 return_value=mock_reminder,
-            ) as mock_upsert,
+            ) as mock_claim,
         ):
             await cog.on_message(message)
 
-        mock_upsert.assert_awaited_once()
-        call_kwargs = mock_upsert.call_args[1]
+        mock_claim.assert_awaited_once()
+        call_kwargs = mock_claim.call_args[1]
         assert call_kwargs["guild_id"] == str(guild_id)
         assert call_kwargs["channel_id"] == str(channel_id)
 
@@ -2609,12 +2578,10 @@ class TestProcessBumpMessageHttpException:
 
     @patch("src.cogs.bump.async_session")
     @patch("src.cogs.bump.get_bump_config")
-    @patch("src.cogs.bump.get_bump_reminder", new_callable=AsyncMock, return_value=None)
-    @patch("src.cogs.bump.upsert_bump_reminder")
+    @patch("src.cogs.bump.claim_bump_detection")
     async def test_handles_http_exception_when_sending(
         self,
-        mock_upsert: MagicMock,
-        _mock_get_reminder: MagicMock,
+        mock_claim: MagicMock,
         mock_get_config: MagicMock,
         mock_session: MagicMock,
     ) -> None:
@@ -2642,7 +2609,7 @@ class TestProcessBumpMessageHttpException:
         reminder = MagicMock()
         reminder.is_enabled = True
         reminder.role_id = None
-        mock_upsert.return_value = reminder
+        mock_claim.return_value = reminder
 
         mock_session_ctx = MagicMock()
         mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
@@ -3922,10 +3889,8 @@ class TestBumpDeferFailure:
 class TestBumpDetectionDuplicateGuard:
     """別インスタンスが同じ bump を既に処理済みの場合のテスト。"""
 
-    async def test_skips_when_reminder_already_exists_within_60s(self) -> None:
-        """remind_at が 60 秒以内の既存リマインダーがある場合はスキップ。"""
-        from datetime import UTC, datetime, timedelta
-
+    async def test_skips_when_claim_returns_none(self) -> None:
+        """claim が None (別インスタンスが先に処理) ならスキップ。"""
         cog = _make_cog()
         member = _make_member(has_target_role=True)
         message = _make_message(
@@ -3939,12 +3904,6 @@ class TestBumpDetectionDuplicateGuard:
 
         mock_config = _make_bump_config(guild_id="12345", channel_id="456")
 
-        # 別インスタンスが 5 秒前に処理済み
-        existing_reminder = MagicMock()
-        existing_reminder.remind_at = datetime.now(UTC) + timedelta(
-            hours=REMINDER_HOURS, seconds=-5
-        )
-
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
@@ -3957,25 +3916,18 @@ class TestBumpDetectionDuplicateGuard:
                 return_value=mock_config,
             ),
             patch(
-                "src.cogs.bump.get_bump_reminder",
+                "src.cogs.bump.claim_bump_detection",
                 new_callable=AsyncMock,
-                return_value=existing_reminder,
+                return_value=None,
             ),
-            patch(
-                "src.cogs.bump.upsert_bump_reminder",
-                new_callable=AsyncMock,
-            ) as mock_upsert,
         ):
             await cog.on_message(message)
 
-        # DB 書き込みもメッセージ送信もされない
-        mock_upsert.assert_not_awaited()
+        # claim 失敗 → メッセージ送信されない
         message.channel.send.assert_not_awaited()
 
-    async def test_processes_when_reminder_is_old(self) -> None:
-        """remind_at が 60 秒以上離れている場合は処理する。"""
-        from datetime import UTC, datetime, timedelta
-
+    async def test_processes_when_claim_succeeds(self) -> None:
+        """claim_bump_detection がリマインダーを返す場合は処理する。"""
         cog = _make_cog()
         member = _make_member(has_target_role=True)
         message = _make_message(
@@ -3988,12 +3940,7 @@ class TestBumpDetectionDuplicateGuard:
         message.channel.send = AsyncMock()
 
         mock_config = _make_bump_config(guild_id="12345", channel_id="456")
-
-        # 前回の bump は 1 時間前 (remind_at は 1 時間後)
-        existing_reminder = MagicMock()
-        existing_reminder.remind_at = datetime.now(UTC) + timedelta(hours=1)
-
-        mock_new_reminder = _make_reminder(is_enabled=True)
+        mock_reminder = _make_reminder(is_enabled=True)
 
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
@@ -4007,18 +3954,13 @@ class TestBumpDetectionDuplicateGuard:
                 return_value=mock_config,
             ),
             patch(
-                "src.cogs.bump.get_bump_reminder",
+                "src.cogs.bump.claim_bump_detection",
                 new_callable=AsyncMock,
-                return_value=existing_reminder,
-            ),
-            patch(
-                "src.cogs.bump.upsert_bump_reminder",
-                new_callable=AsyncMock,
-                return_value=mock_new_reminder,
-            ) as mock_upsert,
+                return_value=mock_reminder,
+            ) as mock_claim,
         ):
             await cog.on_message(message)
 
-        # 古いリマインダーなので処理される
-        mock_upsert.assert_awaited_once()
+        # claim 成功 → メッセージ送信される
+        mock_claim.assert_awaited_once()
         message.channel.send.assert_awaited_once()
