@@ -428,8 +428,8 @@ class RolePanelCog(commands.Cog):
             if panel is None or panel.panel_type != "reaction":
                 return
 
-            # 絵文字からロールを取得
-            emoji_str = str(payload.emoji)
+            # 絵文字からロールを取得 (DB は normalize_emoji 済みなので正規化して検索)
+            emoji_str = normalize_emoji(str(payload.emoji))
             item = await get_role_panel_item_by_emoji(db_session, panel.id, emoji_str)
             if item is None:
                 return
