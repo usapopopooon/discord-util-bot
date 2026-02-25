@@ -54,7 +54,8 @@ def _build_emoji_list() -> str:
 
     import emoji as emoji_lib
 
-    items: list[list[str]] = []
+    vs16 = "\ufe0f"
+    seen: dict[str, str] = {}  # name -> char (重複排除用)
     for char, data in emoji_lib.EMOJI_DATA.items():
         en = data.get("en", "")
         if not en:
@@ -66,8 +67,14 @@ def _build_emoji_list() -> str:
         if any(0x1F3FB <= ord(c) <= 0x1F3FF for c in char):
             continue
         name = en.strip(":").replace("_", " ").lower()
-        items.append([name, char])
-    items.sort(key=lambda x: x[0])
+        # VS16 を付与して絵文字表示を強制 (⚓ → ⚓️)
+        # VS16 なしだとブラウザがテキスト表示 (白黒記号) にする場合がある
+        if data.get("variant") and not char.endswith(vs16):
+            char = char + vs16
+        # 同名エントリは VS16 版を優先 (☎ と ☎️ → ☎️ のみ)
+        if name not in seen or vs16 in char:
+            seen[name] = char
+    items = sorted(seen.items(), key=lambda x: x[0])
     return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
 
 

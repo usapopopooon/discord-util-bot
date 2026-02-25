@@ -170,6 +170,15 @@ class TestNormalizeEmoji:
         assert normalize_emoji("🧑‍🧑‍🧒") == "🧑‍🧑‍🧒"
         assert normalize_emoji("👨‍💻") == "👨‍💻"
 
+    def test_zwj_emoji_with_vs16_preserved(self) -> None:
+        """ZWJ 絵文字内の VS16 は保持される (Discord が fully-qualified を要求)."""
+        # 🏃‍♀️ = U+1F3C3 U+200D U+2640 U+FE0F
+        assert normalize_emoji("🏃\u200d♀\ufe0f") == "🏃\u200d♀\ufe0f"
+        # 🧑‍🔬 = U+1F9D1 U+200D U+1F52C
+        assert normalize_emoji("🧑\u200d🔬") == "🧑\u200d🔬"
+        # 👩‍❤️‍👨 = family with heart
+        assert normalize_emoji("👩\u200d❤\ufe0f\u200d👨") == "👩\u200d❤\ufe0f\u200d👨"
+
     def test_vs16_emoji_stripped(self) -> None:
         """VS16 付き絵文字は VS16 が除去される。"""
         assert normalize_emoji("⚓️") == "⚓"  # anchor

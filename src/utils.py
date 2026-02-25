@@ -190,10 +190,14 @@ def normalize_emoji(text: str) -> str:
     # NFC 正規化で統一的な保存形式にする
     normalized = unicodedata.normalize("NFC", text)
 
-    # VS16 が含まれる場合のみ除去を試みる (不要な str.replace 回避)
+    # ZWJ シーケンス (👨‍👩‍👧, 🏃‍♀️ 等) は VS16 を保持する
+    # Discord が fully-qualified 形式を要求するため、VS16 除去すると拒否される
+    if "\u200d" in normalized:
+        return normalized
+
+    # 単純な絵文字のみ VS16 除去を試みる (⚓️ → ⚓)
     if "\ufe0f" in normalized:
         stripped = normalized.replace("\ufe0f", "")
-        # VS16 除去後も有効な絵文字なら除去した形で返す
         if stripped and emoji.is_emoji(stripped):
             return stripped
 
