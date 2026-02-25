@@ -3881,11 +3881,11 @@ class TestVoiceSetupCacheVerification:
 
 
 # ===========================================================================
-# イベント台帳による重複防止テスト
+# 重複排除テーブルによる重複防止テスト
 # ===========================================================================
 
 
-class TestEventLedgerDuplicateGuard:
+class TestDeduplicationDuplicateGuard:
     """claim_event による重複防止のテスト (voice cog)。"""
 
     async def test_lobby_join_skips_on_duplicate_claim(self) -> None:
@@ -4016,7 +4016,7 @@ class TestEventLedgerDuplicateGuard:
             member.move_to.assert_not_awaited()
 
 
-class TestEventLedgerClaimSucceeds:
+class TestDeduplicationClaimSucceeds:
     """claim_event=True 時のハッピーパス検証。
 
     claim_event が呼ばれ、成功時にアクションが実行されることを明示的にテスト。

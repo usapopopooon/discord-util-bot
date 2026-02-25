@@ -23,10 +23,11 @@ from datetime import UTC, datetime, timedelta, timezone
 import discord
 from discord.ext import commands, tasks
 
+from src.bot import make_activity
 from src.config import settings
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
-from src.services.db_service import cleanup_expired_events
+from src.services.db_service import cleanup_expired_events, get_bot_activity
 
 # ロガーの取得。__name__ でモジュールパスがロガー名になる
 # (例: "src.cogs.health")
@@ -136,7 +137,7 @@ class HealthCog(commands.Cog):
                         e,
                     )
 
-        # --- イベント台帳のクリーンアップ ---
+        # --- 重複排除テーブルのクリーンアップ ---
         try:
             async with async_session() as session:
                 deleted = await cleanup_expired_events(session)
@@ -144,6 +145,41 @@ class HealthCog(commands.Cog):
                     logger.info("Cleaned up %d expired event records", deleted)
         except Exception:
             logger.exception("Failed to cleanup expired events")
+
+        # --- Bot アクティビティの同期 (Web 管理画面からの変更を反映) ---
+        try:
+            async with async_session() as session:
+                bot_activity = await get_bot_activity(session)
+            if bot_activity:
+                current = self.bot.activity
+                current_name = getattr(current, "name", None)
+                current_type = getattr(current, "type", None)
+                type_map = {
+                    "playing": discord.ActivityType.playing,
+                    "listening": discord.ActivityType.listening,
+                    "watching": discord.ActivityType.watching,
+                    "competing": discord.ActivityType.competing,
+                }
+                expected_type = type_map.get(
+                    bot_activity.activity_type,
+                    discord.ActivityType.playing,
+                )
+                if (
+                    current_name != bot_activity.activity_text
+                    or current_type != expected_type
+                ):
+                    activity = make_activity(
+                        bot_activity.activity_type,
+                        bot_activity.activity_text,
+                    )
+                    await self.bot.change_presence(activity=activity)
+                    logger.info(
+                        "Bot activity synced: type=%s, text=%s",
+                        bot_activity.activity_type,
+                        bot_activity.activity_text,
+                    )
+        except Exception:
+            logger.exception("Failed to sync bot activity")
 
     @_heartbeat.before_loop
     async def _before_heartbeat(self) -> None:

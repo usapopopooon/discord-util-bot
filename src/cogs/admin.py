@@ -2,6 +2,7 @@
 
 管理者用コマンドの Cog。
 - /admin cleanup: 孤立したDBレコードをクリーンアップ
+- /admin activity: Bot のアクティビティ（プレゼンス）を変更
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from src.bot import make_activity
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.services.db_service import (
@@ -24,6 +26,7 @@ from src.services.db_service import (
     get_all_lobbies,
     get_all_role_panels,
     get_all_sticky_messages,
+    upsert_bot_activity,
 )
 
 logger = logging.getLogger(__name__)
@@ -183,6 +186,72 @@ class AdminCog(commands.Cog):
         )
 
         await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @admin_group.command(
+        name="activity", description="Bot のアクティビティ（プレゼンス）を変更"
+    )
+    @app_commands.describe(
+        activity_type="アクティビティの種類",
+        text="表示テキスト",
+    )
+    @app_commands.choices(
+        activity_type=[
+            app_commands.Choice(name="プレイ中", value="playing"),
+            app_commands.Choice(name="再生中", value="listening"),
+            app_commands.Choice(name="視聴中", value="watching"),
+            app_commands.Choice(name="参戦中", value="competing"),
+        ]
+    )
+    async def activity(
+        self,
+        interaction: discord.Interaction,
+        activity_type: app_commands.Choice[str],
+        text: str,
+    ) -> None:
+        """Bot のアクティビティを変更する。
+
+        DB に保存し、即座に反映する。
+        """
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.HTTPException, discord.InteractionResponded):
+            return
+
+        text = text.strip()
+        if not text:
+            await interaction.followup.send(
+                "テキストを入力してください。", ephemeral=True
+            )
+            return
+
+        if len(text) > 128:
+            await interaction.followup.send(
+                "テキストは128文字以内にしてください。", ephemeral=True
+            )
+            return
+
+        async with async_session() as session:
+            await upsert_bot_activity(session, activity_type.value, text)
+
+        new_activity = make_activity(activity_type.value, text)
+        await self.bot.change_presence(activity=new_activity)
+
+        type_labels = {
+            "playing": "プレイ中",
+            "listening": "再生中",
+            "watching": "視聴中",
+            "competing": "参戦中",
+        }
+        label = type_labels.get(activity_type.value, activity_type.value)
+        await interaction.followup.send(
+            f"アクティビティを変更しました: **{label}** {text}",
+            ephemeral=True,
+        )
+        logger.info(
+            "Bot activity changed: type=%s, text=%s",
+            activity_type.value,
+            text,
+        )
 
 
 async def setup(bot: commands.Bot) -> None:

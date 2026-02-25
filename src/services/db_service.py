@@ -50,6 +50,7 @@ from src.database.models import (
     AutoBanLog,
     AutoBanRule,
     BanLog,
+    BotActivity,
     BumpConfig,
     BumpReminder,
     DiscordChannel,
@@ -2816,7 +2817,7 @@ async def delete_join_role_assignment(
 
 
 # =============================================================================
-# ProcessedEvent (イベント台帳) 操作
+# ProcessedEvent (重複排除テーブル) 操作
 # =============================================================================
 
 
@@ -2846,7 +2847,7 @@ async def claim_event(session: AsyncSession, event_key: str) -> bool:
 async def cleanup_expired_events(
     session: AsyncSession, max_age_seconds: int = 3600
 ) -> int:
-    """期限切れのイベント台帳レコードを削除する。
+    """期限切れの重複排除レコードを削除する。
 
     Args:
         session: DB セッション。
@@ -2860,3 +2861,52 @@ async def cleanup_expired_events(
     result = await session.execute(stmt)
     await session.commit()
     return int(result.rowcount)  # type: ignore[attr-defined]
+
+
+# =============================================================================
+# BotActivity (Bot アクティビティ) 操作
+# =============================================================================
+
+
+async def get_bot_activity(session: AsyncSession) -> BotActivity | None:
+    """Bot アクティビティ設定を取得する。
+
+    シングルレコードを想定。レコードが無い場合は None を返す。
+
+    Args:
+        session: DB セッション。
+
+    Returns:
+        BotActivity レコード、または None。
+    """
+    result = await session.execute(select(BotActivity).limit(1))
+    return result.scalar_one_or_none()
+
+
+async def upsert_bot_activity(
+    session: AsyncSession, activity_type: str, activity_text: str
+) -> BotActivity:
+    """Bot アクティビティ設定を作成または更新する。
+
+    Args:
+        session: DB セッション。
+        activity_type: アクティビティの種類
+            (playing / listening / watching / competing)。
+        activity_text: 表示テキスト。
+
+    Returns:
+        作成または更新された BotActivity レコード。
+    """
+    existing = await get_bot_activity(session)
+    if existing:
+        existing.activity_type = activity_type
+        existing.activity_text = activity_text
+        existing.updated_at = datetime.now(UTC)
+    else:
+        existing = BotActivity(
+            activity_type=activity_type,
+            activity_text=activity_text,
+        )
+        session.add(existing)
+    await session.commit()
+    return existing

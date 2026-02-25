@@ -1616,10 +1616,10 @@ class JoinRoleAssignment(Base):
 
 
 class ProcessedEvent(Base):
-    """イベント台帳テーブル (マルチインスタンス重複防止)。
+    """重複排除テーブル (マルチインスタンス重複防止)。
 
     複数インスタンスが同じ Discord Gateway イベントを受信した際に、
-    1 インスタンスだけが処理を実行するための台帳。
+    1 インスタンスだけが処理を実行するための重複排除レコード。
     event_key の UNIQUE 制約により、INSERT の IntegrityError で
     アトミックに重複を検出する。
 
@@ -1644,3 +1644,40 @@ class ProcessedEvent(Base):
     def __repr__(self) -> str:
         """デバッグ用の文字列表現。"""
         return f"<ProcessedEvent(id={self.id}, event_key={self.event_key})>"
+
+
+class BotActivity(Base):
+    """Bot のアクティビティ（プレゼンス）設定。
+
+    シングルレコードとして運用する（id=1 のみ）。
+    レコードが存在しない場合はデフォルト値を使用する。
+
+    Attributes:
+        id: 自動採番の主キー。
+        activity_type: アクティビティの種類
+            (playing / listening / watching / competing)。
+        activity_text: 表示テキスト。
+        updated_at: 最終更新日時 (UTC)。
+    """
+
+    __tablename__ = "bot_activity"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    activity_type: Mapped[str] = mapped_column(
+        String, nullable=False, default="playing"
+    )
+    activity_text: Mapped[str] = mapped_column(
+        String, nullable=False, default="お菓子を食べています"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return (
+            f"<BotActivity(id={self.id}, type={self.activity_type}, "
+            f"text={self.activity_text!r})>"
+        )

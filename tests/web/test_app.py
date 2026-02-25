@@ -17,6 +17,7 @@ from src.database.models import (
     AutoBanLog,
     AutoBanRule,
     BanLog,
+    BotActivity,
     BumpConfig,
     BumpReminder,
     DiscordChannel,
@@ -13760,3 +13761,173 @@ class TestAppCoverageGaps:
         )
         # 古いエントリが削除され、新しいものが残る
         assert test_ip in web_app_module.LOGIN_ATTEMPTS
+
+
+# ===========================================================================
+# Activity ルート
+# ===========================================================================
+
+
+class TestActivityPage:
+    """/activity ルートのテスト。"""
+
+    async def test_activity_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.get("/activity", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_activity_get_no_record(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """レコードがない場合はデフォルト値でページが表示される。"""
+        response = await authenticated_client.get("/activity")
+        assert response.status_code == 200
+        assert "Bot Activity" in response.text
+        assert "お菓子を食べています" in response.text
+
+    async def test_activity_get_with_existing_record(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """既存レコードがある場合はその値が表示される。"""
+        activity = BotActivity(
+            activity_type="watching",
+            activity_text="テスト動画",
+        )
+        db_session.add(activity)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/activity")
+        assert response.status_code == 200
+        assert "テスト動画" in response.text
+
+    async def test_activity_post_creates_record(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """POST でアクティビティ設定を作成できる。"""
+        response = await authenticated_client.post(
+            "/activity",
+            data={
+                "activity_type": "listening",
+                "activity_text": "音楽を聴いています",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/activity"
+
+        result = await db_session.execute(select(BotActivity))
+        activity = result.scalar_one_or_none()
+        assert activity is not None
+        assert activity.activity_type == "listening"
+        assert activity.activity_text == "音楽を聴いています"
+
+    async def test_activity_post_updates_existing_record(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """既存レコードがある場合は更新される。"""
+        activity = BotActivity(
+            activity_type="playing",
+            activity_text="古いテキスト",
+        )
+        db_session.add(activity)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            "/activity",
+            data={
+                "activity_type": "competing",
+                "activity_text": "大会参加中",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        db_session.expire_all()
+        result = await db_session.execute(select(BotActivity))
+        activity = result.scalar_one()
+        assert activity.activity_type == "competing"
+        assert activity.activity_text == "大会参加中"
+
+    async def test_activity_post_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしの POST は /login にリダイレクトされる。"""
+        response = await client.post(
+            "/activity",
+            data={
+                "activity_type": "playing",
+                "activity_text": "test",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_activity_post_empty_text_rejected(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """空テキストはリダイレクトで拒否される。"""
+        response = await authenticated_client.post(
+            "/activity",
+            data={
+                "activity_type": "playing",
+                "activity_text": "   ",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(BotActivity))
+        assert result.scalar_one_or_none() is None
+
+    async def test_activity_post_too_long_text_rejected(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """129文字のテキストはリダイレクトで拒否される。"""
+        response = await authenticated_client.post(
+            "/activity",
+            data={
+                "activity_type": "playing",
+                "activity_text": "a" * 129,
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(BotActivity))
+        assert result.scalar_one_or_none() is None
+
+    async def test_activity_post_invalid_type_rejected(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """無効なアクティビティタイプはリダイレクトで拒否される。"""
+        response = await authenticated_client.post(
+            "/activity",
+            data={
+                "activity_type": "invalid_type",
+                "activity_text": "テスト",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(BotActivity))
+        assert result.scalar_one_or_none() is None
+
+    async def test_activity_post_cooldown(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """フォームクールダウン中は更新が拒否される。"""
+        record_form_submit(TEST_ADMIN_EMAIL, "/activity")
+
+        response = await authenticated_client.post(
+            "/activity",
+            data={
+                "activity_type": "playing",
+                "activity_text": "クールダウンテスト",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(BotActivity))
+        assert result.scalar_one_or_none() is None

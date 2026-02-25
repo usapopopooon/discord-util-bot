@@ -602,3 +602,206 @@ class TestStatsCommand:
         panel_field = next(f for f in embed.fields if f.name == "ロールパネル")
         assert "総数: 3" in panel_field.value
         assert "孤立: 2" in panel_field.value
+
+
+# ---------------------------------------------------------------------------
+# /admin activity テスト
+# ---------------------------------------------------------------------------
+
+
+class TestActivityCommand:
+    """Tests for /admin activity command."""
+
+    @patch("src.cogs.admin.async_session")
+    @patch("src.cogs.admin.upsert_bot_activity", new_callable=AsyncMock)
+    @patch("src.cogs.admin.make_activity")
+    async def test_activity_changes_presence(
+        self,
+        mock_make_activity: MagicMock,
+        mock_upsert: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """アクティビティが正常に変更される。"""
+        cog = _make_cog()
+        cog.bot.change_presence = AsyncMock()
+
+        mock_session.return_value = _make_mock_session()
+        mock_activity_obj = MagicMock()
+        mock_make_activity.return_value = mock_activity_obj
+
+        interaction = _make_interaction()
+        activity_type = MagicMock()
+        activity_type.value = "playing"
+
+        await cog.activity.callback(cog, interaction, activity_type, "テストゲーム")
+
+        interaction.response.defer.assert_awaited_once_with(ephemeral=True)
+        mock_upsert.assert_awaited_once()
+        mock_make_activity.assert_called_once_with("playing", "テストゲーム")
+        cog.bot.change_presence.assert_awaited_once_with(activity=mock_activity_obj)
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "アクティビティを変更しました" in msg
+        assert "テストゲーム" in msg
+
+    async def test_activity_empty_text_rejected(self) -> None:
+        """空テキストは拒否される。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+        activity_type = MagicMock()
+        activity_type.value = "playing"
+
+        await cog.activity.callback(cog, interaction, activity_type, "   ")
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "テキストを入力" in msg
+
+    async def test_activity_too_long_text_rejected(self) -> None:
+        """128文字超のテキストは拒否される。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+        activity_type = MagicMock()
+        activity_type.value = "playing"
+
+        long_text = "a" * 129
+        await cog.activity.callback(cog, interaction, activity_type, long_text)
+
+        interaction.followup.send.assert_awaited_once()
+        msg = interaction.followup.send.call_args[0][0]
+        assert "128文字以内" in msg
+
+    async def test_activity_exactly_128_chars_accepted(self) -> None:
+        """ちょうど128文字のテキストは受け入れられる。"""
+        cog = _make_cog()
+        cog.bot.change_presence = AsyncMock()
+        interaction = _make_interaction()
+        activity_type = MagicMock()
+        activity_type.value = "watching"
+
+        text_128 = "a" * 128
+        with (
+            patch("src.cogs.admin.async_session") as mock_session,
+            patch("src.cogs.admin.upsert_bot_activity", new_callable=AsyncMock),
+            patch("src.cogs.admin.make_activity", return_value=MagicMock()),
+        ):
+            mock_session.return_value = _make_mock_session()
+            await cog.activity.callback(cog, interaction, activity_type, text_128)
+
+        msg = interaction.followup.send.call_args[0][0]
+        assert "アクティビティを変更しました" in msg
+
+    async def test_activity_defer_http_exception_returns_early(self) -> None:
+        """defer() で HTTPException が発生した場合は早期リターン。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+        interaction.response.defer = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "Error")
+        )
+        activity_type = MagicMock()
+        activity_type.value = "playing"
+
+        await cog.activity.callback(cog, interaction, activity_type, "test")
+
+        # followup.send が呼ばれないことを確認 (早期リターン)
+        interaction.followup.send.assert_not_awaited()
+
+    @patch("src.cogs.admin.async_session")
+    @patch("src.cogs.admin.upsert_bot_activity", new_callable=AsyncMock)
+    @patch("src.cogs.admin.make_activity")
+    async def test_activity_type_label_mapping(
+        self,
+        mock_make_activity: MagicMock,
+        mock_upsert: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """各タイプの日本語ラベルが正しくメッセージに含まれる。"""
+        type_labels = {
+            "playing": "プレイ中",
+            "listening": "再生中",
+            "watching": "視聴中",
+            "competing": "参戦中",
+        }
+        for type_val, label in type_labels.items():
+            cog = _make_cog()
+            cog.bot.change_presence = AsyncMock()
+            mock_session.return_value = _make_mock_session()
+            mock_make_activity.return_value = MagicMock()
+
+            interaction = _make_interaction()
+            activity_type = MagicMock()
+            activity_type.value = type_val
+
+            await cog.activity.callback(cog, interaction, activity_type, "test")
+
+            msg = interaction.followup.send.call_args[0][0]
+            assert label in msg, f"Expected '{label}' in message for type '{type_val}'"
+
+    @patch("src.cogs.admin.async_session")
+    @patch(
+        "src.cogs.admin.upsert_bot_activity",
+        new_callable=AsyncMock,
+        side_effect=Exception("DB error"),
+    )
+    async def test_activity_db_error_propagates(
+        self,
+        mock_upsert: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """DB upsert で例外 → ハンドルされず例外が伝搬する。"""
+        cog = _make_cog()
+        mock_session.return_value = _make_mock_session()
+
+        interaction = _make_interaction()
+        activity_type = MagicMock()
+        activity_type.value = "playing"
+
+        try:
+            await cog.activity.callback(cog, interaction, activity_type, "test")
+            raised = False
+        except Exception:
+            raised = True
+
+        assert raised
+
+    @patch("src.cogs.admin.async_session")
+    @patch("src.cogs.admin.upsert_bot_activity", new_callable=AsyncMock)
+    @patch("src.cogs.admin.make_activity", return_value=MagicMock())
+    async def test_activity_change_presence_error(
+        self,
+        mock_make: MagicMock,
+        mock_upsert: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """change_presence で例外 → ハンドルされず例外が伝搬する。"""
+        cog = _make_cog()
+        cog.bot.change_presence = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "Discord error")
+        )
+        mock_session.return_value = _make_mock_session()
+
+        interaction = _make_interaction()
+        activity_type = MagicMock()
+        activity_type.value = "playing"
+
+        try:
+            await cog.activity.callback(cog, interaction, activity_type, "test")
+            raised = False
+        except discord.HTTPException:
+            raised = True
+
+        assert raised
+
+    async def test_activity_whitespace_only_text_rejected(self) -> None:
+        """タブ・改行のみのテキストも拒否される。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+        activity_type = MagicMock()
+        activity_type.value = "playing"
+
+        await cog.activity.callback(
+            cog, interaction, activity_type, "\t\n  "
+        )
+
+        msg = interaction.followup.send.call_args[0][0]
+        assert "テキストを入力" in msg

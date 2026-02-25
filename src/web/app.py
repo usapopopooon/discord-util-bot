@@ -42,6 +42,7 @@ from src.database.models import (
     AutoBanLog,
     AutoBanRule,
     BanLog,
+    BotActivity,
     BumpConfig,
     BumpReminder,
     DiscordChannel,
@@ -71,6 +72,7 @@ from src.web.email_service import (
     # send_password_reset_email,  # SMTP 未設定のため未使用
 )
 from src.web.templates import (
+    activity_page,
     autoban_create_page,
     autoban_edit_page,
     autoban_list_page,
@@ -4073,3 +4075,80 @@ async def joinrole_toggle(
         record_form_submit(user_email, path)
 
     return RedirectResponse(url="/joinrole", status_code=302)
+
+
+# =============================================================================
+# Bot Activity
+# =============================================================================
+
+_VALID_ACTIVITY_TYPES = {"playing", "listening", "watching", "competing"}
+
+
+@app.get("/activity", response_model=None)
+async def activity_get(
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Bot Activity settings page."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    result = await db.execute(select(BotActivity).limit(1))
+    bot_act = result.scalar_one_or_none()
+
+    return HTMLResponse(
+        content=activity_page(
+            activity_type=bot_act.activity_type if bot_act else "playing",
+            activity_text=bot_act.activity_text if bot_act else "お菓子を食べています",
+            csrf_token=generate_csrf_token(),
+        )
+    )
+
+
+@app.post("/activity", response_model=None)
+async def activity_post(
+    request: Request,
+    activity_type: Annotated[str, Form()],
+    activity_text: Annotated[str, Form()],
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Update Bot Activity settings."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/activity", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/activity", status_code=302)
+
+    activity_text = activity_text.strip()
+    if not activity_text or len(activity_text) > 128:
+        return RedirectResponse(url="/activity", status_code=302)
+
+    if activity_type not in _VALID_ACTIVITY_TYPES:
+        return RedirectResponse(url="/activity", status_code=302)
+
+    async with get_resource_lock("bot_activity:update"):
+        result = await db.execute(select(BotActivity).limit(1))
+        bot_act = result.scalar_one_or_none()
+        if bot_act:
+            bot_act.activity_type = activity_type
+            bot_act.activity_text = activity_text
+            bot_act.updated_at = datetime.now(UTC)
+        else:
+            bot_act = BotActivity(
+                activity_type=activity_type,
+                activity_text=activity_text,
+            )
+            db.add(bot_act)
+        await db.commit()
+
+        record_form_submit(user_email, path)
+
+    return RedirectResponse(url="/activity", status_code=302)

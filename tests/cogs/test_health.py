@@ -483,10 +483,10 @@ class TestBeforeHeartbeatBranches:
 
 
 class TestHeartbeatEventCleanup:
-    """ハートビートのイベント台帳クリーンアップテスト。"""
+    """ハートビートの重複排除テーブルクリーンアップテスト。"""
 
     async def test_cleanup_called_during_heartbeat(self) -> None:
-        """ハートビートでイベント台帳のクリーンアップが呼ばれる。"""
+        """ハートビートで重複排除テーブルのクリーンアップが呼ばれる。"""
         cog = _make_cog()
 
         mock_session = AsyncMock()
@@ -529,6 +529,183 @@ class TestHeartbeatEventCleanup:
             mock_settings.health_channel_id = 0
             # 例外が伝搬しないことを確認
             await cog._heartbeat()
+
+
+class TestHeartbeatActivitySync:
+    """ハートビートの Bot アクティビティ同期テスト。"""
+
+    async def test_syncs_activity_when_changed(self) -> None:
+        """DB のアクティビティが現在と異なる場合に同期する。"""
+        cog = _make_cog()
+        cog.bot.change_presence = AsyncMock()
+        # 現在のアクティビティ (playing, old text)
+        cog.bot.activity = MagicMock()
+        cog.bot.activity.name = "古いテキスト"
+        cog.bot.activity.type = discord.ActivityType.playing
+
+        mock_bot_activity = MagicMock()
+        mock_bot_activity.activity_type = "watching"
+        mock_bot_activity.activity_text = "新しいテキスト"
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        mock_new_activity = MagicMock()
+
+        with (
+            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=mock_bot_activity,
+            ),
+            patch(
+                "src.cogs.health.make_activity",
+                return_value=mock_new_activity,
+            ) as mock_make,
+        ):
+            mock_settings.health_channel_id = 0
+            await cog._heartbeat()
+
+        mock_make.assert_called_once_with("watching", "新しいテキスト")
+        cog.bot.change_presence.assert_awaited_once_with(activity=mock_new_activity)
+
+    async def test_skips_sync_when_activity_matches(self) -> None:
+        """DB のアクティビティが現在と同じ場合は同期しない。"""
+        cog = _make_cog()
+        cog.bot.change_presence = AsyncMock()
+        cog.bot.activity = MagicMock()
+        cog.bot.activity.name = "テスト"
+        cog.bot.activity.type = discord.ActivityType.playing
+
+        mock_bot_activity = MagicMock()
+        mock_bot_activity.activity_type = "playing"
+        mock_bot_activity.activity_text = "テスト"
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=mock_bot_activity,
+            ),
+        ):
+            mock_settings.health_channel_id = 0
+            await cog._heartbeat()
+
+        cog.bot.change_presence.assert_not_awaited()
+
+    async def test_skips_sync_when_no_db_record(self) -> None:
+        """DB にアクティビティレコードがない場合は同期しない。"""
+        cog = _make_cog()
+        cog.bot.change_presence = AsyncMock()
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            mock_settings.health_channel_id = 0
+            await cog._heartbeat()
+
+        cog.bot.change_presence.assert_not_awaited()
+
+    async def test_sync_exception_does_not_crash_heartbeat(self) -> None:
+        """アクティビティ同期で例外が発生してもハートビートは止まらない。"""
+        cog = _make_cog()
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                side_effect=Exception("DB error"),
+            ),
+        ):
+            mock_settings.health_channel_id = 0
+            # 例外が伝搬しないことを確認
+            await cog._heartbeat()
+
+    async def test_syncs_when_type_differs(self) -> None:
+        """タイプが異なるがテキストが同じ場合でも同期する。"""
+        cog = _make_cog()
+        cog.bot.change_presence = AsyncMock()
+        cog.bot.activity = MagicMock()
+        cog.bot.activity.name = "同じテキスト"
+        cog.bot.activity.type = discord.ActivityType.playing
+
+        mock_bot_activity = MagicMock()
+        mock_bot_activity.activity_type = "listening"
+        mock_bot_activity.activity_text = "同じテキスト"
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=mock_bot_activity,
+            ),
+            patch("src.cogs.health.make_activity", return_value=MagicMock()),
+        ):
+            mock_settings.health_channel_id = 0
+            await cog._heartbeat()
+
+        cog.bot.change_presence.assert_awaited_once()
 
 
 class TestSetupFunction:

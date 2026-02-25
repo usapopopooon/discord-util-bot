@@ -143,8 +143,8 @@ class TestMigrationChain:
     def test_revision_count(self, script_directory: ScriptDirectory) -> None:
         """マイグレーションの数を確認する。"""
         revisions = list(script_directory.walk_revisions())
-        # 27 個のマイグレーションファイルがあることを確認
-        expected = 27
+        # 28 個のマイグレーションファイルがあることを確認
+        expected = 28
         assert len(revisions) == expected, f"リビジョン数: {len(revisions)}"
 
 
@@ -281,6 +281,22 @@ class TestMigrationUpgrade:
 
         columns = {col["name"] for col in inspector.get_columns("processed_events")}
         expected_columns = {"id", "event_key", "created_at"}
+        assert expected_columns <= columns, f"不足カラム: {expected_columns - columns}"
+        engine.dispose()
+
+    @pytest.mark.usefixtures("clean_db")
+    def test_upgrade_creates_bot_activity_table(self, alembic_config: Config) -> None:
+        """bot_activity テーブルが正しいカラムで作成される。"""
+        command.upgrade(alembic_config, "head")
+
+        engine = create_engine(TEST_DATABASE_URL)
+        inspector = inspect(engine)
+
+        tables = inspector.get_table_names()
+        assert "bot_activity" in tables, "bot_activity テーブルが見つかりません"
+
+        columns = {col["name"] for col in inspector.get_columns("bot_activity")}
+        expected_columns = {"id", "activity_type", "activity_text", "updated_at"}
         assert expected_columns <= columns, f"不足カラム: {expected_columns - columns}"
         engine.dispose()
 

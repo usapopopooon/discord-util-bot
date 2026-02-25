@@ -395,6 +395,10 @@ def dashboard_page(email: str = "Admin") -> str:
                 <h2 class="text-lg font-semibold mb-2">Database Maintenance</h2>
                 <p class="text-gray-400 text-sm">Refresh stats and cleanup orphaned data</p>
             </a>
+            <a href="/activity" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
+                <h2 class="text-lg font-semibold mb-2">Bot Activity</h2>
+                <p class="text-gray-400 text-sm">Change bot presence status</p>
+            </a>
         </div>
     </div>
     """
@@ -4772,3 +4776,76 @@ def joinrole_page(
     </script>
     """
     return _base("Join Role", content)
+
+
+def activity_page(
+    activity_type: str = "playing",
+    activity_text: str = "",
+    csrf_token: str = "",
+) -> str:
+    """Bot Activity settings page template."""
+    type_options = [
+        ("playing", "プレイ中 (Playing)"),
+        ("listening", "再生中 (Listening)"),
+        ("watching", "視聴中 (Watching)"),
+        ("competing", "参戦中 (Competing)"),
+    ]
+    options_html = ""
+    for value, label in type_options:
+        selected = " selected" if value == activity_type else ""
+        options_html += (
+            f'<option value="{escape(value)}"{selected}>{escape(label)}</option>'
+        )
+
+    current_label = dict(type_options).get(activity_type, activity_type)
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            "Bot Activity",
+            breadcrumbs=[("Dashboard", "/dashboard"), ("Bot Activity", None)],
+        )
+    }
+        <div class="max-w-2xl">
+            <div class="bg-gray-800 rounded-lg p-6 mb-6">
+                <h3 class="text-sm font-medium text-gray-400 mb-2">Current Setting</h3>
+                <p class="text-lg">
+                    <span class="text-gray-400">{escape(current_label)}:</span>
+                    <span class="font-semibold">{
+        escape(activity_text)
+        if activity_text
+        else '<span class="text-gray-500">Not set (using default)</span>'
+    }</span>
+                </p>
+            </div>
+
+            <form method="POST" action="/activity" class="space-y-6">
+                {_csrf_field(csrf_token)}
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Activity Type</label>
+                    <select name="activity_type" required
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        {options_html}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium mb-1">Text</label>
+                    <input type="text" name="activity_text" required maxlength="128"
+                           value="{escape(activity_text)}"
+                           placeholder="お菓子を食べています"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                    <p class="text-gray-400 text-xs mt-1">Maximum 128 characters</p>
+                </div>
+
+                <button type="submit"
+                        class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded transition-colors">
+                    Save
+                </button>
+            </form>
+        </div>
+    </div>
+    """
+    return _base("Bot Activity", content)

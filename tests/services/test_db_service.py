@@ -67,6 +67,7 @@ from src.services.db_service import (
     get_autoban_rule,
     get_autoban_rules_by_guild,
     get_ban_logs,
+    get_bot_activity,
     get_bump_config,
     get_bump_reminder,
     get_discord_channels_by_guild,
@@ -100,6 +101,7 @@ from src.services.db_service import (
     update_sticky_message_id,
     update_voice_session,
     upsert_autoban_config,
+    upsert_bot_activity,
     upsert_bump_config,
     upsert_bump_reminder,
     upsert_discord_channel,
@@ -5693,7 +5695,7 @@ class TestIntroPostCRUD:
 
 
 # ===========================================================================
-# ProcessedEvent (イベント台帳) 操作
+# ProcessedEvent (重複排除テーブル) 操作
 # ===========================================================================
 
 
@@ -5874,3 +5876,60 @@ class TestClaimEventSessionRecovery:
 
         result = await claim_event(db_session, "ops:after:rollback:2")
         assert result is True
+
+
+class TestGetBotActivity:
+    """Tests for get_bot_activity."""
+
+    async def test_returns_none_when_no_record(self, db_session: AsyncSession) -> None:
+        """レコードがない場合は None を返す。"""
+        result = await get_bot_activity(db_session)
+        assert result is None
+
+    async def test_returns_existing_record(self, db_session: AsyncSession) -> None:
+        """レコードが存在する場合はそれを返す。"""
+        await upsert_bot_activity(db_session, "watching", "配信中")
+        result = await get_bot_activity(db_session)
+        assert result is not None
+        assert result.activity_type == "watching"
+        assert result.activity_text == "配信中"
+
+
+class TestUpsertBotActivity:
+    """Tests for upsert_bot_activity."""
+
+    async def test_create_new_record(self, db_session: AsyncSession) -> None:
+        """レコードがない場合は新規作成する。"""
+        result = await upsert_bot_activity(db_session, "playing", "テストゲーム")
+        assert result.id is not None
+        assert result.activity_type == "playing"
+        assert result.activity_text == "テストゲーム"
+
+    async def test_update_existing_record(self, db_session: AsyncSession) -> None:
+        """レコードが既に存在する場合は更新する。"""
+        first = await upsert_bot_activity(db_session, "playing", "最初のテキスト")
+        first_id = first.id
+        first_updated_at = first.updated_at
+
+        second = await upsert_bot_activity(db_session, "listening", "音楽")
+        assert second.id == first_id
+        assert second.activity_type == "listening"
+        assert second.activity_text == "音楽"
+        assert second.updated_at >= first_updated_at
+
+    async def test_upsert_returns_bot_activity(self, db_session: AsyncSession) -> None:
+        """upsert の戻り値が BotActivity インスタンスである。"""
+        from src.database.models import BotActivity
+
+        result = await upsert_bot_activity(db_session, "competing", "大会参加中")
+        assert isinstance(result, BotActivity)
+
+    async def test_upsert_persists_to_db(self, db_session: AsyncSession) -> None:
+        """upsert した結果が DB に永続化されている。"""
+        await upsert_bot_activity(db_session, "watching", "動画")
+
+        # 別途取得して確認
+        fetched = await get_bot_activity(db_session)
+        assert fetched is not None
+        assert fetched.activity_type == "watching"
+        assert fetched.activity_text == "動画"

@@ -457,7 +457,7 @@ class RolePanelCog(commands.Cog):
             logger.warning("Role %s not found for panel %d", item.role_id, panel.id)
             return
 
-        # イベント台帳で重複防止 (マルチインスタンス)
+        # 重複排除テーブルで重複防止 (マルチインスタンス)
         bucket = int(time.time()) // 5
         event_key = (
             f"reaction:{payload.message_id}:{payload.user_id}"

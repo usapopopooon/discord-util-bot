@@ -28,10 +28,29 @@ import discord
 from discord.ext import commands
 
 from src.database.engine import async_session
-from src.services.db_service import get_all_voice_sessions
+from src.services.db_service import get_all_voice_sessions, get_bot_activity
 from src.ui.control_panel import ControlPanelView
 
 logger = logging.getLogger(__name__)
+
+
+def make_activity(activity_type: str, text: str) -> discord.BaseActivity:
+    """アクティビティタイプと文言から discord.BaseActivity を生成する。
+
+    Args:
+        activity_type: playing / listening / watching / competing。
+        text: 表示テキスト。
+
+    Returns:
+        対応する discord.BaseActivity インスタンス。
+    """
+    if activity_type == "listening":
+        return discord.Activity(type=discord.ActivityType.listening, name=text)
+    if activity_type == "watching":
+        return discord.Activity(type=discord.ActivityType.watching, name=text)
+    if activity_type == "competing":
+        return discord.Activity(type=discord.ActivityType.competing, name=text)
+    return discord.Game(name=text)
 
 
 class EphemeralVCBot(commands.Bot):
@@ -264,9 +283,18 @@ class EphemeralVCBot(commands.Bot):
             - :meth:`setup_hook`: 起動前の初期化処理
             - :meth:`discord.Client.change_presence`: プレゼンス変更
         """
-        # Bot のステータスを「お菓子を食べています」に設定
-        # discord.Game = 「〜をプレイ中」タイプのアクティビティ
-        activity = discord.Game(name="お菓子を食べています")
+        # Bot のステータスを DB から読み込んで設定する
+        # DB にレコードがない場合はデフォルト値を使用する
+        activity: discord.BaseActivity = discord.Game(name="お菓子を食べています")
+        try:
+            async with async_session() as session:
+                bot_activity = await get_bot_activity(session)
+                if bot_activity:
+                    activity = make_activity(
+                        bot_activity.activity_type, bot_activity.activity_text
+                    )
+        except Exception:
+            logger.exception("Failed to load bot activity from DB")
         await self.change_presence(activity=activity)
 
         if self.user:

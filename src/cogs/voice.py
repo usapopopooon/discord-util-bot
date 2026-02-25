@@ -399,7 +399,7 @@ class VoiceCog(commands.Cog):
                         reason = "人数制限を超えているため"
 
             if should_kick:
-                # イベント台帳で重複防止 (マルチインスタンス)
+                # 重複排除テーブルで重複防止 (マルチインスタンス)
                 bucket = int(time.time()) // 5
                 event_key = f"vc_kick:{channel.id}:{member.id}:{bucket}"
                 if not await claim_event(session, event_key):
@@ -516,7 +516,7 @@ class VoiceCog(commands.Cog):
                 )
                 return
 
-            # イベント台帳で重複防止 (マルチインスタンス)
+            # 重複排除テーブルで重複防止 (マルチインスタンス)
             bucket = int(time.time()) // 5
             event_key = f"vc_lobby:{member.id}:{channel.id}:{bucket}"
             if not await claim_event(session, event_key):
@@ -658,7 +658,7 @@ class VoiceCog(commands.Cog):
 
             # --- 全員退出 → チャンネル削除 ---
             if len(channel.members) == 0:
-                # イベント台帳で重複防止 (マルチインスタンス)
+                # 重複排除テーブルで重複防止 (マルチインスタンス)
                 event_key = f"vc_delete:{channel.id}"
                 if not await claim_event(session, event_key):
                     logger.info(
@@ -758,7 +758,7 @@ class VoiceCog(commands.Cog):
             )
             return  # 人間のメンバーが誰もいない
 
-        # イベント台帳で重複防止 (マルチインスタンス)
+        # 重複排除テーブルで重複防止 (マルチインスタンス)
         bucket = int(time.time()) // 5
         event_key = f"vc_transfer:{channel.id}:{old_owner.id}:{bucket}"
         if not await claim_event(session, event_key):

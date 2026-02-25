@@ -4294,11 +4294,11 @@ class TestRolePanelCreateModal:
 
 
 # ===========================================================================
-# イベント台帳による重複防止テスト
+# 重複排除テーブルによる重複防止テスト
 # ===========================================================================
 
 
-class TestReactionEventLedgerDuplicateGuard:
+class TestReactionDeduplicationDuplicateGuard:
     """claim_event による重複防止のテスト (reaction)。"""
 
     async def test_reaction_add_skips_on_duplicate_claim(self) -> None:

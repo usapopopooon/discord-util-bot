@@ -18,6 +18,7 @@ from src.database.models import (
     AutoBanLog,
     AutoBanRule,
     BanLog,
+    BotActivity,
     BumpConfig,
     BumpReminder,
     DiscordChannel,
@@ -2913,3 +2914,67 @@ class TestAutoBanRuleNewTypes:
         await db_session.refresh(rule)
         assert rule.rule_type == "msg_without_intro"
         assert rule.action == "kick"
+
+
+# ===========================================================================
+# BotActivity — モデルテスト
+# ===========================================================================
+
+
+class TestBotActivityModel:
+    """BotActivity モデルのテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_create_bot_activity(self, db_session: AsyncSession) -> None:
+        """BotActivity レコードを作成できる。"""
+        activity = BotActivity(
+            activity_type="playing",
+            activity_text="テスト中",
+        )
+        db_session.add(activity)
+        await db_session.commit()
+        await db_session.refresh(activity)
+
+        assert activity.id is not None
+        assert activity.activity_type == "playing"
+        assert activity.activity_text == "テスト中"
+        assert activity.updated_at is not None
+
+    @pytest.mark.asyncio
+    async def test_default_values(self, db_session: AsyncSession) -> None:
+        """デフォルト値が正しく設定される。"""
+        activity = BotActivity()
+        db_session.add(activity)
+        await db_session.commit()
+        await db_session.refresh(activity)
+
+        assert activity.activity_type == "playing"
+        assert activity.activity_text == "お菓子を食べています"
+        assert activity.updated_at is not None
+
+    @pytest.mark.asyncio
+    async def test_repr(self, db_session: AsyncSession) -> None:
+        """__repr__ にモデル名、type、text が含まれる。"""
+        activity = BotActivity(
+            activity_type="watching",
+            activity_text="星を見ています",
+        )
+        db_session.add(activity)
+        await db_session.commit()
+        text = repr(activity)
+        assert "BotActivity" in text
+        assert "watching" in text
+        assert "星を見ています" in text
+
+    @pytest.mark.asyncio
+    async def test_all_activity_types(self, db_session: AsyncSession) -> None:
+        """全てのアクティビティタイプを保存できる。"""
+        for activity_type in ("playing", "listening", "watching", "competing"):
+            activity = BotActivity(
+                activity_type=activity_type,
+                activity_text=f"test-{activity_type}",
+            )
+            db_session.add(activity)
+            await db_session.commit()
+            await db_session.refresh(activity)
+            assert activity.activity_type == activity_type
