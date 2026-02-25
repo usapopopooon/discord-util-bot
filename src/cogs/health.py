@@ -27,7 +27,11 @@ from src.bot import make_activity
 from src.config import settings
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
-from src.services.db_service import cleanup_expired_events, get_bot_activity
+from src.services.db_service import (
+    claim_event,
+    cleanup_expired_events,
+    get_bot_activity,
+)
 
 # ロガーの取得。__name__ でモジュールパスがロガー名になる
 # (例: "src.cogs.health")
@@ -106,36 +110,50 @@ class HealthCog(commands.Cog):
             guild_count,
         )
 
-        # --- Discord チャンネルに Embed を送信 ---
+        # --- Discord チャンネルに Embed を送信 (マルチインスタンス重複防止) ---
         # health_channel_id が 0 (未設定) の場合はスキップ
         if settings.health_channel_id:
-            channel = self.bot.get_channel(settings.health_channel_id)
-            if channel is None:
-                logger.warning(
-                    "Health channel %d not found in cache",
-                    settings.health_channel_id,
-                )
-            elif not isinstance(channel, discord.TextChannel):
-                logger.warning(
-                    "Health channel %d is not a TextChannel (type=%s)",
-                    settings.health_channel_id,
-                    type(channel).__name__,
-                )
+            # 10分バケットで claim — 同一バケット内では1インスタンスのみ送信
+            # フェイルオープン: DB エラー時は送信する (重複より欠落の方が問題)
+            claimed = True
+            try:
+                bucket = int(time.time()) // 600
+                event_key = f"heartbeat:{bucket}"
+                async with async_session() as session:
+                    claimed = await claim_event(session, event_key)
+            except Exception:
+                logger.debug("Failed to claim heartbeat event, proceeding anyway")
+
+            if not claimed:
+                logger.debug("Heartbeat already claimed by another instance")
             else:
-                embed = self._build_embed(
-                    status=status,
-                    uptime_str=uptime_str,
-                    latency_ms=latency_ms,
-                    guild_count=guild_count,
-                )
-                try:
-                    await channel.send(embed=embed)
-                except discord.HTTPException as e:
-                    logger.error(
-                        "Failed to send heartbeat to channel %d: %s",
+                channel = self.bot.get_channel(settings.health_channel_id)
+                if channel is None:
+                    logger.warning(
+                        "Health channel %d not found in cache",
                         settings.health_channel_id,
-                        e,
                     )
+                elif not isinstance(channel, discord.TextChannel):
+                    logger.warning(
+                        "Health channel %d is not a TextChannel (type=%s)",
+                        settings.health_channel_id,
+                        type(channel).__name__,
+                    )
+                else:
+                    embed = self._build_embed(
+                        status=status,
+                        uptime_str=uptime_str,
+                        latency_ms=latency_ms,
+                        guild_count=guild_count,
+                    )
+                    try:
+                        await channel.send(embed=embed)
+                    except discord.HTTPException as e:
+                        logger.error(
+                            "Failed to send heartbeat to channel %d: %s",
+                            settings.health_channel_id,
+                            e,
+                        )
 
         # --- 重複排除テーブルのクリーンアップ ---
         try:
@@ -192,33 +210,49 @@ class HealthCog(commands.Cog):
         """
         await self.bot.wait_until_ready()
 
-        # --- デプロイ (起動) 通知 ---
+        # --- デプロイ (起動) 通知 (マルチインスタンス重複防止) ---
         if settings.health_channel_id:
-            channel = self.bot.get_channel(settings.health_channel_id)
-            if channel is None:
-                logger.warning(
-                    "Health channel %d not found for deploy notification",
-                    settings.health_channel_id,
-                )
-            elif isinstance(channel, discord.TextChannel):
-                embed = self._build_deploy_embed()
-                try:
-                    await channel.send(embed=embed)
-                    logger.info(
-                        "Deploy notification sent to channel %d",
-                        settings.health_channel_id,
-                    )
-                except discord.HTTPException as e:
-                    logger.error(
-                        "Failed to send deploy notification to channel %d: %s",
-                        settings.health_channel_id,
-                        e,
-                    )
+            # Boot 時刻の分単位でユニークキーを生成
+            # ローリングデプロイで新旧インスタンスが同時起動しても1通だけ送信
+            # フェイルオープン: DB エラー時は送信する
+            claimed = True
+            try:
+                boot_key = self._boot_jst.strftime("%Y%m%d%H%M")
+                event_key = f"deploy:{boot_key}"
+                async with async_session() as session:
+                    claimed = await claim_event(session, event_key)
+            except Exception:
+                logger.debug("Failed to claim deploy event, proceeding anyway")
+
+            if not claimed:
+                logger.info("Deploy notification already sent by another instance")
             else:
-                logger.warning(
-                    "Health channel %d is not a TextChannel for deploy notification",
-                    settings.health_channel_id,
-                )
+                channel = self.bot.get_channel(settings.health_channel_id)
+                if channel is None:
+                    logger.warning(
+                        "Health channel %d not found for deploy notification",
+                        settings.health_channel_id,
+                    )
+                elif isinstance(channel, discord.TextChannel):
+                    embed = self._build_deploy_embed()
+                    try:
+                        await channel.send(embed=embed)
+                        logger.info(
+                            "Deploy notification sent to channel %d",
+                            settings.health_channel_id,
+                        )
+                    except discord.HTTPException as e:
+                        logger.error(
+                            "Failed to send deploy notification to channel %d: %s",
+                            settings.health_channel_id,
+                            e,
+                        )
+                else:
+                    logger.warning(
+                        "Health channel %d is not a TextChannel"
+                        " for deploy notification",
+                        settings.health_channel_id,
+                    )
 
     # ------------------------------------------------------------------
     # Embed builder

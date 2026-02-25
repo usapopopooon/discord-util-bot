@@ -708,6 +708,211 @@ class TestHeartbeatActivitySync:
         cog.bot.change_presence.assert_awaited_once()
 
 
+class TestHeartbeatDeduplication:
+    """ハートビート embed のマルチインスタンス重複防止テスト。"""
+
+    async def test_heartbeat_skips_send_when_already_claimed(self) -> None:
+        """他インスタンスが claim 済みの場合は embed を送信しない。"""
+        cog = _make_cog(latency=0.1, guild_count=2)
+
+        mock_channel = MagicMock(spec=discord.TextChannel)
+        mock_channel.send = AsyncMock()
+        cog.bot.get_channel = MagicMock(return_value=mock_channel)
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            mock_settings.health_channel_id = 12345
+            await cog._heartbeat()
+
+        # claim 失敗なので送信されない
+        mock_channel.send.assert_not_awaited()
+
+    async def test_heartbeat_sends_when_claimed(self) -> None:
+        """claim 成功時は embed を送信する。"""
+        cog = _make_cog(latency=0.1, guild_count=2)
+
+        mock_channel = MagicMock(spec=discord.TextChannel)
+        mock_channel.send = AsyncMock()
+        cog.bot.get_channel = MagicMock(return_value=mock_channel)
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            mock_settings.health_channel_id = 12345
+            await cog._heartbeat()
+
+        mock_channel.send.assert_awaited_once()
+
+    async def test_heartbeat_sends_on_claim_db_error(self) -> None:
+        """claim の DB エラー時はフェイルオープンで送信する。"""
+        cog = _make_cog(latency=0.1, guild_count=2)
+
+        mock_channel = MagicMock(spec=discord.TextChannel)
+        mock_channel.send = AsyncMock()
+        cog.bot.get_channel = MagicMock(return_value=mock_channel)
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                side_effect=Exception("DB error"),
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            mock_settings.health_channel_id = 12345
+            await cog._heartbeat()
+
+        # フェイルオープン: DB エラーでも送信する
+        mock_channel.send.assert_awaited_once()
+
+
+class TestDeployDeduplication:
+    """デプロイ通知のマルチインスタンス重複防止テスト。"""
+
+    async def test_deploy_skips_when_already_claimed(self) -> None:
+        """他インスタンスが claim 済みの場合はデプロイ通知を送信しない。"""
+        cog = _make_cog(guild_count=2)
+
+        mock_channel = MagicMock(spec=discord.TextChannel)
+        mock_channel.send = AsyncMock()
+        cog.bot.get_channel = MagicMock(return_value=mock_channel)
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            mock_settings.health_channel_id = 12345
+            await cog._before_heartbeat()
+
+        mock_channel.send.assert_not_awaited()
+
+    async def test_deploy_sends_when_claimed(self) -> None:
+        """claim 成功時はデプロイ通知を送信する。"""
+        cog = _make_cog(guild_count=2)
+
+        mock_channel = MagicMock(spec=discord.TextChannel)
+        mock_channel.send = AsyncMock()
+        cog.bot.get_channel = MagicMock(return_value=mock_channel)
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+        ):
+            mock_settings.health_channel_id = 12345
+            await cog._before_heartbeat()
+
+        mock_channel.send.assert_awaited_once()
+        embed = mock_channel.send.call_args[1]["embed"]
+        assert "Deploy" in (embed.title or "")
+
+    async def test_deploy_sends_on_claim_db_error(self) -> None:
+        """claim の DB エラー時はフェイルオープンで送信する。"""
+        cog = _make_cog(guild_count=2)
+
+        mock_channel = MagicMock(spec=discord.TextChannel)
+        mock_channel.send = AsyncMock()
+        cog.bot.get_channel = MagicMock(return_value=mock_channel)
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                side_effect=Exception("DB error"),
+            ),
+        ):
+            mock_settings.health_channel_id = 12345
+            await cog._before_heartbeat()
+
+        # フェイルオープン: DB エラーでも送信する
+        mock_channel.send.assert_awaited_once()
+
+
 class TestSetupFunction:
     """setup 関数のテスト。"""
 
