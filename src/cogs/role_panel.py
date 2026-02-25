@@ -1,4 +1,4 @@
-"""Role panel cog for role assignment via buttons/reactions.
+"""Role panel cog for role assignment via buttons and reactions.
 
 ボタンまたはリアクションでロールを付与/解除するパネル機能を提供する Cog。
 
