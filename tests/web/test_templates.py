@@ -22,6 +22,7 @@ from src.database.models import (
 from src.web.templates import (
     _base,
     _breadcrumb,
+    _build_emoji_list,
     _nav,
     autoban_create_page,
     autoban_edit_page,
@@ -50,6 +51,69 @@ from src.web.templates import (
     ticket_panel_detail_page,
     ticket_panels_list_page,
 )
+
+# ===========================================================================
+# 絵文字データ生成ヘルパー
+# ===========================================================================
+
+
+class TestBuildEmojiList:
+    """_build_emoji_list ヘルパー関数のテスト。"""
+
+    def test_returns_json_string(self) -> None:
+        """JSON 文字列を返す。"""
+        import json
+
+        result = _build_emoji_list()
+        data = json.loads(result)
+        assert isinstance(data, list)
+        assert len(data) > 100
+
+    def test_items_are_name_char_pairs(self) -> None:
+        """各要素が [name, char] のペアである。"""
+        import json
+
+        data = json.loads(_build_emoji_list())
+        for item in data[:10]:
+            assert len(item) == 2
+            assert isinstance(item[0], str)  # name
+            assert isinstance(item[1], str)  # char
+
+    def test_excludes_flag_emojis(self) -> None:
+        """国旗絵文字が除外されている。"""
+        import json
+
+        data = json.loads(_build_emoji_list())
+        chars = {item[1] for item in data}
+        # 日本国旗 (🇯🇵) は Regional Indicator 2文字
+        assert "\U0001f1ef\U0001f1f5" not in chars
+
+    def test_excludes_skin_tone_variants(self) -> None:
+        """肌色バリアントが除外されている。"""
+        import json
+
+        data = json.loads(_build_emoji_list())
+        for item in data:
+            char = item[1]
+            assert not any(0x1F3FB <= ord(c) <= 0x1F3FF for c in char)
+
+    def test_contains_common_emojis(self) -> None:
+        """一般的な絵文字が含まれている。"""
+        import json
+
+        data = json.loads(_build_emoji_list())
+        names = {item[0] for item in data}
+        assert "fire" in names
+        assert "heart" in names or "red heart" in names
+
+    def test_sorted_by_name(self) -> None:
+        """名前でソートされている。"""
+        import json
+
+        data = json.loads(_build_emoji_list())
+        names = [item[0] for item in data]
+        assert names == sorted(names)
+
 
 # ===========================================================================
 # Base テンプレート
@@ -1033,6 +1097,26 @@ class TestRolePanelCreatePage:
         assert "Title &amp; Description" in result or "Title & Description" in result
         assert "Role Items" in result
 
+    def test_emoji_autocomplete_input_field(self) -> None:
+        """絵文字入力にオートコンプリート用のクラスが設定される。"""
+        result = role_panel_create_page()
+        assert "emoji-autocomplete" in result
+        assert "emoji-input" in result
+        assert "emoji-dropdown" in result
+
+    def test_emoji_autocomplete_data_included(self) -> None:
+        """絵文字オートコンプリート用の EMOJI_DATA が含まれる。"""
+        result = role_panel_create_page()
+        assert "EMOJI_DATA" in result
+        # 実際の絵文字データが含まれていることを確認
+        assert "fire" in result
+
+    def test_emoji_autocomplete_setup_function(self) -> None:
+        """setupEmojiAutocomplete 関数が含まれる。"""
+        result = role_panel_create_page()
+        assert "setupEmojiAutocomplete" in result
+        assert "emoji-option" in result
+
 
 class TestRolePanelDetailPage:
     """role_panel_detail_page テンプレートのテスト。"""
@@ -1356,6 +1440,25 @@ class TestRolePanelDetailPage:
         )
         result = role_panels_list_page([panel], {1: []}, csrf_token="token")
         assert "This should not appear" not in result
+
+    def test_emoji_autocomplete_input_field(self, button_panel: RolePanel) -> None:
+        """詳細ページの絵文字入力にオートコンプリートが設定される。"""
+        result = role_panel_detail_page(button_panel, [])
+        assert "emoji-autocomplete" in result
+        assert "emoji-input" in result
+        assert "emoji-dropdown" in result
+
+    def test_emoji_autocomplete_data_included(self, button_panel: RolePanel) -> None:
+        """詳細ページに絵文字オートコンプリート用の EMOJI_DATA が含まれる。"""
+        result = role_panel_detail_page(button_panel, [])
+        assert "EMOJI_DATA" in result
+        assert "fire" in result
+
+    def test_emoji_autocomplete_setup_function(self, button_panel: RolePanel) -> None:
+        """詳細ページに setupEmojiAutocomplete 関数が含まれる。"""
+        result = role_panel_detail_page(button_panel, [])
+        assert "setupEmojiAutocomplete" in result
+        assert "emoji-option" in result
 
 
 class TestRolePanelCreatePageEdgeCases:

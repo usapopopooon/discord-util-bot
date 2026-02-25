@@ -37,6 +37,40 @@ def _roles_to_js_array(roles: list[tuple[str, str, int]]) -> str:
     return json.dumps(js_roles)
 
 
+_EMOJI_JSON: str | None = None
+
+
+def _get_emoji_json() -> str:
+    """emoji ライブラリから名前→絵文字の JSON 配列を返す (キャッシュ付き)."""
+    global _EMOJI_JSON  # noqa: PLW0603
+    if _EMOJI_JSON is None:
+        _EMOJI_JSON = _build_emoji_list()
+    return _EMOJI_JSON
+
+
+def _build_emoji_list() -> str:
+    """emoji ライブラリから [name, char] の JSON 配列文字列を生成する."""
+    import json
+
+    import emoji as emoji_lib
+
+    items: list[list[str]] = []
+    for char, data in emoji_lib.EMOJI_DATA.items():
+        en = data.get("en", "")
+        if not en:
+            continue
+        # 国旗を除外 (Regional Indicator 2文字)
+        if len(char) == 2 and all(0x1F1E6 <= ord(c) <= 0x1F1FF for c in char):
+            continue
+        # 肌色バリアントを除外
+        if any(0x1F3FB <= ord(c) <= 0x1F3FF for c in char):
+            continue
+        name = en.strip(":").replace("_", " ").lower()
+        items.append([name, char])
+    items.sort(key=lambda x: x[0])
+    return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+
+
 def _base(title: str, content: str) -> str:
     """Base HTML template with Tailwind CDN."""
     return f"""<!DOCTYPE html>
@@ -2074,16 +2108,21 @@ def role_panel_create_page(
                     <input type="hidden" name="item_position[]" class="position-input" value="${{index}}">
                 </td>
                 <td class="py-1 px-2 align-middle">
-                    <input
-                        type="text"
-                        name="item_emoji[]"
-                        required
-                        maxlength="64"
-                        class="w-full px-2 py-1 bg-gray-600 border border-gray-500 rounded
-                               focus:outline-none focus:ring-2 focus:ring-blue-500
-                               text-gray-100 text-sm"
-                        placeholder="🎮"
-                    >
+                    <div class="emoji-autocomplete relative">
+                        <input
+                            type="text"
+                            name="item_emoji[]"
+                            required
+                            maxlength="64"
+                            class="emoji-input w-full px-2 py-1 bg-gray-600 border border-gray-500 rounded
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500
+                                   text-gray-100 text-sm"
+                            placeholder="🎮 or type name"
+                            autocomplete="off"
+                        >
+                        <div class="emoji-dropdown absolute z-50 w-full mt-1 bg-gray-700 border border-gray-500
+                                    rounded shadow-lg max-h-48 overflow-y-auto hidden"></div>
+                    </div>
                 </td>
                 <td class="py-1 px-2 align-middle">
                     ${{roleSelectHtml}}
@@ -2130,6 +2169,10 @@ def role_panel_create_page(
 
             // ロールオートコンプリートのイベント設定
             setupRoleAutocomplete(row);
+
+            // 絵文字オートコンプリートのイベント設定
+            const emojiInputEl = row.querySelector('.emoji-input');
+            if (emojiInputEl) setupEmojiAutocomplete(emojiInputEl);
 
             // プリフィルデータがある場合は値をセット
             if (prefill) {{
@@ -2234,6 +2277,67 @@ def role_panel_create_page(
                 if (e.key === 'Escape') {{
                     hideDropdown();
                 }}
+            }});
+        }}
+
+        // 絵文字オートコンプリートのデータとセットアップ
+        const EMOJI_DATA = {_get_emoji_json()};
+
+        function setupEmojiAutocomplete(input) {{
+            const dropdown = input.nextElementSibling;
+            if (!dropdown) return;
+            let selectedIndex = -1;
+
+            input.addEventListener('input', function() {{
+                const query = input.value.trim().toLowerCase();
+                if (!query || /^[\\p{{Emoji_Presentation}}\\p{{Extended_Pictographic}}]/u.test(query) || query.startsWith('<:') || query.startsWith('<a:')) {{
+                    dropdown.classList.add('hidden');
+                    return;
+                }}
+                const matches = EMOJI_DATA.filter(function(item) {{ return item[0].includes(query); }}).slice(0, 8);
+                if (matches.length === 0) {{
+                    dropdown.classList.add('hidden');
+                    return;
+                }}
+                selectedIndex = -1;
+                dropdown.innerHTML = matches.map(function(item, i) {{
+                    return '<div class="emoji-option px-3 py-2 hover:bg-gray-600 cursor-pointer text-sm" data-emoji="' + item[1] + '">' +
+                        '<span class="text-lg mr-2">' + item[1] + '</span> ' + escapeHtml(item[0]) +
+                        '</div>';
+                }}).join('');
+                dropdown.classList.remove('hidden');
+            }});
+
+            dropdown.addEventListener('click', function(e) {{
+                const option = e.target.closest('.emoji-option');
+                if (option) {{
+                    input.value = option.dataset.emoji;
+                    dropdown.classList.add('hidden');
+                }}
+            }});
+
+            input.addEventListener('keydown', function(e) {{
+                const options = dropdown.querySelectorAll('.emoji-option');
+                if (options.length === 0 || dropdown.classList.contains('hidden')) return;
+                if (e.key === 'ArrowDown') {{
+                    e.preventDefault();
+                    selectedIndex = Math.min(selectedIndex + 1, options.length - 1);
+                    options.forEach(function(opt, i) {{ opt.classList.toggle('bg-gray-600', i === selectedIndex); }});
+                }} else if (e.key === 'ArrowUp') {{
+                    e.preventDefault();
+                    selectedIndex = Math.max(selectedIndex - 1, 0);
+                    options.forEach(function(opt, i) {{ opt.classList.toggle('bg-gray-600', i === selectedIndex); }});
+                }} else if (e.key === 'Enter' && selectedIndex >= 0) {{
+                    e.preventDefault();
+                    input.value = options[selectedIndex].dataset.emoji;
+                    dropdown.classList.add('hidden');
+                }} else if (e.key === 'Escape') {{
+                    dropdown.classList.add('hidden');
+                }}
+            }});
+
+            input.addEventListener('blur', function() {{
+                setTimeout(function() {{ dropdown.classList.add('hidden'); }}, 200);
             }});
         }}
 
@@ -2705,17 +2809,22 @@ def role_panel_detail_page(
                         <label for="emoji" class="block text-sm font-medium mb-2">
                             Emoji <span class="text-red-400">*</span>
                         </label>
-                        <input
-                            type="text"
-                            id="emoji"
-                            name="emoji"
-                            required
-                            maxlength="64"
-                            class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
-                                   focus:outline-none focus:ring-2 focus:ring-blue-500
-                                   text-gray-100"
-                            placeholder="🎮 or custom emoji"
-                        >
+                        <div class="emoji-autocomplete relative">
+                            <input
+                                type="text"
+                                id="emoji"
+                                name="emoji"
+                                required
+                                maxlength="64"
+                                class="emoji-input w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded
+                                       focus:outline-none focus:ring-2 focus:ring-blue-500
+                                       text-gray-100"
+                                placeholder="🎮 or type name"
+                                autocomplete="off"
+                            >
+                            <div class="emoji-dropdown absolute z-50 w-full mt-1 bg-gray-700 border border-gray-600
+                                        rounded shadow-lg max-h-48 overflow-y-auto hidden"></div>
+                        </div>
                     </div>
                     <div>
                         <label for="role_select" class="block text-sm font-medium mb-2">
@@ -2877,6 +2986,77 @@ def role_panel_detail_page(
     </script>
     '''
     }
+    <script>
+    (function() {{
+        const EMOJI_DATA = {_get_emoji_json()};
+
+        function escapeHtml(text) {{
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }}
+
+        function setupEmojiAutocomplete(input) {{
+            const dropdown = input.nextElementSibling;
+            if (!dropdown) return;
+            let selectedIndex = -1;
+
+            input.addEventListener('input', function() {{
+                const query = input.value.trim().toLowerCase();
+                if (!query || /^[\\p{{Emoji_Presentation}}\\p{{Extended_Pictographic}}]/u.test(query) || query.startsWith('<:') || query.startsWith('<a:')) {{
+                    dropdown.classList.add('hidden');
+                    return;
+                }}
+                const matches = EMOJI_DATA.filter(function(item) {{ return item[0].includes(query); }}).slice(0, 8);
+                if (matches.length === 0) {{
+                    dropdown.classList.add('hidden');
+                    return;
+                }}
+                selectedIndex = -1;
+                dropdown.innerHTML = matches.map(function(item, i) {{
+                    return '<div class="emoji-option px-3 py-2 hover:bg-gray-600 cursor-pointer text-sm" data-emoji="' + item[1] + '">' +
+                        '<span class="text-lg mr-2">' + item[1] + '</span> ' + escapeHtml(item[0]) +
+                        '</div>';
+                }}).join('');
+                dropdown.classList.remove('hidden');
+            }});
+
+            dropdown.addEventListener('click', function(e) {{
+                const option = e.target.closest('.emoji-option');
+                if (option) {{
+                    input.value = option.dataset.emoji;
+                    dropdown.classList.add('hidden');
+                }}
+            }});
+
+            input.addEventListener('keydown', function(e) {{
+                const options = dropdown.querySelectorAll('.emoji-option');
+                if (options.length === 0 || dropdown.classList.contains('hidden')) return;
+                if (e.key === 'ArrowDown') {{
+                    e.preventDefault();
+                    selectedIndex = Math.min(selectedIndex + 1, options.length - 1);
+                    options.forEach(function(opt, i) {{ opt.classList.toggle('bg-gray-600', i === selectedIndex); }});
+                }} else if (e.key === 'ArrowUp') {{
+                    e.preventDefault();
+                    selectedIndex = Math.max(selectedIndex - 1, 0);
+                    options.forEach(function(opt, i) {{ opt.classList.toggle('bg-gray-600', i === selectedIndex); }});
+                }} else if (e.key === 'Enter' && selectedIndex >= 0) {{
+                    e.preventDefault();
+                    input.value = options[selectedIndex].dataset.emoji;
+                    dropdown.classList.add('hidden');
+                }} else if (e.key === 'Escape') {{
+                    dropdown.classList.add('hidden');
+                }}
+            }});
+
+            input.addEventListener('blur', function() {{
+                setTimeout(function() {{ dropdown.classList.add('hidden'); }}, 200);
+            }});
+        }}
+
+        document.querySelectorAll('.emoji-input').forEach(setupEmojiAutocomplete);
+    }})();
+    </script>
     <script>
     (function() {{
         const editColorPicker = document.getElementById('edit_color');
