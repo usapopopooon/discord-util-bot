@@ -799,9 +799,7 @@ class TestActivityCommand:
         activity_type = MagicMock()
         activity_type.value = "playing"
 
-        await cog.activity.callback(
-            cog, interaction, activity_type, "\t\n  "
-        )
+        await cog.activity.callback(cog, interaction, activity_type, "\t\n  ")
 
         msg = interaction.followup.send.call_args[0][0]
         assert "テキストを入力" in msg
