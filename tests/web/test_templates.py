@@ -906,8 +906,8 @@ class TestRolePanelCreatePage:
     def test_color_default_value(self) -> None:
         """色のデフォルト値が設定されている。"""
         result = role_panel_create_page()
-        # デフォルトカラー #3498DB (Discord Blue)
-        assert "#3498DB" in result
+        # デフォルトカラー #85E7AD (DEFAULT_EMBED_COLOR)
+        assert "#85E7AD" in result
 
     def test_color_value_preserved(self) -> None:
         """入力した色が保持される。"""
@@ -1316,7 +1316,7 @@ class TestRolePanelDetailPage:
         button_panel.use_embed = True
         button_panel.color = None
         result = role_panel_detail_page(button_panel, [])
-        assert "#3498DB" in result
+        assert "#85E7AD" in result
 
     def test_color_picker_sync_javascript(self, button_panel: RolePanel) -> None:
         """カラーピッカーとテキスト入力の同期 JavaScript が含まれる。"""

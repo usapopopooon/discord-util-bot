@@ -1583,7 +1583,7 @@ def role_panel_create_page(
 
     Args:
         use_embed: メッセージ形式 (True: Embed, False: テキスト)
-        color: Embed のカラーコード (例: "#3498DB")
+        color: Embed のカラーコード (例: "#85E7AD")
         remove_reaction: リアクション自動削除フラグ (リアクション式のみ)
         guilds_map: ギルドID -> ギルド名 のマッピング
         channels_map: ギルドID -> [(channel_id, channel_name), ...] のマッピング
@@ -1763,7 +1763,7 @@ def role_panel_create_page(
                             type="color"
                             id="embed_color"
                             name="color"
-                            value="{color if color else "#3498DB"}"
+                            value="{color if color else "#85E7AD"}"
                             class="w-12 h-10 p-1 bg-gray-700 border border-gray-600 rounded
                                    cursor-pointer focus:outline-none focus:ring-2
                                    focus:ring-blue-500"
@@ -1771,13 +1771,13 @@ def role_panel_create_page(
                         <input
                             type="text"
                             id="embed_color_text"
-                            value="{color if color else "#3498DB"}"
+                            value="{color if color else "#85E7AD"}"
                             maxlength="7"
                             pattern="#[0-9A-Fa-f]{{6}}"
                             class="w-28 px-3 py-2 bg-gray-700 border border-gray-600 rounded
                                    focus:outline-none focus:ring-2 focus:ring-blue-500
                                    text-gray-100 font-mono text-sm"
-                            placeholder="#3498DB"
+                            placeholder="#85E7AD"
                         >
                     </div>
                 </div>
@@ -2601,10 +2601,10 @@ def role_panel_detail_page(
                         <label for="edit_color" class="block text-sm text-gray-400 mb-1">Embed Color</label>
                         <div class="flex items-center gap-3">
                             <input type="color" id="edit_color" name="color"
-                                   value="{f"#{panel.color:06x}" if panel.color else "#3498DB"}"
+                                   value="{f"#{panel.color:06x}" if panel.color else "#85E7AD"}"
                                    class="w-10 h-10 rounded cursor-pointer bg-transparent border-0">
                             <input type="text" id="edit_color_text"
-                                   value="{f"#{panel.color:06x}".upper() if panel.color else "#3498DB"}"
+                                   value="{f"#{panel.color:06x}".upper() if panel.color else "#85E7AD"}"
                                    maxlength="7" pattern="#[0-9A-Fa-f]{{6}}"
                                    class="w-28 px-3 py-2 bg-gray-700 border border-gray-600 rounded
                                           focus:outline-none focus:border-blue-500
