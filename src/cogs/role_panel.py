@@ -91,10 +91,10 @@ class RolePanelCog(commands.Cog):
                 # message_id をキャッシュに追加 (reaction パネル用)
                 if panel.message_id:
                     new_ids.add(panel.message_id)
-                if panel.panel_type == "button":
+                if panel.panel_type == "button" and panel.message_id:
                     items = await get_role_panel_items(db_session, panel.id)
                     view = RolePanelView(panel.id, items)
-                    self.bot.add_view(view)
+                    self.bot.add_view(view, message_id=int(panel.message_id))
                     logger.debug("Registered role panel view for panel %d", panel.id)
                     button_count += 1
 

@@ -453,7 +453,12 @@ class TestRolePanelCog:
         from src.cogs.role_panel import RolePanelCog
 
         mock_panel = RolePanel(
-            id=1, guild_id="123", channel_id="456", panel_type="button", title="Test"
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test",
+            message_id="999",
         )
         mock_items = [
             RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮", position=0),
@@ -555,10 +560,20 @@ class TestRolePanelCog:
         from src.cogs.role_panel import RolePanelCog
 
         button_panel = RolePanel(
-            id=1, guild_id="123", channel_id="456", panel_type="button", title="B"
+            id=1,
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="B",
+            message_id="999",
         )
         reaction_panel = RolePanel(
-            id=2, guild_id="123", channel_id="456", panel_type="reaction", title="R"
+            id=2,
+            guild_id="123",
+            channel_id="456",
+            panel_type="reaction",
+            title="R",
+            message_id="888",
         )
         mock_items = [
             RolePanelItem(id=1, panel_id=1, role_id="111", emoji="🎮", position=0),
@@ -597,6 +612,7 @@ class TestRolePanelCog:
                 channel_id="456",
                 panel_type="button",
                 title=f"P{i}",
+                message_id=str(900 + i),
             )
             for i in range(1, 4)
         ]
