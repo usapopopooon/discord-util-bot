@@ -1197,6 +1197,31 @@ class AutoBanConfig(Base):
         )
 
 
+class HealthConfig(Base):
+    """ヘルスチェックのギルドごと設定テーブル。
+
+    ギルドごとにハートビート/デプロイ通知の送信先チャンネルを設定する。
+
+    Attributes:
+        guild_id (str): Discord サーバーの ID (主キー、1ギルド1設定)。
+        channel_id (str): ハートビート Embed 送信先チャンネルの ID。
+
+    Notes:
+        - テーブル名: ``health_configs``
+        - guild_id が主キー (1ギルドにつき1設定のみ)
+        - 無効化する場合はレコードを削除する
+    """
+
+    __tablename__ = "health_configs"
+
+    guild_id: Mapped[str] = mapped_column(String, primary_key=True)
+    channel_id: Mapped[str] = mapped_column(String, nullable=False)
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return f"<HealthConfig(guild_id={self.guild_id}, channel_id={self.channel_id})>"
+
+
 class AutoBanLog(Base):
     """Autoban 実行ログテーブル。
 

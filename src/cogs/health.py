@@ -18,19 +18,24 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta, timezone
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 
 from src.bot import make_activity
-from src.config import settings
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
+from src.database.models import HealthConfig
 from src.services.db_service import (
     claim_event,
     cleanup_expired_events,
+    delete_health_config,
+    get_all_health_configs,
     get_bot_activity,
+    upsert_health_config,
 )
 
 # ロガーの取得。__name__ でモジュールパスがロガー名になる
@@ -47,6 +52,13 @@ _JST = timezone(timedelta(hours=9))
 class HealthCog(commands.Cog):
     """定期的にハートビート Embed を送信する死活監視 Cog。"""
 
+    # コマンドグループ
+    health_group = app_commands.Group(
+        name="health",
+        description="ヘルスチェック通知の設定",
+        default_permissions=discord.Permissions(administrator=True),
+    )
+
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         # Bot 起動時刻を記録 (Uptime 計算用)
@@ -56,11 +68,7 @@ class HealthCog(commands.Cog):
         self._boot_jst = datetime.now(_JST)
 
     async def cog_load(self) -> None:
-        """Cog が読み込まれたときに呼ばれる。ハートビートループを開始する。
-
-        __init__ でタスクを開始するのは NG。Bot がまだ Discord に
-        接続していない状態でタスクが走ってしまう。cog_load なら安全。
-        """
+        """Cog が読み込まれたときに呼ばれる。ハートビートループを開始する。"""
         self._heartbeat.start()
 
     async def cog_unload(self) -> None:
@@ -68,40 +76,95 @@ class HealthCog(commands.Cog):
         self._heartbeat.cancel()
 
     # ------------------------------------------------------------------
+    # Slash commands
+    # ------------------------------------------------------------------
+
+    @health_group.command(
+        name="setup", description="このチャンネルにヘルスチェック通知を設定"
+    )
+    async def health_setup(self, interaction: discord.Interaction) -> None:
+        """現在のチャンネルをヘルスチェック通知先として設定する。"""
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "このコマンドはサーバー内でのみ使用できます。", ephemeral=True
+            )
+            return
+
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.HTTPException, discord.InteractionResponded):
+            return
+
+        guild_id = str(interaction.guild.id)
+        channel_id = str(interaction.channel_id)
+
+        async with async_session() as session:
+            await upsert_health_config(session, guild_id, channel_id)
+
+        embed = discord.Embed(
+            title="ヘルスチェック通知を設定しました",
+            description=f"通知チャンネル: <#{channel_id}>",
+            color=DEFAULT_EMBED_COLOR,
+        )
+        await interaction.followup.send(embed=embed)
+
+    @health_group.command(name="disable", description="ヘルスチェック通知を停止する")
+    async def health_disable(self, interaction: discord.Interaction) -> None:
+        """ヘルスチェック通知を停止する。"""
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "このコマンドはサーバー内でのみ使用できます。", ephemeral=True
+            )
+            return
+
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.HTTPException, discord.InteractionResponded):
+            return
+
+        guild_id = str(interaction.guild.id)
+
+        async with async_session() as session:
+            deleted = await delete_health_config(session, guild_id)
+
+        if deleted:
+            embed = discord.Embed(
+                title="ヘルスチェック通知を停止しました",
+                color=DEFAULT_EMBED_COLOR,
+            )
+        else:
+            embed = discord.Embed(
+                title="ヘルスチェック通知は設定されていません",
+                color=DEFAULT_EMBED_COLOR,
+            )
+        await interaction.followup.send(embed=embed)
+
+    # ------------------------------------------------------------------
     # Heartbeat loop
     # ------------------------------------------------------------------
 
     @tasks.loop(minutes=_HEARTBEAT_MINUTES)
     async def _heartbeat(self) -> None:
-        """10分ごとに実行されるハートビート処理。
-
-        @tasks.loop(minutes=10) を付けるだけで、自動的に繰り返し実行される。
-        seconds, hours でも指定可能。
-        """
+        """10分ごとに実行されるハートビート処理。"""
         # --- Uptime の計算 ---
-        # 現在時刻 - 起動時刻 = 稼働秒数
         uptime_sec = int(time.monotonic() - self._start_time)
-        # divmod: 割り算の商と余りを同時に取得する Python 組み込み関数
-        hours, remainder = divmod(uptime_sec, 3600)  # 3600秒 = 1時間
-        minutes, seconds = divmod(remainder, 60)  # 60秒 = 1分
+        hours, remainder = divmod(uptime_sec, 3600)
+        minutes, seconds = divmod(remainder, 60)
         uptime_str = f"{hours}h {minutes}m {seconds}s"
 
         # --- Bot の状態を取得 ---
-        guild_count = len(self.bot.guilds)  # 参加しているサーバー数
-        # bot.latency: Discord WebSocket の往復遅延 (秒単位)
-        latency_ms = round(self.bot.latency * 1000)  # ミリ秒に変換
+        guild_count = len(self.bot.guilds)
+        latency_ms = round(self.bot.latency * 1000)
 
         # --- ステータスの判定 ---
-        # レイテンシに基づいて健全性を判定する
         if latency_ms < 200:
-            status = "Healthy"  # 正常 (200ms 未満)
+            status = "Healthy"
         elif latency_ms < 500:
-            status = "Degraded"  # 低下 (200〜500ms)
+            status = "Degraded"
         else:
-            status = "Unhealthy"  # 異常 (500ms 以上)
+            status = "Unhealthy"
 
         # --- ログ出力 ---
-        # Heroku logs や Datadog でも確認できるようにログに出力
         logger.info(
             "[Heartbeat] %s | uptime=%s latency=%dms guilds=%d",
             status,
@@ -111,8 +174,14 @@ class HealthCog(commands.Cog):
         )
 
         # --- Discord チャンネルに Embed を送信 (マルチインスタンス重複防止) ---
-        # health_channel_id が 0 (未設定) の場合はスキップ
-        if settings.health_channel_id:
+        try:
+            async with async_session() as session:
+                health_configs = await get_all_health_configs(session)
+        except Exception:
+            logger.exception("Failed to fetch health configs")
+            health_configs = []
+
+        if health_configs:
             # 10分バケットで claim — 同一バケット内では1インスタンスのみ送信
             # フェイルオープン: DB エラー時は送信する (重複より欠落の方が問題)
             claimed = True
@@ -127,33 +196,13 @@ class HealthCog(commands.Cog):
             if not claimed:
                 logger.debug("Heartbeat already claimed by another instance")
             else:
-                channel = self.bot.get_channel(settings.health_channel_id)
-                if channel is None:
-                    logger.warning(
-                        "Health channel %d not found in cache",
-                        settings.health_channel_id,
-                    )
-                elif not isinstance(channel, discord.TextChannel):
-                    logger.warning(
-                        "Health channel %d is not a TextChannel (type=%s)",
-                        settings.health_channel_id,
-                        type(channel).__name__,
-                    )
-                else:
-                    embed = self._build_embed(
-                        status=status,
-                        uptime_str=uptime_str,
-                        latency_ms=latency_ms,
-                        guild_count=guild_count,
-                    )
-                    try:
-                        await channel.send(embed=embed)
-                    except discord.HTTPException as e:
-                        logger.error(
-                            "Failed to send heartbeat to channel %d: %s",
-                            settings.health_channel_id,
-                            e,
-                        )
+                embed = self._build_embed(
+                    status=status,
+                    uptime_str=uptime_str,
+                    latency_ms=latency_ms,
+                    guild_count=guild_count,
+                )
+                await self._send_to_channels(health_configs, embed, "heartbeat")
 
         # --- 重複排除テーブルのクリーンアップ ---
         try:
@@ -205,16 +254,19 @@ class HealthCog(commands.Cog):
 
         wait_until_ready() で Bot の Discord 接続完了を待つ。
         接続完了後、デプロイ (起動) 通知を送信する。
-        tasks.loop は before_loop 完了後に即座に初回実行されるので、
-        ここでタスク本体を手動で呼ぶと二重実行になるので注意。
         """
         await self.bot.wait_until_ready()
 
         # --- デプロイ (起動) 通知 (マルチインスタンス重複防止) ---
-        if settings.health_channel_id:
+        try:
+            async with async_session() as session:
+                health_configs = await get_all_health_configs(session)
+        except Exception:
+            logger.exception("Failed to fetch health configs for deploy notification")
+            health_configs = []
+
+        if health_configs:
             # Boot 時刻の分単位でユニークキーを生成
-            # ローリングデプロイで新旧インスタンスが同時起動しても1通だけ送信
-            # フェイルオープン: DB エラー時は送信する
             claimed = True
             try:
                 boot_key = self._boot_jst.strftime("%Y%m%d%H%M")
@@ -227,31 +279,40 @@ class HealthCog(commands.Cog):
             if not claimed:
                 logger.info("Deploy notification already sent by another instance")
             else:
-                channel = self.bot.get_channel(settings.health_channel_id)
-                if channel is None:
-                    logger.warning(
-                        "Health channel %d not found for deploy notification",
-                        settings.health_channel_id,
-                    )
-                elif isinstance(channel, discord.TextChannel):
-                    embed = self._build_deploy_embed()
-                    try:
-                        await channel.send(embed=embed)
-                        logger.info(
-                            "Deploy notification sent to channel %d",
-                            settings.health_channel_id,
-                        )
-                    except discord.HTTPException as e:
-                        logger.error(
-                            "Failed to send deploy notification to channel %d: %s",
-                            settings.health_channel_id,
-                            e,
-                        )
-                else:
-                    logger.warning(
-                        "Health channel %d is not a TextChannel"
-                        " for deploy notification",
-                        settings.health_channel_id,
+                embed = self._build_deploy_embed()
+                await self._send_to_channels(health_configs, embed, "deploy")
+
+    # ------------------------------------------------------------------
+    # Channel send helper
+    # ------------------------------------------------------------------
+
+    async def _send_to_channels(
+        self,
+        configs: Sequence[HealthConfig],
+        embed: discord.Embed,
+        label: str,
+    ) -> None:
+        """設定済みの全チャンネルに Embed を送信する。"""
+        for config in configs:
+            channel_id = int(config.channel_id)
+            channel = self.bot.get_channel(channel_id)
+            if channel is None:
+                logger.warning("Health channel %d not found in cache", channel_id)
+            elif not isinstance(channel, discord.TextChannel):
+                logger.warning(
+                    "Health channel %d is not a TextChannel (type=%s)",
+                    channel_id,
+                    type(channel).__name__,
+                )
+            else:
+                try:
+                    await channel.send(embed=embed)
+                except discord.HTTPException as e:
+                    logger.error(
+                        "Failed to send %s to channel %d: %s",
+                        label,
+                        channel_id,
+                        e,
                     )
 
     # ------------------------------------------------------------------
@@ -259,11 +320,7 @@ class HealthCog(commands.Cog):
     # ------------------------------------------------------------------
 
     def _build_deploy_embed(self) -> discord.Embed:
-        """デプロイ (起動) 通知用の Embed を組み立てる。
-
-        ハートビート Embed (緑/黄/赤) と区別するため、青色を使用する。
-        Bot 起動時に1回だけ送信される。
-        """
+        """デプロイ (起動) 通知用の Embed を組み立てる。"""
         guild_count = len(self.bot.guilds)
         embed = discord.Embed(
             title="\U0001f680 Deploy Complete",
@@ -286,14 +343,7 @@ class HealthCog(commands.Cog):
         latency_ms: int,
         guild_count: int,
     ) -> discord.Embed:
-        """ハートビート用の Embed を組み立てる。
-
-        レイテンシに応じて色が変わる:
-          - 緑 (green): 200ms 未満 — 正常
-          - 黄 (yellow): 200〜500ms — 低下
-          - 赤 (red): 500ms 以上 — 異常
-        """
-        # Embed の色を決定
+        """ハートビート用の Embed を組み立てる。"""
         if latency_ms < 200:
             color = discord.Color.green()
         elif latency_ms < 500:
@@ -301,20 +351,14 @@ class HealthCog(commands.Cog):
         else:
             color = discord.Color.red()
 
-        # Embed を組み立てる
         embed = discord.Embed(
             title=f"Heartbeat — {status}",
             color=color,
-            # timestamp: Embed の右下に表示される時刻。
-            # UTC で渡すと Discord がユーザーのローカル時刻に変換してくれる。
             timestamp=datetime.now(UTC),
         )
-        # add_field: Embed にフィールド (名前: 値) を追加
-        # inline=True で横並びに表示される
         embed.add_field(name="Uptime", value=uptime_str, inline=True)
         embed.add_field(name="Latency", value=f"{latency_ms}ms", inline=True)
         embed.add_field(name="Guilds", value=str(guild_count), inline=True)
-        # set_footer: Embed の最下部に小さいテキストを表示
         embed.set_footer(text=f"Boot: {self._boot_jst:%Y-%m-%d %H:%M JST}")
         return embed
 

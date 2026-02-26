@@ -34,6 +34,7 @@ from src.web.templates import (
     dashboard_page,
     email_change_page,
     forgot_password_page,
+    health_settings_page,
     joinrole_page,
     lobbies_list_page,
     login_page,
@@ -3638,3 +3639,87 @@ class TestChannelLookupBranches:
             channels_map=channels_map,
         )
         assert "#ticket-ch" in result
+
+
+# ===========================================================================
+# Health Settings ページ
+# ===========================================================================
+
+
+class TestHealthSettingsPage:
+    """health_settings_page テンプレートのテスト。"""
+
+    def test_default_page_elements(self) -> None:
+        """デフォルトページにフォーム、セレクト、ボタン、JS等が含まれる。"""
+        result = health_settings_page()
+        # フォーム
+        assert 'action="/health/settings"' in result
+        assert 'method="POST"' in result
+        # ギルド選択
+        assert 'name="guild_id"' in result
+        assert "Select server..." in result
+        # チャンネル選択
+        assert 'name="channel_id"' in result
+        assert "Select channel..." in result
+        # JS
+        assert "updateHealthChannel" in result
+        # ボタン
+        assert "Save Settings" in result
+        # パンくず
+        assert "Dashboard" in result
+        assert "Health Monitor" in result
+        # ラベル
+        assert "Notification Channel" in result
+
+    def test_contains_guild_options(self) -> None:
+        """ギルドオプションが表示される。"""
+        result = health_settings_page(
+            guilds_map={"123": "Test Server", "456": "Other Server"}
+        )
+        assert "Test Server" in result
+        assert "Other Server" in result
+        assert "123" in result
+        assert "456" in result
+
+    def test_contains_channels_js_data(self) -> None:
+        """チャンネル JS データが含まれる。"""
+        result = health_settings_page(
+            channels_map={"123": [("ch1", "general"), ("ch2", "health-log")]}
+        )
+        assert "healthChannelsData" in result
+        assert "general" in result
+        assert "health-log" in result
+
+    def test_contains_configs_js_data(self) -> None:
+        """既存設定の JS データが含まれる。"""
+        result = health_settings_page(configs_map={"123": "ch1", "456": "ch2"})
+        assert "healthConfigsData" in result
+
+    def test_configs_table_displayed(self) -> None:
+        """既存設定がテーブルに表示される。"""
+        result = health_settings_page(
+            guilds_map={"123": "Test Server"},
+            channels_map={"123": [("ch1", "health-ch")]},
+            configs_map={"123": "ch1"},
+        )
+        assert "Test Server" in result
+        assert "#health-ch" in result
+        assert "Configured Guilds" in result
+        assert "Delete" in result
+
+    def test_no_configs_table_when_empty(self) -> None:
+        """設定がない場合はテーブルが表示されない。"""
+        result = health_settings_page()
+        assert "Configured Guilds" not in result
+
+    def test_csrf_field(self) -> None:
+        """CSRF フィールドが含まれる。"""
+        result = health_settings_page(csrf_token="test_csrf_token")
+        assert "test_csrf_token" in result
+
+    def test_delete_form_action(self) -> None:
+        """削除フォームのアクションが正しい。"""
+        result = health_settings_page(
+            configs_map={"123": "ch1"},
+        )
+        assert '/health/settings/123/delete"' in result

@@ -89,29 +89,6 @@ class TestAsyncDatabaseUrl:
         assert "my_long_db_name" in s.async_database_url
 
 
-class TestHealthChannelId:
-    """health_channel_id フィールドのテスト。"""
-
-    def test_default_is_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """デフォルトは 0。"""
-        monkeypatch.delenv("HEALTH_CHANNEL_ID", raising=False)
-        s = Settings(
-            discord_token="test",
-            database_url="postgresql+asyncpg://x@y/z",
-            _env_file=None,  # type: ignore[call-arg]
-        )
-        assert s.health_channel_id == 0
-
-    def test_custom_channel_id(self) -> None:
-        """カスタム値を設定できる。"""
-        s = Settings(
-            discord_token="test",
-            database_url="postgresql+asyncpg://x@y/z",
-            health_channel_id=123456789,
-        )
-        assert s.health_channel_id == 123456789
-
-
 class TestSettingsValidation:
     """Settings バリデーションのテスト。"""
 
@@ -128,11 +105,9 @@ class TestSettingsValidation:
         s = Settings(
             discord_token="tok",
             database_url="postgresql+asyncpg://u@h/d",
-            health_channel_id=42,
         )
         assert s.discord_token == "tok"
         assert s.database_url == "postgresql+asyncpg://u@h/d"
-        assert s.health_channel_id == 42
 
 
 class TestTimezoneOffset:

@@ -56,6 +56,7 @@ from src.database.models import (
     DiscordChannel,
     DiscordGuild,
     DiscordRole,
+    HealthConfig,
     JoinRoleAssignment,
     JoinRoleConfig,
     Lobby,
@@ -2910,3 +2911,54 @@ async def upsert_bot_activity(
         session.add(existing)
     await session.commit()
     return existing
+
+
+# =============================================================================
+# HealthConfig (ヘルスチェック設定) 操作
+# =============================================================================
+
+
+async def get_health_config(
+    session: AsyncSession, guild_id: str
+) -> HealthConfig | None:
+    """ギルドのヘルスチェック設定を取得する。"""
+    result = await session.execute(
+        select(HealthConfig).where(HealthConfig.guild_id == guild_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_all_health_configs(
+    session: AsyncSession,
+) -> list[HealthConfig]:
+    """全ヘルスチェック設定を取得する。"""
+    result = await session.execute(select(HealthConfig))
+    return list(result.scalars().all())
+
+
+async def upsert_health_config(
+    session: AsyncSession,
+    guild_id: str,
+    channel_id: str,
+) -> HealthConfig:
+    """ヘルスチェック設定を作成または更新する。"""
+    existing = await get_health_config(session, guild_id)
+    if existing:
+        existing.channel_id = channel_id
+        await session.commit()
+        return existing
+    config = HealthConfig(guild_id=guild_id, channel_id=channel_id)
+    session.add(config)
+    await session.commit()
+    await session.refresh(config)
+    return config
+
+
+async def delete_health_config(session: AsyncSession, guild_id: str) -> bool:
+    """ヘルスチェック設定を削除する。"""
+    existing = await get_health_config(session, guild_id)
+    if existing:
+        await session.delete(existing)
+        await session.commit()
+        return True
+    return False

@@ -19,8 +19,6 @@ Examples:
         # .env ファイルまたは環境変数で設定
         DISCORD_TOKEN=your-bot-token
         DATABASE_URL=postgresql://user:pass@localhost/db
-        HEALTH_CHANNEL_ID=1234567890
-
 See Also:
     - pydantic-settings: https://docs.pydantic.dev/latest/concepts/pydantic_settings/
     - src.constants: デフォルト値の定義
@@ -46,8 +44,6 @@ class Settings(BaseSettings):
             デフォルトはローカル PostgreSQL。
         admin_email (str): Web 管理画面の初期管理者メールアドレス。
         admin_password (str): Web 管理画面の初期管理者パスワード。
-        health_channel_id (int): ヘルスチェック Embed を送信するチャンネル ID。
-            0 の場合は Discord への送信をスキップ。
         bump_channel_id (int): bump リマインダー用チャンネル ID。
             0 の場合は機能無効。
         smtp_host (str): SMTP サーバーのホスト名。
@@ -132,10 +128,6 @@ class Settings(BaseSettings):
 
     # Web 管理画面の初期管理者パスワード
     admin_password: str = "changeme"
-
-    # ヘルスチェック Embed を送信する Discord チャンネルの ID
-    # 0 の場合は Discord への送信をスキップし、ログ出力のみ行う
-    health_channel_id: int = 0
 
     # bump リマインダー用チャンネルの ID
     # 0 の場合は bump リマインダー機能を無効化

@@ -440,6 +440,10 @@ def dashboard_page(email: str = "Admin") -> str:
                 <h2 class="text-lg font-semibold mb-2">Bot Activity</h2>
                 <p class="text-gray-400 text-sm">Change bot presence status</p>
             </a>
+            <a href="/health/settings" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
+                <h2 class="text-lg font-semibold mb-2">Health Monitor</h2>
+                <p class="text-gray-400 text-sm">Configure heartbeat notification channels</p>
+            </a>
         </div>
     </div>
     """
@@ -5036,3 +5040,129 @@ def activity_page(
     </div>
     """
     return _base("Bot Activity", content)
+
+
+def health_settings_page(
+    guilds_map: dict[str, str] | None = None,
+    channels_map: dict[str, list[tuple[str, str]]] | None = None,
+    configs_map: dict[str, str] | None = None,
+    csrf_token: str = "",
+) -> str:
+    """Health monitor settings page template."""
+    import json as json_mod
+
+    if guilds_map is None:
+        guilds_map = {}
+    if channels_map is None:
+        channels_map = {}
+    if configs_map is None:
+        configs_map = {}
+
+    guild_options = ""
+    for gid, gname in sorted(guilds_map.items(), key=lambda x: x[1]):
+        guild_options += (
+            f'<option value="{escape(gid)}">{escape(gname)} ({escape(gid)})</option>'
+        )
+
+    channels_data: dict[str, list[dict[str, str]]] = {}
+    for gid, ch_list in channels_map.items():
+        channels_data[gid] = [{"id": cid, "name": cname} for cid, cname in ch_list]
+    channels_json = json_mod.dumps(channels_data)
+    configs_json = json_mod.dumps(configs_map)
+
+    # 既存設定テーブル
+    configs_rows = ""
+    for gid, ch_id in configs_map.items():
+        gname = guilds_map.get(gid, gid)
+        ch_name = ch_id
+        for cid, cname in channels_map.get(gid, []):
+            if cid == ch_id:
+                ch_name = f"#{cname}"
+                break
+        configs_rows += f"""
+        <tr class="border-b border-gray-700">
+            <td class="py-3 px-4">{escape(gname)}</td>
+            <td class="py-3 px-4">{escape(ch_name)}</td>
+            <td class="py-3 px-4">
+                <form method="POST" action="/health/settings/{escape(gid)}/delete" class="inline">
+                    {_csrf_field(csrf_token)}
+                    <button type="submit" class="text-red-400 hover:text-red-300">Delete</button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    configs_table = ""
+    if configs_rows:
+        configs_table = f"""
+        <div class="mb-8">
+            <h2 class="text-lg font-semibold mb-4">Configured Guilds</h2>
+            <table class="w-full">
+                <thead>
+                    <tr class="text-left text-gray-400 border-b border-gray-600">
+                        <th class="py-2 px-4">Server</th>
+                        <th class="py-2 px-4">Channel</th>
+                        <th class="py-2 px-4">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>{configs_rows}</tbody>
+            </table>
+        </div>
+        """
+
+    content = f"""
+    <div class="p-6">
+        {_nav("Health Monitor", breadcrumbs=[("Dashboard", "/dashboard"), ("Health Monitor", None)])}
+        {configs_table}
+        <div class="max-w-2xl">
+            <h2 class="text-lg font-semibold mb-4">Add / Update Configuration</h2>
+            <form method="POST" action="/health/settings" class="space-y-6">
+                {_csrf_field(csrf_token)}
+                <div>
+                    <label class="block text-sm font-medium mb-1">Server</label>
+                    <select name="guild_id" required id="healthGuildSelect"
+                            onchange="updateHealthChannel()"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">Select server...</option>
+                        {guild_options}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Notification Channel
+                        <span class="text-gray-400 font-normal">(Heartbeat / Deploy destination)</span>
+                    </label>
+                    <select name="channel_id" id="healthChannelSelect" required
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                        <option value="">Select channel...</option>
+                    </select>
+                </div>
+                <button type="submit"
+                        class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded transition-colors">
+                    Save Settings
+                </button>
+            </form>
+        </div>
+    </div>
+    <script>
+    const healthChannelsData = {channels_json};
+    const healthConfigsData = {configs_json};
+    function updateHealthChannel() {{
+        const guildId = document.getElementById('healthGuildSelect').value;
+        const chSelect = document.getElementById('healthChannelSelect');
+        chSelect.innerHTML = '<option value="">Select channel...</option>';
+        if (healthChannelsData[guildId]) {{
+            healthChannelsData[guildId].forEach(ch => {{
+                const opt = document.createElement('option');
+                opt.value = ch.id;
+                opt.textContent = '#' + ch.name;
+                chSelect.appendChild(opt);
+            }});
+        }}
+        if (healthConfigsData[guildId]) {{
+            chSelect.value = healthConfigsData[guildId];
+        }}
+    }}
+    </script>
+    """
+    return _base("Health Monitor", content)

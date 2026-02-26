@@ -28,6 +28,22 @@ def _make_cog(*, latency: float = 0.05, guild_count: int = 3) -> HealthCog:
     return HealthCog(bot)
 
 
+def _mock_config(channel_id: str = "12345") -> MagicMock:
+    """DB の HealthConfig を模したモックを返す。"""
+    config = MagicMock()
+    config.channel_id = channel_id
+    return config
+
+
+def _mock_session_factory() -> tuple[MagicMock, AsyncMock]:
+    """async_session のモックファクトリとセッションを返す。"""
+    mock_session = AsyncMock()
+    mock_factory = MagicMock()
+    mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    return mock_factory, mock_session
+
+
 # ---------------------------------------------------------------------------
 # _build_embed テスト
 # ---------------------------------------------------------------------------
@@ -106,29 +122,70 @@ class TestHeartbeat:
     """Tests for _heartbeat loop body."""
 
     async def test_sends_embed_when_channel_configured(self) -> None:
-        """health_channel_id が設定されていれば Embed を送信する。"""
+        """DB にヘルス設定があれば Embed を送信する。"""
         cog = _make_cog(latency=0.1, guild_count=2)
 
         mock_channel = MagicMock(spec=discord.TextChannel)
         mock_channel.send = AsyncMock()
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
-        with patch("src.cogs.health.settings") as mock_settings:
-            mock_settings.health_channel_id = 12345
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("12345")],
+            ),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
             await cog._heartbeat()  # type: ignore[misc]
 
             mock_channel.send.assert_awaited_once()
             kwargs = mock_channel.send.call_args[1]
             assert isinstance(kwargs["embed"], discord.Embed)
 
-    async def test_skips_send_when_channel_not_configured(self) -> None:
-        """health_channel_id が 0 なら送信しない。"""
+    async def test_skips_send_when_no_configs(self) -> None:
+        """DB にヘルス設定がなければ送信しない。"""
         cog = _make_cog()
 
         cog.bot.get_channel = MagicMock(return_value=None)
 
-        with patch("src.cogs.health.settings") as mock_settings:
-            mock_settings.health_channel_id = 0
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
             await cog._heartbeat()  # type: ignore[misc]
 
             cog.bot.get_channel.assert_not_called()
@@ -139,8 +196,31 @@ class TestHeartbeat:
 
         cog.bot.get_channel = MagicMock(return_value=None)
 
-        with patch("src.cogs.health.settings") as mock_settings:
-            mock_settings.health_channel_id = 99999
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("99999")],
+            ),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
             await cog._heartbeat()  # type: ignore[misc]
 
             cog.bot.get_channel.assert_called_once_with(99999)
@@ -153,8 +233,31 @@ class TestHeartbeat:
         voice_channel.send = AsyncMock()
         cog.bot.get_channel = MagicMock(return_value=voice_channel)
 
-        with patch("src.cogs.health.settings") as mock_settings:
-            mock_settings.health_channel_id = 12345
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("12345")],
+            ),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
             await cog._heartbeat()  # type: ignore[misc]
 
             # VoiceChannel なので send は呼ばれない
@@ -168,8 +271,31 @@ class TestHeartbeat:
         mock_channel.send = AsyncMock()
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
-        with patch("src.cogs.health.settings") as mock_settings:
-            mock_settings.health_channel_id = 1
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config()],
+            ),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
             await cog._heartbeat()  # type: ignore[misc]
 
             embed = mock_channel.send.call_args[1]["embed"]
@@ -183,8 +309,31 @@ class TestHeartbeat:
         mock_channel.send = AsyncMock()
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
-        with patch("src.cogs.health.settings") as mock_settings:
-            mock_settings.health_channel_id = 1
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config()],
+            ),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
             await cog._heartbeat()  # type: ignore[misc]
 
             embed = mock_channel.send.call_args[1]["embed"]
@@ -198,8 +347,31 @@ class TestHeartbeat:
         mock_channel.send = AsyncMock()
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
-        with patch("src.cogs.health.settings") as mock_settings:
-            mock_settings.health_channel_id = 1
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config()],
+            ),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
             await cog._heartbeat()  # type: ignore[misc]
 
             embed = mock_channel.send.call_args[1]["embed"]
@@ -241,35 +413,64 @@ class TestBeforeHeartbeat:
         """ループ開始前に wait_until_ready が呼ばれる。"""
         cog = _make_cog()
 
-        with patch("src.cogs.health.settings") as mock_settings:
-            mock_settings.health_channel_id = 0
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
             await cog._before_heartbeat()
 
         cog.bot.wait_until_ready.assert_awaited_once()
 
     async def test_sends_deploy_notification(self) -> None:
-        """health_channel_id 設定時にデプロイ Embed が送信される。"""
+        """DB にヘルス設定がある場合にデプロイ Embed が送信される。"""
         cog = _make_cog(guild_count=2)
 
         mock_channel = MagicMock(spec=discord.TextChannel)
         mock_channel.send = AsyncMock()
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
-        with patch("src.cogs.health.settings") as mock_settings:
-            mock_settings.health_channel_id = 12345
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("12345")],
+            ),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+        ):
             await cog._before_heartbeat()
 
         mock_channel.send.assert_awaited_once()
         embed = mock_channel.send.call_args[1]["embed"]
         assert "Deploy" in (embed.title or "")
 
-    async def test_deploy_skipped_when_no_channel(self) -> None:
-        """channel_id=0 の場合デプロイ通知はスキップ。"""
+    async def test_deploy_skipped_when_no_configs(self) -> None:
+        """DB にヘルス設定がない場合デプロイ通知はスキップ。"""
         cog = _make_cog()
         cog.bot.get_channel = MagicMock()
 
-        with patch("src.cogs.health.settings") as mock_settings:
-            mock_settings.health_channel_id = 0
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
             await cog._before_heartbeat()
 
         cog.bot.get_channel.assert_not_called()
@@ -389,16 +590,32 @@ class TestHeartbeatLogging:
         """ハートビート時にログが出力される。"""
         cog = _make_cog(latency=0.05, guild_count=2)
 
+        mock_factory, mock_session = _mock_session_factory()
+
         with (
-            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
             patch("src.cogs.health.logger") as mock_logger,
         ):
-            mock_settings.health_channel_id = 0
             await cog._heartbeat()  # type: ignore[misc]
 
-            mock_logger.info.assert_called_once()
-            log_msg = mock_logger.info.call_args[0][0]
-            assert "Heartbeat" in log_msg
+            mock_logger.info.assert_called()
+            log_calls = [call[0][0] for call in mock_logger.info.call_args_list]
+            assert any("Heartbeat" in msg for msg in log_calls)
 
 
 # ---------------------------------------------------------------------------
@@ -419,11 +636,32 @@ class TestHeartbeatHttpException:
         )
         cog.bot.get_channel = MagicMock(return_value=channel)
 
+        mock_factory, mock_session = _mock_session_factory()
+
         with (
-            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("123456789")],
+            ),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
             patch("src.cogs.health.logger") as mock_logger,
         ):
-            mock_settings.health_channel_id = 123456789
             await cog._heartbeat()
 
             # エラーログが出力される
@@ -438,11 +676,22 @@ class TestBeforeHeartbeatBranches:
         cog = _make_cog()
         cog.bot.get_channel = MagicMock(return_value=None)
 
+        mock_factory, mock_session = _mock_session_factory()
+
         with (
-            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("123456789")],
+            ),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             patch("src.cogs.health.logger") as mock_logger,
         ):
-            mock_settings.health_channel_id = 123456789
             await cog._before_heartbeat()
 
             mock_logger.warning.assert_called()
@@ -454,11 +703,22 @@ class TestBeforeHeartbeatBranches:
         channel = MagicMock(spec=discord.VoiceChannel)
         cog.bot.get_channel = MagicMock(return_value=channel)
 
+        mock_factory, mock_session = _mock_session_factory()
+
         with (
-            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("123456789")],
+            ),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             patch("src.cogs.health.logger") as mock_logger,
         ):
-            mock_settings.health_channel_id = 123456789
             await cog._before_heartbeat()
 
             mock_logger.warning.assert_called()
@@ -472,11 +732,22 @@ class TestBeforeHeartbeatBranches:
         )
         cog.bot.get_channel = MagicMock(return_value=channel)
 
+        mock_factory, mock_session = _mock_session_factory()
+
         with (
-            patch("src.cogs.health.settings") as mock_settings,
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("123456789")],
+            ),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
             patch("src.cogs.health.logger") as mock_logger,
         ):
-            mock_settings.health_channel_id = 123456789
             await cog._before_heartbeat()
 
             mock_logger.error.assert_called()
@@ -489,44 +760,54 @@ class TestHeartbeatEventCleanup:
         """ハートビートで重複排除テーブルのクリーンアップが呼ばれる。"""
         cog = _make_cog()
 
-        mock_session = AsyncMock()
-        mock_factory = MagicMock()
-        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_factory, mock_session = _mock_session_factory()
 
         with (
-            patch("src.cogs.health.settings") as mock_settings,
             patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch(
                 "src.cogs.health.cleanup_expired_events",
                 new_callable=AsyncMock,
                 return_value=5,
             ) as mock_cleanup,
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
-            mock_settings.health_channel_id = 0
             await cog._heartbeat()
 
-        mock_cleanup.assert_awaited_once_with(mock_session)
+        mock_cleanup.assert_awaited_once()
 
     async def test_cleanup_exception_does_not_crash_heartbeat(self) -> None:
         """クリーンアップが例外を投げてもハートビートは止まらない。"""
         cog = _make_cog()
 
-        mock_session = AsyncMock()
-        mock_factory = MagicMock()
-        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_factory, mock_session = _mock_session_factory()
 
         with (
-            patch("src.cogs.health.settings") as mock_settings,
             patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch(
                 "src.cogs.health.cleanup_expired_events",
                 new_callable=AsyncMock,
                 side_effect=Exception("DB error"),
             ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
-            mock_settings.health_channel_id = 0
             # 例外が伝搬しないことを確認
             await cog._heartbeat()
 
@@ -547,16 +828,17 @@ class TestHeartbeatActivitySync:
         mock_bot_activity.activity_type = "watching"
         mock_bot_activity.activity_text = "新しいテキスト"
 
-        mock_session = AsyncMock()
-        mock_factory = MagicMock()
-        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_factory, mock_session = _mock_session_factory()
 
         mock_new_activity = MagicMock()
 
         with (
-            patch("src.cogs.health.settings") as mock_settings,
             patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch(
                 "src.cogs.health.cleanup_expired_events",
                 new_callable=AsyncMock,
@@ -572,7 +854,6 @@ class TestHeartbeatActivitySync:
                 return_value=mock_new_activity,
             ) as mock_make,
         ):
-            mock_settings.health_channel_id = 0
             await cog._heartbeat()
 
         mock_make.assert_called_once_with("watching", "新しいテキスト")
@@ -590,14 +871,15 @@ class TestHeartbeatActivitySync:
         mock_bot_activity.activity_type = "playing"
         mock_bot_activity.activity_text = "テスト"
 
-        mock_session = AsyncMock()
-        mock_factory = MagicMock()
-        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_factory, mock_session = _mock_session_factory()
 
         with (
-            patch("src.cogs.health.settings") as mock_settings,
             patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch(
                 "src.cogs.health.cleanup_expired_events",
                 new_callable=AsyncMock,
@@ -609,7 +891,6 @@ class TestHeartbeatActivitySync:
                 return_value=mock_bot_activity,
             ),
         ):
-            mock_settings.health_channel_id = 0
             await cog._heartbeat()
 
         cog.bot.change_presence.assert_not_awaited()
@@ -619,14 +900,15 @@ class TestHeartbeatActivitySync:
         cog = _make_cog()
         cog.bot.change_presence = AsyncMock()
 
-        mock_session = AsyncMock()
-        mock_factory = MagicMock()
-        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_factory, mock_session = _mock_session_factory()
 
         with (
-            patch("src.cogs.health.settings") as mock_settings,
             patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch(
                 "src.cogs.health.cleanup_expired_events",
                 new_callable=AsyncMock,
@@ -638,7 +920,6 @@ class TestHeartbeatActivitySync:
                 return_value=None,
             ),
         ):
-            mock_settings.health_channel_id = 0
             await cog._heartbeat()
 
         cog.bot.change_presence.assert_not_awaited()
@@ -647,14 +928,15 @@ class TestHeartbeatActivitySync:
         """アクティビティ同期で例外が発生してもハートビートは止まらない。"""
         cog = _make_cog()
 
-        mock_session = AsyncMock()
-        mock_factory = MagicMock()
-        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_factory, mock_session = _mock_session_factory()
 
         with (
-            patch("src.cogs.health.settings") as mock_settings,
             patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch(
                 "src.cogs.health.cleanup_expired_events",
                 new_callable=AsyncMock,
@@ -666,7 +948,6 @@ class TestHeartbeatActivitySync:
                 side_effect=Exception("DB error"),
             ),
         ):
-            mock_settings.health_channel_id = 0
             # 例外が伝搬しないことを確認
             await cog._heartbeat()
 
@@ -682,14 +963,15 @@ class TestHeartbeatActivitySync:
         mock_bot_activity.activity_type = "listening"
         mock_bot_activity.activity_text = "同じテキスト"
 
-        mock_session = AsyncMock()
-        mock_factory = MagicMock()
-        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_factory, mock_session = _mock_session_factory()
 
         with (
-            patch("src.cogs.health.settings") as mock_settings,
             patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
             patch(
                 "src.cogs.health.cleanup_expired_events",
                 new_callable=AsyncMock,
@@ -702,7 +984,6 @@ class TestHeartbeatActivitySync:
             ),
             patch("src.cogs.health.make_activity", return_value=MagicMock()),
         ):
-            mock_settings.health_channel_id = 0
             await cog._heartbeat()
 
         cog.bot.change_presence.assert_awaited_once()
@@ -719,14 +1000,15 @@ class TestHeartbeatDeduplication:
         mock_channel.send = AsyncMock()
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
-        mock_session = AsyncMock()
-        mock_factory = MagicMock()
-        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_factory, mock_session = _mock_session_factory()
 
         with (
-            patch("src.cogs.health.settings") as mock_settings,
             patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("12345")],
+            ),
             patch(
                 "src.cogs.health.claim_event",
                 new_callable=AsyncMock,
@@ -743,7 +1025,6 @@ class TestHeartbeatDeduplication:
                 return_value=None,
             ),
         ):
-            mock_settings.health_channel_id = 12345
             await cog._heartbeat()
 
         # claim 失敗なので送信されない
@@ -757,14 +1038,15 @@ class TestHeartbeatDeduplication:
         mock_channel.send = AsyncMock()
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
-        mock_session = AsyncMock()
-        mock_factory = MagicMock()
-        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_factory, mock_session = _mock_session_factory()
 
         with (
-            patch("src.cogs.health.settings") as mock_settings,
             patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("12345")],
+            ),
             patch(
                 "src.cogs.health.claim_event",
                 new_callable=AsyncMock,
@@ -781,7 +1063,6 @@ class TestHeartbeatDeduplication:
                 return_value=None,
             ),
         ):
-            mock_settings.health_channel_id = 12345
             await cog._heartbeat()
 
         mock_channel.send.assert_awaited_once()
@@ -794,14 +1075,15 @@ class TestHeartbeatDeduplication:
         mock_channel.send = AsyncMock()
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
-        mock_session = AsyncMock()
-        mock_factory = MagicMock()
-        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_factory, mock_session = _mock_session_factory()
 
         with (
-            patch("src.cogs.health.settings") as mock_settings,
             patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("12345")],
+            ),
             patch(
                 "src.cogs.health.claim_event",
                 new_callable=AsyncMock,
@@ -818,7 +1100,6 @@ class TestHeartbeatDeduplication:
                 return_value=None,
             ),
         ):
-            mock_settings.health_channel_id = 12345
             await cog._heartbeat()
 
         # フェイルオープン: DB エラーでも送信する
@@ -836,21 +1117,21 @@ class TestDeployDeduplication:
         mock_channel.send = AsyncMock()
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
-        mock_session = AsyncMock()
-        mock_factory = MagicMock()
-        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_factory, mock_session = _mock_session_factory()
 
         with (
-            patch("src.cogs.health.settings") as mock_settings,
             patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("12345")],
+            ),
             patch(
                 "src.cogs.health.claim_event",
                 new_callable=AsyncMock,
                 return_value=False,
             ),
         ):
-            mock_settings.health_channel_id = 12345
             await cog._before_heartbeat()
 
         mock_channel.send.assert_not_awaited()
@@ -863,21 +1144,21 @@ class TestDeployDeduplication:
         mock_channel.send = AsyncMock()
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
-        mock_session = AsyncMock()
-        mock_factory = MagicMock()
-        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_factory, mock_session = _mock_session_factory()
 
         with (
-            patch("src.cogs.health.settings") as mock_settings,
             patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("12345")],
+            ),
             patch(
                 "src.cogs.health.claim_event",
                 new_callable=AsyncMock,
                 return_value=True,
             ),
         ):
-            mock_settings.health_channel_id = 12345
             await cog._before_heartbeat()
 
         mock_channel.send.assert_awaited_once()
@@ -892,25 +1173,178 @@ class TestDeployDeduplication:
         mock_channel.send = AsyncMock()
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
-        mock_session = AsyncMock()
-        mock_factory = MagicMock()
-        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_factory, mock_session = _mock_session_factory()
 
         with (
-            patch("src.cogs.health.settings") as mock_settings,
             patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("12345")],
+            ),
             patch(
                 "src.cogs.health.claim_event",
                 new_callable=AsyncMock,
                 side_effect=Exception("DB error"),
             ),
         ):
-            mock_settings.health_channel_id = 12345
             await cog._before_heartbeat()
 
         # フェイルオープン: DB エラーでも送信する
         mock_channel.send.assert_awaited_once()
+
+
+class TestHealthConfigFetchError:
+    """ヘルス設定取得エラーのテスト。"""
+
+    async def test_heartbeat_continues_on_config_fetch_error(self) -> None:
+        """設定取得で例外が発生してもハートビートは止まらない。"""
+        cog = _make_cog()
+
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                side_effect=Exception("DB error"),
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            # 例外が伝搬しないことを確認
+            await cog._heartbeat()
+
+    async def test_deploy_continues_on_config_fetch_error(self) -> None:
+        """デプロイ通知で設定取得エラーが発生しても処理は止まらない。"""
+        cog = _make_cog()
+        cog.bot.get_channel = MagicMock()
+
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                side_effect=Exception("DB error"),
+            ),
+        ):
+            # 例外が伝搬しないことを確認
+            await cog._before_heartbeat()
+
+        cog.bot.get_channel.assert_not_called()
+
+
+class TestMultiChannelSend:
+    """複数チャンネルへの送信テスト。"""
+
+    async def test_sends_to_multiple_channels(self) -> None:
+        """複数のチャンネルに Embed を送信する。"""
+        cog = _make_cog(latency=0.1, guild_count=2)
+
+        channel1 = MagicMock(spec=discord.TextChannel)
+        channel1.send = AsyncMock()
+        channel2 = MagicMock(spec=discord.TextChannel)
+        channel2.send = AsyncMock()
+
+        def get_channel_side_effect(channel_id: int) -> MagicMock | None:
+            if channel_id == 111:
+                return channel1
+            elif channel_id == 222:
+                return channel2
+            return None
+
+        cog.bot.get_channel = MagicMock(side_effect=get_channel_side_effect)
+
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("111"), _mock_config("222")],
+            ),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            await cog._heartbeat()
+
+        channel1.send.assert_awaited_once()
+        channel2.send.assert_awaited_once()
+
+    async def test_error_in_one_channel_does_not_block_others(self) -> None:
+        """1つのチャンネルでエラーが発生しても他のチャンネルには送信する。"""
+        cog = _make_cog(latency=0.1, guild_count=2)
+
+        channel1 = MagicMock(spec=discord.TextChannel)
+        channel1.send = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "Error")
+        )
+        channel2 = MagicMock(spec=discord.TextChannel)
+        channel2.send = AsyncMock()
+
+        def get_channel_side_effect(channel_id: int) -> MagicMock | None:
+            if channel_id == 111:
+                return channel1
+            elif channel_id == 222:
+                return channel2
+            return None
+
+        cog.bot.get_channel = MagicMock(side_effect=get_channel_side_effect)
+
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[_mock_config("111"), _mock_config("222")],
+            ),
+            patch(
+                "src.cogs.health.claim_event",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            await cog._heartbeat()
+
+        # channel1 でエラーが出ても channel2 には送信される
+        channel2.send.assert_awaited_once()
 
 
 class TestSetupFunction:
@@ -927,3 +1361,124 @@ class TestSetupFunction:
         await setup(bot)
 
         bot.add_cog.assert_awaited_once()
+
+
+class TestHealthSetupCommand:
+    """health setup コマンドのテスト。"""
+
+    async def test_setup_saves_config(self) -> None:
+        """setup コマンドで DB に設定が保存される。"""
+        cog = _make_cog()
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock()
+        interaction.guild.id = 111
+        interaction.channel_id = 222
+        interaction.response = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.upsert_health_config",
+                new_callable=AsyncMock,
+            ) as mock_upsert,
+        ):
+            await cog.health_setup.callback(cog, interaction)
+
+        mock_upsert.assert_awaited_once_with(mock_session, "111", "222")
+        interaction.followup.send.assert_awaited_once()
+
+    async def test_setup_rejects_dm(self) -> None:
+        """DM ではエラーメッセージを返す。"""
+        cog = _make_cog()
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = None
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+
+        await cog.health_setup.callback(cog, interaction)
+
+        interaction.response.send_message.assert_awaited_once()
+        call_kwargs = interaction.response.send_message.call_args[1]
+        assert call_kwargs["ephemeral"] is True
+
+
+class TestHealthDisableCommand:
+    """health disable コマンドのテスト。"""
+
+    async def test_disable_deletes_config(self) -> None:
+        """disable コマンドで DB から設定が削除される。"""
+        cog = _make_cog()
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock()
+        interaction.guild.id = 111
+        interaction.response = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.delete_health_config",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_delete,
+        ):
+            await cog.health_disable.callback(cog, interaction)
+
+        mock_delete.assert_awaited_once_with(mock_session, "111")
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "停止しました" in (embed.title or "")
+
+    async def test_disable_when_not_configured(self) -> None:
+        """設定がない場合はその旨のメッセージを返す。"""
+        cog = _make_cog()
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock()
+        interaction.guild.id = 111
+        interaction.response = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_factory, mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.delete_health_config",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            await cog.health_disable.callback(cog, interaction)
+
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "設定されていません" in (embed.title or "")
+
+    async def test_disable_rejects_dm(self) -> None:
+        """DM ではエラーメッセージを返す。"""
+        cog = _make_cog()
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = None
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+
+        await cog.health_disable.callback(cog, interaction)
+
+        interaction.response.send_message.assert_awaited_once()
+        call_kwargs = interaction.response.send_message.call_args[1]
+        assert call_kwargs["ephemeral"] is True

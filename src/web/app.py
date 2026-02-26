@@ -48,6 +48,7 @@ from src.database.models import (
     DiscordChannel,
     DiscordGuild,
     DiscordRole,
+    HealthConfig,
     JoinRoleConfig,
     Lobby,
     RolePanel,
@@ -84,6 +85,7 @@ from src.web.templates import (
     email_change_page,
     email_verification_pending_page,
     forgot_password_page,
+    health_settings_page,
     initial_setup_page,
     joinrole_page,
     lobbies_list_page,
@@ -4152,3 +4154,111 @@ async def activity_post(
         record_form_submit(user_email, path)
 
     return RedirectResponse(url="/activity", status_code=302)
+
+
+# =============================================================================
+# Health Monitor Routes
+# =============================================================================
+
+
+@app.get("/health/settings", response_model=None)
+async def health_settings_get(
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Health monitor 設定ページ。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
+
+    result = await db.execute(select(HealthConfig))
+    configs = list(result.scalars().all())
+    configs_map = {c.guild_id: c.channel_id for c in configs}
+
+    return HTMLResponse(
+        content=health_settings_page(
+            guilds_map=guilds_map,
+            channels_map=channels_map,
+            configs_map=configs_map,
+            csrf_token=generate_csrf_token(),
+        )
+    )
+
+
+@app.post("/health/settings", response_model=None)
+async def health_settings_post(
+    request: Request,
+    guild_id: Annotated[str, Form()],
+    channel_id: Annotated[str, Form()] = "",
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Health monitor 設定を保存する。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/health/settings", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/health/settings", status_code=302)
+
+    if not guild_id or not channel_id.strip():
+        return RedirectResponse(url="/health/settings", status_code=302)
+
+    async with get_resource_lock(f"health:settings:{guild_id}"):
+        existing = await db.execute(
+            select(HealthConfig).where(HealthConfig.guild_id == guild_id)
+        )
+        config = existing.scalar_one_or_none()
+
+        if config:
+            config.channel_id = channel_id.strip()
+        else:
+            config = HealthConfig(guild_id=guild_id, channel_id=channel_id.strip())
+            db.add(config)
+
+        await db.commit()
+        record_form_submit(user_email, path)
+
+    return RedirectResponse(url="/health/settings", status_code=302)
+
+
+@app.post("/health/settings/{guild_id}/delete", response_model=None)
+async def health_settings_delete(
+    request: Request,
+    guild_id: str,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Health monitor 設定を削除する。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/health/settings", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/health/settings", status_code=302)
+
+    async with get_resource_lock(f"health:delete:{guild_id}"):
+        result = await db.execute(
+            select(HealthConfig).where(HealthConfig.guild_id == guild_id)
+        )
+        config = result.scalar_one_or_none()
+        if config:
+            await db.delete(config)
+            await db.commit()
+
+        record_form_submit(user_email, path)
+
+    return RedirectResponse(url="/health/settings", status_code=302)

@@ -23,6 +23,7 @@ from src.database.models import (
     DiscordChannel,
     DiscordGuild,
     DiscordRole,
+    HealthConfig,
     JoinRoleConfig,
     Lobby,
     RolePanel,
@@ -13931,3 +13932,191 @@ class TestActivityPage:
 
         result = await db_session.execute(select(BotActivity))
         assert result.scalar_one_or_none() is None
+
+
+# ===========================================================================
+# Health Settings
+# ===========================================================================
+
+
+class TestHealthSettings:
+    """Health settings ルートのテスト。"""
+
+    async def test_health_settings_requires_auth(self, client: AsyncClient) -> None:
+        """設定ページは認証が必要。"""
+        response = await client.get("/health/settings", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_health_settings_post_requires_auth(
+        self, client: AsyncClient
+    ) -> None:
+        """設定の POST は認証が必要。"""
+        response = await client.post(
+            "/health/settings",
+            data={"guild_id": "123", "channel_id": "456"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_health_settings_get(self, authenticated_client: AsyncClient) -> None:
+        """設定ページが表示される。"""
+        response = await authenticated_client.get("/health/settings")
+        assert response.status_code == 200
+        assert "Health Monitor" in response.text
+
+    async def test_health_settings_post_saves_config(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """設定を保存できる。"""
+        response = await authenticated_client.post(
+            "/health/settings",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/health/settings" in response.headers["location"]
+
+        result = await db_session.execute(select(HealthConfig))
+        configs = list(result.scalars().all())
+        assert len(configs) == 1
+        assert configs[0].guild_id == "123456789012345678"
+        assert configs[0].channel_id == "987654321098765432"
+
+    async def test_health_settings_post_updates_config(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """既存の設定を更新できる。"""
+        config = HealthConfig(
+            guild_id="123456789012345678",
+            channel_id="111111111111111111",
+        )
+        db_session.add(config)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            "/health/settings",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "222222222222222222",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(config)
+        assert config.channel_id == "222222222222222222"
+
+    async def test_health_settings_post_empty_guild_id(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """guild_id が空の場合は拒否される。"""
+        response = await authenticated_client.post(
+            "/health/settings",
+            data={
+                "guild_id": "",
+                "channel_id": "123",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code in (302, 422)
+
+        result = await db_session.execute(select(HealthConfig))
+        assert list(result.scalars().all()) == []
+
+    async def test_health_settings_post_empty_channel_id(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """channel_id が空の場合は拒否される。"""
+        response = await authenticated_client.post(
+            "/health/settings",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(HealthConfig))
+        assert list(result.scalars().all()) == []
+
+    async def test_health_settings_delete_requires_auth(
+        self, client: AsyncClient
+    ) -> None:
+        """削除は認証が必要。"""
+        response = await client.post(
+            "/health/settings/123/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_health_settings_delete_config(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """設定を削除できる。"""
+        config = HealthConfig(
+            guild_id="123456789012345678",
+            channel_id="987654321098765432",
+        )
+        db_session.add(config)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            "/health/settings/123456789012345678/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/health/settings" in response.headers["location"]
+
+        result = await db_session.execute(select(HealthConfig))
+        assert list(result.scalars().all()) == []
+
+    async def test_health_settings_delete_nonexistent(
+        self,
+        authenticated_client: AsyncClient,
+    ) -> None:
+        """存在しない設定の削除は正常にリダイレクト。"""
+        response = await authenticated_client.post(
+            "/health/settings/999999999/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/health/settings" in response.headers["location"]
+
+    async def test_health_settings_cooldown(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ) -> None:
+        """フォームクールダウン中は設定が拒否される。"""
+        record_form_submit("test@example.com", "/health/settings")
+
+        response = await authenticated_client.post(
+            "/health/settings",
+            data={
+                "guild_id": "123456789012345678",
+                "channel_id": "987654321098765432",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/health/settings" in response.headers["location"]
+
+        result = await db_session.execute(select(HealthConfig))
+        assert list(result.scalars().all()) == []
