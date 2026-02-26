@@ -851,11 +851,19 @@ class VoiceCog(commands.Cog):
             async with async_session() as session:
                 existing = await get_lobbies_by_guild(session, guild_id)
                 if existing:
-                    await interaction.followup.send(
-                        "このサーバーには既にロビーが存在します。",
-                        ephemeral=True,
-                    )
-                    return
+                    # Discord 上にチャンネルが実在するか確認
+                    lobby = existing[0]
+                    channel = interaction.guild.get_channel(int(lobby.lobby_channel_id))
+                    if channel is not None:
+                        await interaction.followup.send(
+                            "このサーバーには既にロビーが存在します。",
+                            ephemeral=True,
+                        )
+                        return
+                    # チャンネルが削除済み → 孤立レコードを掃除
+                    await delete_lobby(session, lobby.id)
+                    if self._lobby_channel_ids is not None:
+                        self._lobby_channel_ids.discard(lobby.lobby_channel_id)
 
             # --- VC の作成 ---
             try:
