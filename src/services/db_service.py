@@ -2863,6 +2863,25 @@ async def cleanup_expired_events(
     return int(result.rowcount)  # type: ignore[attr-defined]
 
 
+async def release_event(session: AsyncSession, event_key: str) -> bool:
+    """claim_event で確保したイベントキーを解放する。
+
+    処理完了後にキーを削除し、次回の同一操作を再び claim 可能にする。
+    トグル操作など「一時的な排他制御 → 即解放」パターンで使用。
+
+    Args:
+        session: DB セッション。
+        event_key: 解放するイベントキー。
+
+    Returns:
+        True: 削除成功。False: キーが見つからなかった。
+    """
+    stmt = delete(ProcessedEvent).where(ProcessedEvent.event_key == event_key)
+    result = await session.execute(stmt)
+    await session.commit()
+    return int(result.rowcount) > 0  # type: ignore[attr-defined]
+
+
 # =============================================================================
 # BotActivity (Bot アクティビティ) 操作
 # =============================================================================

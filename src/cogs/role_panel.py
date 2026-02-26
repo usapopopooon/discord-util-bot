@@ -26,6 +26,7 @@ from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.services.db_service import (
     add_role_panel_item,
+    claim_event,
     delete_discord_channel,
     delete_discord_channels_by_guild,
     delete_discord_guild,
@@ -39,6 +40,7 @@ from src.services.db_service import (
     get_role_panel_item_by_emoji,
     get_role_panel_items,
     get_role_panels_by_channel,
+    release_event,
     remove_role_panel_item,
     upsert_discord_channel,
     upsert_discord_guild,
@@ -455,41 +457,54 @@ class RolePanelCog(commands.Cog):
             logger.warning("Role %s not found for panel %d", item.role_id, panel.id)
             return
 
-        # add_roles/remove_roles は冪等操作のため claim_event 不要
         try:
             if remove_reaction_mode:
                 # リアクション自動削除モード: 追加時のみトグル動作
                 if action == "add":
-                    # ユーザーのリアクションを削除してカウントを 1 に保つ
-                    channel = guild.get_channel(payload.channel_id)
-                    if isinstance(channel, discord.TextChannel):
-                        try:
-                            msg = await channel.fetch_message(payload.message_id)
-                            await msg.remove_reaction(payload.emoji, member)
-                        except discord.HTTPException:
-                            pass  # 削除失敗は無視
+                    # トグルは状態依存 (冪等ではない) ため claim_event で排他制御
+                    # INSERT → 処理 → DELETE で即解放 (タイムバケット不要)
+                    event_key = (
+                        f"toggle:{payload.message_id}:{payload.user_id}:{emoji_str}"
+                    )
+                    async with async_session() as claim_session:
+                        if not await claim_event(claim_session, event_key):
+                            return
+                    try:
+                        # ユーザーのリアクションを削除してカウントを 1 に保つ
+                        channel = guild.get_channel(payload.channel_id)
+                        if isinstance(channel, discord.TextChannel):
+                            try:
+                                msg = await channel.fetch_message(payload.message_id)
+                                await msg.remove_reaction(payload.emoji, member)
+                            except discord.HTTPException:
+                                pass  # 削除失敗は無視
 
-                    # ロールをトグル
-                    if role in member.roles:
-                        await member.remove_roles(
-                            role, reason="ロールパネル (リアクション) から解除"
-                        )
-                        logger.debug(
-                            "Removed role %s from user %s via reaction (toggle)",
-                            role.name,
-                            member.display_name,
-                        )
-                    else:
-                        await member.add_roles(
-                            role, reason="ロールパネル (リアクション) から付与"
-                        )
-                        logger.debug(
-                            "Added role %s to user %s via reaction (toggle)",
-                            role.name,
-                            member.display_name,
-                        )
+                        # ロールをトグル
+                        if role in member.roles:
+                            await member.remove_roles(
+                                role, reason="ロールパネル (リアクション) から解除"
+                            )
+                            logger.debug(
+                                "Removed role %s from user %s via reaction (toggle)",
+                                role.name,
+                                member.display_name,
+                            )
+                        else:
+                            await member.add_roles(
+                                role, reason="ロールパネル (リアクション) から付与"
+                            )
+                            logger.debug(
+                                "Added role %s to user %s via reaction (toggle)",
+                                role.name,
+                                member.display_name,
+                            )
+                    finally:
+                        # 処理完了後に即解放 → 次回のトグルを許可
+                        async with async_session() as release_session:
+                            await release_event(release_session, event_key)
                 # remove イベントは無視 (Bot がリアクションを削除しただけ)
             else:
+                # add_roles/remove_roles は冪等操作のため claim_event 不要
                 # 通常モード: リアクション追加で付与、削除で解除
                 if action == "add":
                     if role not in member.roles:
