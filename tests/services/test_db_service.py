@@ -4237,7 +4237,7 @@ class TestAutobanDbService:
             action="ban",
             pattern="spam*",
             use_wildcard=True,
-            threshold_hours=None,
+            threshold_minutes=None,
         )
         assert rule.id is not None
         assert rule.guild_id == "123"
@@ -4245,7 +4245,7 @@ class TestAutobanDbService:
         assert rule.action == "ban"
         assert rule.pattern == "spam*"
         assert rule.use_wildcard is True
-        assert rule.threshold_hours is None
+        assert rule.threshold_minutes is None
         assert rule.is_enabled is True
 
     async def test_create_autoban_rule_defaults(self, db_session: AsyncSession) -> None:
@@ -4258,7 +4258,7 @@ class TestAutobanDbService:
         assert rule.action == "ban"
         assert rule.pattern is None
         assert rule.use_wildcard is False
-        assert rule.threshold_hours is None
+        assert rule.threshold_minutes is None
 
     async def test_get_autoban_rule(self, db_session: AsyncSession) -> None:
         """Test getting a specific autoban rule by ID."""
@@ -4285,7 +4285,7 @@ class TestAutobanDbService:
         )
         await create_autoban_rule(db_session, guild_id="456", rule_type="no_avatar")
         await create_autoban_rule(
-            db_session, guild_id="123", rule_type="account_age", threshold_hours=24
+            db_session, guild_id="123", rule_type="account_age", threshold_minutes=1440
         )
 
         rules = await get_all_autoban_rules(db_session)
@@ -4303,7 +4303,7 @@ class TestAutobanDbService:
         )
         await create_autoban_rule(db_session, guild_id="123", rule_type="no_avatar")
         await create_autoban_rule(
-            db_session, guild_id="456", rule_type="account_age", threshold_hours=48
+            db_session, guild_id="456", rule_type="account_age", threshold_minutes=2880
         )
 
         rules_123 = await get_autoban_rules_by_guild(db_session, "123")
@@ -4789,17 +4789,17 @@ class TestUpdateAutobanRule:
         assert updated.pattern == "new_pattern"
         assert updated.use_wildcard is True
 
-    async def test_update_threshold_hours(self, db_session: AsyncSession) -> None:
-        """threshold_hours を更新できる。"""
+    async def test_update_threshold_minutes(self, db_session: AsyncSession) -> None:
+        """threshold_minutes を更新できる。"""
         rule = await create_autoban_rule(
             db_session,
             guild_id="123",
             rule_type="account_age",
             action="ban",
-            threshold_hours=24,
+            threshold_minutes=1440,
         )
-        updated = await update_autoban_rule(db_session, rule, threshold_hours=48)
-        assert updated.threshold_hours == 48
+        updated = await update_autoban_rule(db_session, rule, threshold_minutes=2880)
+        assert updated.threshold_minutes == 2880
 
     async def test_update_threshold_seconds(self, db_session: AsyncSession) -> None:
         """threshold_seconds を更新できる。"""
@@ -4878,11 +4878,11 @@ class TestUpdateAutobanRule:
             guild_id="123",
             rule_type="account_age",
             action="ban",
-            threshold_hours=24,
+            threshold_minutes=1440,
         )
-        await update_autoban_rule(db_session, rule, threshold_hours=100)
+        await update_autoban_rule(db_session, rule, threshold_minutes=6000)
         await db_session.refresh(rule)
-        assert rule.threshold_hours == 100
+        assert rule.threshold_minutes == 6000
 
     async def test_update_use_wildcard_to_false(self, db_session: AsyncSession) -> None:
         """use_wildcard を True から False に更新できる。"""

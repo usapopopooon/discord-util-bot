@@ -1973,7 +1973,7 @@ async def create_autoban_rule(
     action: str = "ban",
     pattern: str | None = None,
     use_wildcard: bool = False,
-    threshold_hours: int | None = None,
+    threshold_minutes: int | None = None,
     threshold_seconds: int | None = None,
 ) -> AutoBanRule:
     """新しい autoban ルールを作成する。"""
@@ -1983,7 +1983,7 @@ async def create_autoban_rule(
         action=action,
         pattern=pattern,
         use_wildcard=use_wildcard,
-        threshold_hours=threshold_hours,
+        threshold_minutes=threshold_minutes,
         threshold_seconds=threshold_seconds,
     )
     session.add(rule)
@@ -2019,7 +2019,7 @@ async def update_autoban_rule(
     action: str | None = None,
     pattern: str | None = None,
     use_wildcard: bool | None = None,
-    threshold_hours: int | None = None,
+    threshold_minutes: int | None = None,
     threshold_seconds: int | None = None,
 ) -> AutoBanRule:
     """autoban ルールを更新する。None のフィールドは変更しない。"""
@@ -2029,8 +2029,8 @@ async def update_autoban_rule(
         rule.pattern = pattern
     if use_wildcard is not None:
         rule.use_wildcard = use_wildcard
-    if threshold_hours is not None:
-        rule.threshold_hours = threshold_hours
+    if threshold_minutes is not None:
+        rule.threshold_minutes = threshold_minutes
     if threshold_seconds is not None:
         rule.threshold_seconds = threshold_seconds
     await session.commit()

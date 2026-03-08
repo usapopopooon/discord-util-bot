@@ -48,7 +48,7 @@ from src.services.db_service import (
 
 logger = logging.getLogger(__name__)
 
-MAX_THRESHOLD_HOURS = 336
+MAX_THRESHOLD_MINUTES = 20160
 MAX_THRESHOLD_SECONDS = 3600
 
 
@@ -285,16 +285,16 @@ class AutoBanCog(commands.Cog):
         self, rule: AutoBanRule, member: discord.Member
     ) -> tuple[bool, str]:
         """アカウント年齢をチェック。"""
-        if not rule.threshold_hours:
+        if not rule.threshold_minutes:
             return False, ""
 
         now = datetime.now(UTC)
-        account_age_hours = (now - member.created_at).total_seconds() / 3600
+        account_age_minutes = (now - member.created_at).total_seconds() / 60
 
-        if account_age_hours < rule.threshold_hours:
+        if account_age_minutes < rule.threshold_minutes:
             return True, (
-                f"Account age ({account_age_hours:.1f}h) "
-                f"is less than threshold ({rule.threshold_hours}h)"
+                f"Account age ({account_age_minutes:.1f}min) "
+                f"is less than threshold ({rule.threshold_minutes}min)"
             )
         return False, ""
 
@@ -547,7 +547,7 @@ class AutoBanCog(commands.Cog):
         action="アクション (ban または kick)",
         pattern="ユーザー名パターン (username_match のみ)",
         use_wildcard="ワイルドカード: パターンがユーザー名に含まれていればマッチ",
-        threshold_hours="アカウント年齢の閾値 (時間、account_age のみ、最大 336)",
+        threshold_minutes="アカウント年齢の閾値 (分、account_age のみ、最大 20160)",
         threshold_seconds="JOIN後の閾値 (秒、role_acquired/vc_join のみ、最大 3600)",
     )
     @app_commands.choices(
@@ -573,7 +573,7 @@ class AutoBanCog(commands.Cog):
         action: str = "ban",
         pattern: str | None = None,
         use_wildcard: bool = False,
-        threshold_hours: int | None = None,
+        threshold_minutes: int | None = None,
         threshold_seconds: int | None = None,
     ) -> None:
         """Autoban ルールを追加する。"""
@@ -590,15 +590,15 @@ class AutoBanCog(commands.Cog):
             return
 
         if rule_type == "account_age":
-            if not threshold_hours or threshold_hours < 1:
+            if not threshold_minutes or threshold_minutes < 1:
                 await interaction.response.send_message(
-                    "account_age ルールには 1 以上の threshold_hours が必要です。",
+                    "account_age ルールには 1 以上の threshold_minutes が必要です。",
                     ephemeral=True,
                 )
                 return
-            if threshold_hours > MAX_THRESHOLD_HOURS:
+            if threshold_minutes > MAX_THRESHOLD_MINUTES:
                 await interaction.response.send_message(
-                    f"threshold_hours は最大 {MAX_THRESHOLD_HOURS} (14日) です。",
+                    f"threshold_minutes は最大 {MAX_THRESHOLD_MINUTES} (14日) です。",
                     ephemeral=True,
                 )
                 return
@@ -627,7 +627,7 @@ class AutoBanCog(commands.Cog):
                 action=action,
                 pattern=pattern,
                 use_wildcard=use_wildcard,
-                threshold_hours=threshold_hours,
+                threshold_minutes=threshold_minutes,
                 threshold_seconds=threshold_seconds,
             )
 
@@ -636,8 +636,8 @@ class AutoBanCog(commands.Cog):
             desc_parts.append(f"Pattern: {pattern}")
             if use_wildcard:
                 desc_parts.append("Wildcard: Yes")
-        if threshold_hours:
-            desc_parts.append(f"Threshold: {threshold_hours}h")
+        if threshold_minutes:
+            desc_parts.append(f"Threshold: {threshold_minutes}min")
         if threshold_seconds:
             desc_parts.append(f"Threshold: {threshold_seconds}s")
 
@@ -697,7 +697,7 @@ class AutoBanCog(commands.Cog):
                 wildcard = " (wildcard)" if rule.use_wildcard else ""
                 desc += f"\nPattern: {rule.pattern}{wildcard}"
             elif rule.rule_type == "account_age":
-                desc += f"\nThreshold: {rule.threshold_hours}h"
+                desc += f"\nThreshold: {rule.threshold_minutes}min"
             elif rule.rule_type in ("role_acquired", "vc_join", "message_post"):
                 desc += f"\nThreshold: {rule.threshold_seconds}s after join"
             embed.add_field(

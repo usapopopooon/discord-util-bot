@@ -10588,7 +10588,7 @@ class TestAutobanRoutes:
                 "guild_id": "123456789012345678",
                 "rule_type": "account_age",
                 "action": "kick",
-                "threshold_hours": "48",
+                "threshold_minutes": "2880",
             },
             follow_redirects=False,
         )
@@ -10597,7 +10597,7 @@ class TestAutobanRoutes:
         result = await db_session.execute(select(AutoBanRule))
         rules = list(result.scalars().all())
         assert len(rules) == 1
-        assert rules[0].threshold_hours == 48
+        assert rules[0].threshold_minutes == 2880
         assert rules[0].action == "kick"
 
     async def test_autoban_create_no_avatar(
@@ -10679,7 +10679,7 @@ class TestAutobanRoutes:
                 "guild_id": "123",
                 "rule_type": "account_age",
                 "action": "ban",
-                "threshold_hours": "abc",
+                "threshold_minutes": "abc",
             },
             follow_redirects=False,
         )
@@ -10689,14 +10689,14 @@ class TestAutobanRoutes:
     async def test_autoban_create_account_age_exceeds_max(
         self, authenticated_client: AsyncClient
     ) -> None:
-        """account_age で 336 超はリダイレクトされる。"""
+        """account_age で 20160 超はリダイレクトされる。"""
         response = await authenticated_client.post(
             "/autoban/new",
             data={
                 "guild_id": "123",
                 "rule_type": "account_age",
                 "action": "ban",
-                "threshold_hours": "500",
+                "threshold_minutes": "30000",
             },
             follow_redirects=False,
         )
@@ -11008,7 +11008,7 @@ class TestAutobanRoutes:
             guild_id="123456789012345678",
             rule_type="account_age",
             action="ban",
-            threshold_hours=24,
+            threshold_minutes=1440,
         )
         db_session.add(rule)
         await db_session.commit()
@@ -11016,14 +11016,14 @@ class TestAutobanRoutes:
 
         response = await authenticated_client.post(
             f"/autoban/{rule.id}/edit",
-            data={"action": "kick", "threshold_hours": "48"},
+            data={"action": "kick", "threshold_minutes": "2880"},
             follow_redirects=False,
         )
         assert response.status_code == 302
 
         await db_session.refresh(rule)
         assert rule.action == "kick"
-        assert rule.threshold_hours == 48
+        assert rule.threshold_minutes == 2880
 
     async def test_autoban_edit_post_threshold_seconds(
         self,
@@ -11116,19 +11116,19 @@ class TestAutobanRoutes:
         await db_session.refresh(rule)
         assert rule.pattern == "old"
 
-    @pytest.mark.parametrize("value", ["abc", "0", "337", "-1", ""])
-    async def test_autoban_edit_post_threshold_hours_invalid(
+    @pytest.mark.parametrize("value", ["abc", "0", "20161", "-1", ""])
+    async def test_autoban_edit_post_threshold_minutes_invalid(
         self,
         authenticated_client: AsyncClient,
         db_session: AsyncSession,
         value: str,
     ) -> None:
-        """account_age で不正な threshold_hours はリダイレクト。"""
+        """account_age で不正な threshold_minutes はリダイレクト。"""
         rule = AutoBanRule(
             guild_id="123456789012345678",
             rule_type="account_age",
             action="ban",
-            threshold_hours=24,
+            threshold_minutes=1440,
         )
         db_session.add(rule)
         await db_session.commit()
@@ -11136,14 +11136,14 @@ class TestAutobanRoutes:
 
         response = await authenticated_client.post(
             f"/autoban/{rule.id}/edit",
-            data={"action": "ban", "threshold_hours": value},
+            data={"action": "ban", "threshold_minutes": value},
             follow_redirects=False,
         )
         assert response.status_code == 302
         assert "/edit" in response.headers["location"]
 
         await db_session.refresh(rule)
-        assert rule.threshold_hours == 24
+        assert rule.threshold_minutes == 1440
 
     @pytest.mark.parametrize("value", ["xyz", "0", "3601", "-5", ""])
     async def test_autoban_edit_post_threshold_seconds_invalid(
@@ -11174,17 +11174,17 @@ class TestAutobanRoutes:
         await db_session.refresh(rule)
         assert rule.threshold_seconds == 60
 
-    async def test_autoban_edit_post_threshold_hours_max_valid(
+    async def test_autoban_edit_post_threshold_minutes_max_valid(
         self,
         authenticated_client: AsyncClient,
         db_session: AsyncSession,
     ) -> None:
-        """account_age で 336 は有効な最大値。"""
+        """account_age で 20160 は有効な最大値。"""
         rule = AutoBanRule(
             guild_id="123456789012345678",
             rule_type="account_age",
             action="ban",
-            threshold_hours=24,
+            threshold_minutes=1440,
         )
         db_session.add(rule)
         await db_session.commit()
@@ -11192,14 +11192,14 @@ class TestAutobanRoutes:
 
         response = await authenticated_client.post(
             f"/autoban/{rule.id}/edit",
-            data={"action": "ban", "threshold_hours": "336"},
+            data={"action": "ban", "threshold_minutes": "20160"},
             follow_redirects=False,
         )
         assert response.status_code == 302
         assert response.headers["location"] == "/autoban"
 
         await db_session.refresh(rule)
-        assert rule.threshold_hours == 336
+        assert rule.threshold_minutes == 20160
 
     async def test_autoban_edit_post_threshold_seconds_max_valid(
         self,
@@ -11388,7 +11388,7 @@ class TestAutobanRoutes:
             guild_id="123456789012345678",
             rule_type="account_age",
             action="kick",
-            threshold_hours=72,
+            threshold_minutes=4320,
         )
         db_session.add(rule)
         await db_session.commit()
@@ -11396,7 +11396,7 @@ class TestAutobanRoutes:
 
         response = await authenticated_client.get(f"/autoban/{rule.id}/edit")
         assert response.status_code == 200
-        assert "72" in response.text
+        assert "4320" in response.text
         assert "kick" in response.text
 
     async def test_autoban_edit_post_requires_auth(self, client: AsyncClient) -> None:

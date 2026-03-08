@@ -3170,7 +3170,7 @@ def autoban_list_page(
             wildcard = " (wildcard)" if rule.use_wildcard else " (exact)"
             details = escape(rule.pattern or "") + wildcard
         elif rule.rule_type == "account_age":
-            details = f"{rule.threshold_hours}h" if rule.threshold_hours else "-"
+            details = f"{rule.threshold_minutes}min" if rule.threshold_minutes else "-"
         elif rule.rule_type in ("role_acquired", "vc_join", "message_post"):
             details = (
                 f"{rule.threshold_seconds}s after join"
@@ -3399,10 +3399,10 @@ def autoban_create_page(
 
                 <div id="accountAgeFields" class="hidden">
                     <label class="block text-sm font-medium mb-1">
-                        Threshold (hours, max 336 = 14 days)
+                        Threshold (minutes, max 20160 = 14 days)
                     </label>
-                    <input type="number" name="threshold_hours"
-                           min="1" max="336" placeholder="e.g. 24"
+                    <input type="number" name="threshold_minutes"
+                           min="1" max="20160" placeholder="e.g. 60"
                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                 </div>
 
@@ -3503,14 +3503,14 @@ def autoban_edit_page(
                 </label>
         """
     elif rule.rule_type == "account_age":
-        val = rule.threshold_hours or ""
+        val = rule.threshold_minutes or ""
         type_fields = f"""
                 <div>
                     <label class="block text-sm font-medium mb-1">
-                        Threshold (hours, max 336 = 14 days)
+                        Threshold (minutes, max 20160 = 14 days)
                     </label>
-                    <input type="number" name="threshold_hours"
-                           min="1" max="336" value="{val}"
+                    <input type="number" name="threshold_minutes"
+                           min="1" max="20160" value="{val}"
                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                 </div>
         """
