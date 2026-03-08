@@ -1107,8 +1107,9 @@ class AutoBanRule(Base):
         action (str): アクション ("ban" または "kick")。
         pattern (str | None): ユーザー名マッチング用パターン (username_match のみ)。
         use_wildcard (bool): ワイルドカード (部分一致) を使用するか (デフォルト False)。
-        threshold_minutes (int | None): アカウント年齢の閾値 (分、最大 20160 = 14日)。
-        threshold_seconds (int | None): JOIN後の閾値 (秒、role_acquired/vc_join 用)。
+        threshold_seconds (int | None): 時間ベースの閾値 (秒)。
+            account_age: アカウント年齢の閾値 (最大 1209600 = 14日)。
+            role_acquired/vc_join/message_post: JOIN後の閾値 (最大 3600 = 1時間)。
         created_at (datetime): ルール作成日時 (UTC)。
         logs (list[AutoBanLog]): このルールの実行ログ一覧。
 
@@ -1127,7 +1128,6 @@ class AutoBanRule(Base):
     action: Mapped[str] = mapped_column(String, nullable=False, default="ban")
     pattern: Mapped[str | None] = mapped_column(String, nullable=True)
     use_wildcard: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    threshold_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     threshold_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     required_channel_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

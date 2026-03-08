@@ -1983,7 +1983,7 @@ class TestAutobanCreatePage:
     def test_contains_threshold_field(self) -> None:
         """閾値フィールドが含まれる。"""
         result = autoban_create_page()
-        assert 'name="threshold_minutes"' in result
+        assert 'name="account_age_minutes"' in result
 
     def test_contains_guild_options(self) -> None:
         """ギルド選択にオプションが含まれる。"""
@@ -2165,7 +2165,6 @@ class TestAutobanEditPage:
             "action": "ban",
             "pattern": None,
             "use_wildcard": False,
-            "threshold_minutes": None,
             "threshold_seconds": None,
             "required_channel_id": None,
             "is_enabled": True,
@@ -2198,11 +2197,11 @@ class TestAutobanEditPage:
         assert "checked" in result
 
     def test_account_age_page(self) -> None:
-        """account_age ルールの編集ページに threshold_minutes 入力がある。"""
-        rule = self._make_rule(rule_type="account_age", threshold_minutes=2880)
+        """account_age ルールの編集ページに account_age_minutes 入力がある。"""
+        rule = self._make_rule(rule_type="account_age", threshold_seconds=172800)
         result = autoban_edit_page(rule)
         assert "2880" in result
-        assert "threshold_minutes" in result or "minutes" in result.lower()
+        assert "account_age_minutes" in result or "minutes" in result.lower()
 
     def test_threshold_seconds_page(self) -> None:
         """role_acquired ルールの編集ページに threshold_seconds 入力がある。"""
@@ -2259,7 +2258,7 @@ class TestAutobanEditPage:
         rule.action = "ban"
         rule.pattern = None
         rule.use_wildcard = False
-        rule.threshold_minutes = None
+        rule.threshold_seconds = None
         rule.threshold_seconds = None
         rule.required_channel_id = None
         rule.is_enabled = True
@@ -2282,7 +2281,7 @@ class TestAutobanListPageIntroRules:
         rule.action = "ban"
         rule.pattern = None
         rule.use_wildcard = False
-        rule.threshold_minutes = None
+        rule.threshold_seconds = None
         rule.threshold_seconds = None
         rule.required_channel_id = "555"
         rule.is_enabled = True
@@ -2301,7 +2300,7 @@ class TestAutobanListPageIntroRules:
         rule.action = "ban"
         rule.pattern = None
         rule.use_wildcard = False
-        rule.threshold_minutes = None
+        rule.threshold_seconds = None
         rule.threshold_seconds = None
         rule.required_channel_id = "555"
         rule.is_enabled = True
@@ -2319,7 +2318,7 @@ class TestAutobanListPageIntroRules:
         rule.action = "kick"
         rule.pattern = None
         rule.use_wildcard = False
-        rule.threshold_minutes = None
+        rule.threshold_seconds = None
         rule.threshold_seconds = None
         rule.required_channel_id = "777"
         rule.is_enabled = True
@@ -3376,7 +3375,7 @@ class TestAutobanListPageRuleTypes:
             guild_id="123",
             rule_type="account_age",
             action="ban",
-            threshold_minutes=2880,
+            threshold_seconds=172800,
             is_enabled=True,
         )
         result = autoban_list_page([rule])

@@ -48,7 +48,7 @@ from src.services.db_service import (
 
 logger = logging.getLogger(__name__)
 
-MAX_THRESHOLD_MINUTES = 20160
+MAX_ACCOUNT_AGE_MINUTES = 20160  # 14日
 MAX_THRESHOLD_SECONDS = 3600
 
 
@@ -285,16 +285,18 @@ class AutoBanCog(commands.Cog):
         self, rule: AutoBanRule, member: discord.Member
     ) -> tuple[bool, str]:
         """アカウント年齢をチェック。"""
-        if not rule.threshold_minutes:
+        if not rule.threshold_seconds:
             return False, ""
 
         now = datetime.now(UTC)
-        account_age_minutes = (now - member.created_at).total_seconds() / 60
+        account_age_seconds = (now - member.created_at).total_seconds()
 
-        if account_age_minutes < rule.threshold_minutes:
+        if account_age_seconds < rule.threshold_seconds:
+            age_min = account_age_seconds / 60
+            threshold_min = rule.threshold_seconds / 60
             return True, (
-                f"Account age ({account_age_minutes:.1f}min) "
-                f"is less than threshold ({rule.threshold_minutes}min)"
+                f"Account age ({age_min:.1f}min) "
+                f"is less than threshold ({threshold_min:.0f}min)"
             )
         return False, ""
 
@@ -547,7 +549,7 @@ class AutoBanCog(commands.Cog):
         action="アクション (ban または kick)",
         pattern="ユーザー名パターン (username_match のみ)",
         use_wildcard="ワイルドカード: パターンがユーザー名に含まれていればマッチ",
-        threshold_minutes="アカウント年齢の閾値 (分、account_age のみ、最大 20160)",
+        account_age_minutes="アカウント年齢の閾値 (分、account_age のみ、最大 20160)",
         threshold_seconds="JOIN後の閾値 (秒、role_acquired/vc_join のみ、最大 3600)",
     )
     @app_commands.choices(
@@ -573,7 +575,7 @@ class AutoBanCog(commands.Cog):
         action: str = "ban",
         pattern: str | None = None,
         use_wildcard: bool = False,
-        threshold_minutes: int | None = None,
+        account_age_minutes: int | None = None,
         threshold_seconds: int | None = None,
     ) -> None:
         """Autoban ルールを追加する。"""
@@ -590,18 +592,20 @@ class AutoBanCog(commands.Cog):
             return
 
         if rule_type == "account_age":
-            if not threshold_minutes or threshold_minutes < 1:
+            if not account_age_minutes or account_age_minutes < 1:
                 await interaction.response.send_message(
-                    "account_age ルールには 1 以上の threshold_minutes が必要です。",
+                    "account_age ルールには 1 以上の account_age_minutes が必要です。",
                     ephemeral=True,
                 )
                 return
-            if threshold_minutes > MAX_THRESHOLD_MINUTES:
+            if account_age_minutes > MAX_ACCOUNT_AGE_MINUTES:
                 await interaction.response.send_message(
-                    f"threshold_minutes は最大 {MAX_THRESHOLD_MINUTES} (14日) です。",
+                    f"account_age_minutes は最大 {MAX_ACCOUNT_AGE_MINUTES} (14日) です。",
                     ephemeral=True,
                 )
                 return
+            # 分→秒に変換して threshold_seconds に統合
+            threshold_seconds = account_age_minutes * 60
 
         if rule_type in ("role_acquired", "vc_join", "message_post"):
             if not threshold_seconds or threshold_seconds < 1:
@@ -627,7 +631,6 @@ class AutoBanCog(commands.Cog):
                 action=action,
                 pattern=pattern,
                 use_wildcard=use_wildcard,
-                threshold_minutes=threshold_minutes,
                 threshold_seconds=threshold_seconds,
             )
 
@@ -636,9 +639,9 @@ class AutoBanCog(commands.Cog):
             desc_parts.append(f"Pattern: {pattern}")
             if use_wildcard:
                 desc_parts.append("Wildcard: Yes")
-        if threshold_minutes:
-            desc_parts.append(f"Threshold: {threshold_minutes}min")
-        if threshold_seconds:
+        if account_age_minutes:
+            desc_parts.append(f"Threshold: {account_age_minutes}min")
+        elif threshold_seconds:
             desc_parts.append(f"Threshold: {threshold_seconds}s")
 
         await interaction.response.send_message(
@@ -697,7 +700,8 @@ class AutoBanCog(commands.Cog):
                 wildcard = " (wildcard)" if rule.use_wildcard else ""
                 desc += f"\nPattern: {rule.pattern}{wildcard}"
             elif rule.rule_type == "account_age":
-                desc += f"\nThreshold: {rule.threshold_minutes}min"
+                minutes = rule.threshold_seconds // 60 if rule.threshold_seconds else 0
+                desc += f"\nThreshold: {minutes}min"
             elif rule.rule_type in ("role_acquired", "vc_join", "message_post"):
                 desc += f"\nThreshold: {rule.threshold_seconds}s after join"
             embed.add_field(

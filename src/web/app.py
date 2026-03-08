@@ -3032,7 +3032,7 @@ async def autoban_create_post(
     action: Annotated[str, Form()] = "ban",
     pattern: Annotated[str, Form()] = "",
     use_wildcard: Annotated[str, Form()] = "",
-    threshold_minutes: Annotated[str, Form()] = "",
+    account_age_minutes: Annotated[str, Form()] = "",
     threshold_seconds: Annotated[str, Form()] = "",
     required_channel_id: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(get_current_user),
@@ -3074,16 +3074,16 @@ async def autoban_create_post(
     if rule_type == "username_match" and not pattern.strip():
         return RedirectResponse(url="/autoban/new", status_code=302)
 
-    threshold_minutes_int: int | None = None
+    threshold_seconds_int: int | None = None
     if rule_type == "account_age":
         try:
-            threshold_minutes_int = int(threshold_minutes)
+            minutes_int = int(account_age_minutes)
         except (ValueError, TypeError):
             return RedirectResponse(url="/autoban/new", status_code=302)
-        if threshold_minutes_int < 1 or threshold_minutes_int > 20160:
+        if minutes_int < 1 or minutes_int > 20160:
             return RedirectResponse(url="/autoban/new", status_code=302)
+        threshold_seconds_int = minutes_int * 60
 
-    threshold_seconds_int: int | None = None
     if rule_type in ("role_acquired", "vc_join", "message_post"):
         try:
             threshold_seconds_int = int(threshold_seconds)
@@ -3107,12 +3107,7 @@ async def autoban_create_post(
             action=action,
             pattern=pattern.strip() if rule_type == "username_match" else None,
             use_wildcard=bool(use_wildcard) if rule_type == "username_match" else False,
-            threshold_minutes=threshold_minutes_int
-            if rule_type == "account_age"
-            else None,
-            threshold_seconds=threshold_seconds_int
-            if rule_type in ("role_acquired", "vc_join", "message_post")
-            else None,
+            threshold_seconds=threshold_seconds_int,
             required_channel_id=required_channel_id_str,
         )
         db.add(rule)
@@ -3157,7 +3152,7 @@ async def autoban_edit_post(
     action: Annotated[str, Form()] = "ban",
     pattern: Annotated[str, Form()] = "",
     use_wildcard: Annotated[str, Form()] = "",
-    threshold_minutes: Annotated[str, Form()] = "",
+    account_age_minutes: Annotated[str, Form()] = "",
     threshold_seconds: Annotated[str, Form()] = "",
     required_channel_id: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(get_current_user),
@@ -3197,12 +3192,12 @@ async def autoban_edit_post(
 
         elif rule.rule_type == "account_age":
             try:
-                minutes_int = int(threshold_minutes)
+                minutes_int = int(account_age_minutes)
             except (ValueError, TypeError):
                 return RedirectResponse(url=edit_url, status_code=302)
             if minutes_int < 1 or minutes_int > 20160:
                 return RedirectResponse(url=edit_url, status_code=302)
-            rule.threshold_minutes = minutes_int
+            rule.threshold_seconds = minutes_int * 60
 
         elif rule.rule_type in ("role_acquired", "vc_join", "message_post"):
             try:

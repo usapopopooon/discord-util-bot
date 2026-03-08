@@ -10588,7 +10588,7 @@ class TestAutobanRoutes:
                 "guild_id": "123456789012345678",
                 "rule_type": "account_age",
                 "action": "kick",
-                "threshold_minutes": "2880",
+                "account_age_minutes": "2880",
             },
             follow_redirects=False,
         )
@@ -10597,7 +10597,7 @@ class TestAutobanRoutes:
         result = await db_session.execute(select(AutoBanRule))
         rules = list(result.scalars().all())
         assert len(rules) == 1
-        assert rules[0].threshold_minutes == 2880
+        assert rules[0].threshold_seconds == 172800
         assert rules[0].action == "kick"
 
     async def test_autoban_create_no_avatar(
@@ -10679,7 +10679,7 @@ class TestAutobanRoutes:
                 "guild_id": "123",
                 "rule_type": "account_age",
                 "action": "ban",
-                "threshold_minutes": "abc",
+                "account_age_minutes": "abc",
             },
             follow_redirects=False,
         )
@@ -10696,7 +10696,7 @@ class TestAutobanRoutes:
                 "guild_id": "123",
                 "rule_type": "account_age",
                 "action": "ban",
-                "threshold_minutes": "30000",
+                "account_age_minutes": "30000",
             },
             follow_redirects=False,
         )
@@ -11008,7 +11008,7 @@ class TestAutobanRoutes:
             guild_id="123456789012345678",
             rule_type="account_age",
             action="ban",
-            threshold_minutes=1440,
+            threshold_seconds=86400,
         )
         db_session.add(rule)
         await db_session.commit()
@@ -11016,14 +11016,14 @@ class TestAutobanRoutes:
 
         response = await authenticated_client.post(
             f"/autoban/{rule.id}/edit",
-            data={"action": "kick", "threshold_minutes": "2880"},
+            data={"action": "kick", "account_age_minutes": "2880"},
             follow_redirects=False,
         )
         assert response.status_code == 302
 
         await db_session.refresh(rule)
         assert rule.action == "kick"
-        assert rule.threshold_minutes == 2880
+        assert rule.threshold_seconds == 172800
 
     async def test_autoban_edit_post_threshold_seconds(
         self,
@@ -11117,18 +11117,18 @@ class TestAutobanRoutes:
         assert rule.pattern == "old"
 
     @pytest.mark.parametrize("value", ["abc", "0", "20161", "-1", ""])
-    async def test_autoban_edit_post_threshold_minutes_invalid(
+    async def test_autoban_edit_post_threshold_seconds_account_age_invalid(
         self,
         authenticated_client: AsyncClient,
         db_session: AsyncSession,
         value: str,
     ) -> None:
-        """account_age で不正な threshold_minutes はリダイレクト。"""
+        """account_age で不正な account_age_minutes はリダイレクト。"""
         rule = AutoBanRule(
             guild_id="123456789012345678",
             rule_type="account_age",
             action="ban",
-            threshold_minutes=1440,
+            threshold_seconds=86400,
         )
         db_session.add(rule)
         await db_session.commit()
@@ -11136,14 +11136,14 @@ class TestAutobanRoutes:
 
         response = await authenticated_client.post(
             f"/autoban/{rule.id}/edit",
-            data={"action": "ban", "threshold_minutes": value},
+            data={"action": "ban", "account_age_minutes": value},
             follow_redirects=False,
         )
         assert response.status_code == 302
         assert "/edit" in response.headers["location"]
 
         await db_session.refresh(rule)
-        assert rule.threshold_minutes == 1440
+        assert rule.threshold_seconds == 86400
 
     @pytest.mark.parametrize("value", ["xyz", "0", "3601", "-5", ""])
     async def test_autoban_edit_post_threshold_seconds_invalid(
@@ -11174,7 +11174,7 @@ class TestAutobanRoutes:
         await db_session.refresh(rule)
         assert rule.threshold_seconds == 60
 
-    async def test_autoban_edit_post_threshold_minutes_max_valid(
+    async def test_autoban_edit_post_threshold_seconds_account_age_max_valid(
         self,
         authenticated_client: AsyncClient,
         db_session: AsyncSession,
@@ -11184,7 +11184,7 @@ class TestAutobanRoutes:
             guild_id="123456789012345678",
             rule_type="account_age",
             action="ban",
-            threshold_minutes=1440,
+            threshold_seconds=86400,
         )
         db_session.add(rule)
         await db_session.commit()
@@ -11192,14 +11192,14 @@ class TestAutobanRoutes:
 
         response = await authenticated_client.post(
             f"/autoban/{rule.id}/edit",
-            data={"action": "ban", "threshold_minutes": "20160"},
+            data={"action": "ban", "account_age_minutes": "20160"},
             follow_redirects=False,
         )
         assert response.status_code == 302
         assert response.headers["location"] == "/autoban"
 
         await db_session.refresh(rule)
-        assert rule.threshold_minutes == 20160
+        assert rule.threshold_seconds == 1209600
 
     async def test_autoban_edit_post_threshold_seconds_max_valid(
         self,
@@ -11388,7 +11388,7 @@ class TestAutobanRoutes:
             guild_id="123456789012345678",
             rule_type="account_age",
             action="kick",
-            threshold_minutes=4320,
+            threshold_seconds=259200,
         )
         db_session.add(rule)
         await db_session.commit()

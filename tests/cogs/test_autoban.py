@@ -62,7 +62,6 @@ def _make_rule(
     action: str = "ban",
     pattern: str | None = "spammer",
     use_wildcard: bool = False,
-    threshold_minutes: int | None = None,
     threshold_seconds: int | None = None,
     required_channel_id: str | None = None,
     created_at: datetime | None = None,
@@ -76,7 +75,6 @@ def _make_rule(
     rule.action = action
     rule.pattern = pattern
     rule.use_wildcard = use_wildcard
-    rule.threshold_minutes = threshold_minutes
     rule.threshold_seconds = threshold_seconds
     rule.required_channel_id = required_channel_id
     rule.created_at = created_at or datetime.now(UTC) - timedelta(days=1)
@@ -168,7 +166,7 @@ class TestCheckAccountAge:
         cog = _make_cog()
         rule = _make_rule(
             rule_type="account_age",
-            threshold_minutes=1440,
+            threshold_seconds=86400,
             pattern=None,
         )
         member = _make_member(created_at=datetime.now(UTC) - timedelta(hours=1))
@@ -180,7 +178,7 @@ class TestCheckAccountAge:
         cog = _make_cog()
         rule = _make_rule(
             rule_type="account_age",
-            threshold_minutes=1440,
+            threshold_seconds=86400,
             pattern=None,
         )
         member = _make_member(created_at=datetime.now(UTC) - timedelta(days=30))
@@ -191,7 +189,7 @@ class TestCheckAccountAge:
         cog = _make_cog()
         rule = _make_rule(
             rule_type="account_age",
-            threshold_minutes=None,
+            threshold_seconds=None,
             pattern=None,
         )
         member = _make_member()
@@ -230,7 +228,7 @@ class TestCheckRule:
         cog = _make_cog()
         rule = _make_rule(
             rule_type="account_age",
-            threshold_minutes=1440,
+            threshold_seconds=86400,
             pattern=None,
         )
         member = _make_member(created_at=datetime.now(UTC) - timedelta(hours=1))
@@ -564,17 +562,17 @@ class TestAutobanAdd:
         cog = _make_cog()
         interaction = _make_interaction()
         await cog.autoban_add.callback(
-            cog, interaction, rule_type="account_age", threshold_minutes=None
+            cog, interaction, rule_type="account_age", account_age_minutes=None
         )
         call_args = interaction.response.send_message.call_args
-        assert "threshold_minutes" in call_args.args[0]
+        assert "account_age_minutes" in call_args.args[0]
 
     @pytest.mark.asyncio
     async def test_account_age_exceeds_max(self) -> None:
         cog = _make_cog()
         interaction = _make_interaction()
         await cog.autoban_add.callback(
-            cog, interaction, rule_type="account_age", threshold_minutes=30000
+            cog, interaction, rule_type="account_age", account_age_minutes=30000
         )
         call_args = interaction.response.send_message.call_args
         assert "20160" in call_args.args[0]
@@ -672,7 +670,7 @@ class TestAutobanList:
             _make_rule(
                 rule_id=2,
                 rule_type="account_age",
-                threshold_minutes=1440,
+                threshold_seconds=86400,
                 pattern=None,
             ),
         ]
@@ -763,7 +761,7 @@ class TestAccountAgeBoundary:
         cog = _make_cog()
         rule = _make_rule(
             rule_type="account_age",
-            threshold_minutes=1440,
+            threshold_seconds=86400,
             pattern=None,
         )
         member = _make_member(created_at=datetime.now(UTC) - timedelta(hours=24))
@@ -776,7 +774,7 @@ class TestAccountAgeBoundary:
         cog = _make_cog()
         rule = _make_rule(
             rule_type="account_age",
-            threshold_minutes=1440,
+            threshold_seconds=86400,
             pattern=None,
         )
         member = _make_member(
@@ -947,7 +945,7 @@ class TestAccountAgeEdgeCases:
         cog = _make_cog()
         rule = _make_rule(
             rule_type="account_age",
-            threshold_minutes=1,
+            threshold_seconds=60,
             pattern=None,
         )
         member = _make_member(created_at=datetime.now(UTC))
@@ -955,24 +953,24 @@ class TestAccountAgeEdgeCases:
         assert matched is True
         assert "less than threshold" in reason
 
-    def test_threshold_minutes_zero_returns_false(self) -> None:
-        """threshold_minutes = 0 は falsy なのでマッチしない。"""
+    def test_threshold_seconds_zero_returns_false(self) -> None:
+        """threshold_seconds = 0 は falsy なのでマッチしない。"""
         cog = _make_cog()
         rule = _make_rule(
             rule_type="account_age",
-            threshold_minutes=0,
+            threshold_seconds=0,
             pattern=None,
         )
         member = _make_member(created_at=datetime.now(UTC))
         matched, _ = cog._check_account_age(rule, member)
         assert matched is False
 
-    def test_max_threshold_minutes(self) -> None:
-        """最大閾値 (20160分 = 14日) で新しいアカウントにマッチ。"""
+    def test_max_threshold_seconds(self) -> None:
+        """最大閾値 (1209600秒 = 14日) で新しいアカウントにマッチ。"""
         cog = _make_cog()
         rule = _make_rule(
             rule_type="account_age",
-            threshold_minutes=20160,
+            threshold_seconds=1209600,
             pattern=None,
         )
         member = _make_member(created_at=datetime.now(UTC) - timedelta(days=13))
@@ -993,7 +991,7 @@ class TestOnMemberJoinEdgeCases:
         )
         rule1 = _make_rule(rule_id=1, pattern="baduser")
         rule2 = _make_rule(
-            rule_id=2, rule_type="account_age", threshold_minutes=1440, pattern=None
+            rule_id=2, rule_type="account_age", threshold_seconds=86400, pattern=None
         )
         rule3 = _make_rule(rule_id=3, rule_type="no_avatar", pattern=None)
         with patch(
@@ -1896,7 +1894,9 @@ class TestOnMessage:
         msg.guild = MagicMock()
         msg.guild.id = 789
         msg.author = member
-        rule = _make_rule(rule_type="account_age", pattern=None, threshold_minutes=1440)
+        rule = _make_rule(
+            rule_type="account_age", pattern=None, threshold_seconds=86400
+        )
         with (
             patch(
                 "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
@@ -1988,11 +1988,11 @@ class TestAutobanAddTimingRules:
             assert "Wildcard: Yes" in call_args.args[0]
 
     @pytest.mark.asyncio
-    async def test_successful_add_with_threshold_minutes(self) -> None:
+    async def test_successful_add_with_account_age_minutes(self) -> None:
         cog = _make_cog()
         interaction = _make_interaction()
         mock_rule = _make_rule(
-            rule_id=12, rule_type="account_age", threshold_minutes=2880
+            rule_id=12, rule_type="account_age", threshold_seconds=172800
         )
         with patch(
             "src.cogs.autoban.create_autoban_rule",
@@ -2003,7 +2003,7 @@ class TestAutobanAddTimingRules:
                 cog,
                 interaction,
                 rule_type="account_age",
-                threshold_minutes=2880,
+                account_age_minutes=2880,
             )
             call_args = interaction.response.send_message.call_args
             assert "2880min" in call_args.args[0]
@@ -2021,7 +2021,9 @@ class TestAutobanListTimingRules:
     async def test_shows_account_age_threshold(self) -> None:
         cog = _make_cog()
         interaction = _make_interaction()
-        rule = _make_rule(rule_type="account_age", threshold_minutes=1440, pattern=None)
+        rule = _make_rule(
+            rule_type="account_age", threshold_seconds=86400, pattern=None
+        )
         with patch(
             "src.cogs.autoban.get_autoban_rules_by_guild",
             new_callable=AsyncMock,

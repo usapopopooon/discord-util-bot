@@ -1,8 +1,7 @@
-"""rename_threshold_hours_to_minutes
+"""merge_threshold_hours_into_threshold_seconds
 
-account_age ルールの閾値を時間単位から分単位に変更する。
-カラム名を threshold_hours → threshold_minutes にリネームし、
-既存データを 60 倍に変換する。
+account_age ルールの閾値を threshold_hours から threshold_seconds に統合する。
+既存データを時間→秒に変換し、threshold_hours カラムを削除する。
 
 Revision ID: t1h2r3m4i5n6
 Revises: h1e2a3l4t5h6
@@ -12,6 +11,7 @@ Create Date: 2026-03-08 00:00:00.000000
 
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "t1h2r3m4i5n6"
@@ -21,26 +21,29 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.alter_column(
-        "autoban_rules",
-        "threshold_hours",
-        new_column_name="threshold_minutes",
-    )
-    # 既存データを時間→分に変換
+    # threshold_hours を秒に変換して threshold_seconds に移行
     op.execute(
-        "UPDATE autoban_rules SET threshold_minutes = threshold_minutes * 60 "
-        "WHERE threshold_minutes IS NOT NULL"
+        "UPDATE autoban_rules "
+        "SET threshold_seconds = threshold_hours * 3600 "
+        "WHERE threshold_hours IS NOT NULL"
     )
+    op.drop_column("autoban_rules", "threshold_hours")
 
 
 def downgrade() -> None:
-    # 分→時間に変換 (端数切り捨て)
-    op.execute(
-        "UPDATE autoban_rules SET threshold_minutes = threshold_minutes / 60 "
-        "WHERE threshold_minutes IS NOT NULL"
-    )
-    op.alter_column(
+    op.add_column(
         "autoban_rules",
-        "threshold_minutes",
-        new_column_name="threshold_hours",
+        sa.Column("threshold_hours", sa.Integer(), nullable=True),
+    )
+    # account_age ルールの threshold_seconds を時間に戻す
+    op.execute(
+        "UPDATE autoban_rules "
+        "SET threshold_hours = threshold_seconds / 3600 "
+        "WHERE rule_type = 'account_age' AND threshold_seconds IS NOT NULL"
+    )
+    # account_age ルールの threshold_seconds をクリア
+    op.execute(
+        "UPDATE autoban_rules "
+        "SET threshold_seconds = NULL "
+        "WHERE rule_type = 'account_age'"
     )
