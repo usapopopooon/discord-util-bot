@@ -4,7 +4,7 @@
 
 ## プロジェクト概要
 
-Discord サーバー運営を支援する多機能 Bot。一時 VC 管理、チケットシステム、Bump リマインダー、Sticky メッセージ、ロールパネル、AutoBan、Web 管理画面を搭載。
+Discord サーバー運営を支援する多機能 Bot。一時 VC 管理、チケットシステム、Bump リマインダー、Sticky メッセージ、ロールパネル、AutoMod、Web 管理画面を搭載。
 
 ### 技術スタック
 
@@ -35,7 +35,7 @@ src/
 │   ├── sticky.py        # Sticky メッセージ
 │   ├── role_panel.py    # ロールパネル
 │   ├── ticket.py        # チケットシステム
-│   ├── autoban.py       # AutoBan (自動 BAN/キック)
+│   ├── automod.py       # AutoMod (自動モデレーション)
 │   └── health.py        # ヘルスチェック (ハートビート)
 ├── core/
 │   ├── permissions.py   # Discord 権限ヘルパー
@@ -66,7 +66,7 @@ tests/
 │   ├── test_sticky.py
 │   ├── test_role_panel.py
 │   ├── test_ticket.py
-│   ├── test_autoban.py
+│   ├── test_automod.py
 │   └── test_health.py
 ├── database/
 │   ├── test_engine.py
@@ -297,11 +297,11 @@ class Ticket(Base):
     # relationship: category -> TicketCategory
 ```
 
-### AutoBanRule
-AutoBan ルールの設定。
+### AutoModRule
+AutoMod ルールの設定。
 
 ```python
-class AutoBanRule(Base):
+class AutoModRule(Base):
     id: Mapped[int]                       # PK
     guild_id: Mapped[str]                 # Discord サーバー ID
     rule_type: Mapped[str]                # "username_match" | "account_age" | "no_avatar"
@@ -313,32 +313,32 @@ class AutoBanRule(Base):
     threshold_hours: Mapped[int | None]   # アカウント年齢閾値 (時間、account_age 用、最大 336)
     threshold_seconds: Mapped[int | None] # JOIN後の閾値 (秒、role_acquired/vc_join/message_post 用、最大 3600)
     created_at: Mapped[datetime]
-    # relationship: logs -> AutoBanLog[]
+    # relationship: logs -> AutoModLog[]
 ```
 
-### AutoBanConfig
-AutoBan のギルドごと設定 (ログチャンネル)。
+### AutoModConfig
+AutoMod のギルドごと設定 (ログチャンネル)。
 
 ```python
-class AutoBanConfig(Base):
+class AutoModConfig(Base):
     guild_id: Mapped[str]              # PK (1ギルド1設定)
     log_channel_id: Mapped[str | None] # BAN/KICK ログ送信先チャンネル ID
 ```
 
-### AutoBanLog
-AutoBan 実行ログ。
+### AutoModLog
+AutoMod 実行ログ。
 
 ```python
-class AutoBanLog(Base):
+class AutoModLog(Base):
     id: Mapped[int]                    # PK
     guild_id: Mapped[str]              # Discord サーバー ID
     user_id: Mapped[str]               # 対象ユーザー ID
     username: Mapped[str]              # 対象ユーザー名
-    rule_id: Mapped[int]               # FK -> AutoBanRule (CASCADE)
+    rule_id: Mapped[int]               # FK -> AutoModRule (CASCADE)
     action_taken: Mapped[str]          # 実行されたアクション ("banned" | "kicked")
     reason: Mapped[str]                # 理由
     created_at: Mapped[datetime]
-    # relationship: rule -> AutoBanRule
+    # relationship: rule -> AutoModRule
 ```
 
 ### DiscordGuild
@@ -586,10 +586,10 @@ Created at: 2026-02-07 19:00
 - `on_guild_channel_delete`: チケットチャンネルが外部削除された場合の DB クリーンアップ
 - `on_raw_message_delete`: パネルメッセージが削除された場合の DB クリーンアップ
 
-### 6. AutoBan 機能 (`autoban.py`)
+### 6. AutoMod 機能 (`automod.py`)
 
 #### 概要
-ルールに基づいてメンバーを自動 BAN/キックする。参加時チェック (username_match, account_age, no_avatar) と、参加後の行動チェック (role_acquired, vc_join, message_post) の2種類がある。
+ルールに基づいてメンバーを自動モデレーションする。参加時チェック (username_match, account_age, no_avatar) と、参加後の行動チェック (role_acquired, vc_join, message_post) の2種類がある。
 
 #### ルールタイプ
 | タイプ | 説明 | イベント |
@@ -613,10 +613,10 @@ Created at: 2026-02-07 19:00
 3. 対象ルールタイプの条件をチェック
 4. マッチ → BAN or キック実行 (メンバー情報を事前保存)
 5. ログを DB に保存
-6. `AutoBanConfig` にログチャンネルが設定されていれば Embed を送信
+6. `AutoModConfig` にログチャンネルが設定されていれば Embed を送信
 
 #### ログ Embed
-BAN/KICK 実行時、`AutoBanConfig.log_channel_id` にリッチ Embed を送信:
+BAN/KICK 実行時、`AutoModConfig.log_channel_id` にリッチ Embed を送信:
 - ユーザー情報 (名前、ID、アバター)
 - アクション (BANNED/KICKED)
 - 適用ルール (ID + タイプ)
@@ -624,10 +624,10 @@ BAN/KICK 実行時、`AutoBanConfig.log_channel_id` にリッチ Embed を送信
 - アカウント作成日時、サーバー参加日時 (経過秒数付き)
 
 #### スラッシュコマンド
-- `/autoban add`: ルール追加 (タイプ・パターン・アクション・閾値等)
-- `/autoban remove`: ルール削除
-- `/autoban list`: ルール一覧表示
-- `/autoban logs`: 実行ログ表示
+- `/automod add`: ルール追加 (タイプ・パターン・アクション・閾値等)
+- `/automod remove`: ルール削除
+- `/automod list`: ルール一覧表示
+- `/automod logs`: 実行ログ表示
 
 ### 7. 管理者コマンド (`admin.py`)
 
@@ -653,7 +653,7 @@ Bot オーナー/管理者用のメンテナンスコマンド。
 - Sticky メッセージ数 (総数/孤立数)
 - ロールパネル数 (総数/孤立数)
 - チケットカテゴリ数 (総数/孤立数)
-- AutoBan ルール数 (総数/孤立数)
+- AutoMod ルール数 (総数/孤立数)
 - 参加ギルド数
 ```
 
@@ -693,12 +693,12 @@ Bot オーナー/管理者用のメンテナンスコマンド。
 | `/tickets/panels/new` | チケットパネル作成 |
 | `/tickets/panels/{id}/delete` | チケットパネル削除 (POST) |
 | `/tickets/{ticket_id}` | チケット詳細・トランスクリプト |
-| `/autoban` | AutoBan ルール一覧 |
-| `/autoban/new` | AutoBan ルール作成 |
-| `/autoban/{rule_id}/delete` | AutoBan ルール削除 (POST) |
-| `/autoban/{rule_id}/toggle` | AutoBan ルール有効/無効切替 (POST) |
-| `/autoban/logs` | AutoBan 実行ログ |
-| `/autoban/settings` | AutoBan 設定 (ログチャンネル) |
+| `/automod` | AutoMod ルール一覧 |
+| `/automod/new` | AutoMod ルール作成 |
+| `/automod/{rule_id}/delete` | AutoMod ルール削除 (POST) |
+| `/automod/{rule_id}/toggle` | AutoMod ルール有効/無効切替 (POST) |
+| `/automod/logs` | AutoMod 実行ログ |
+| `/automod/settings` | AutoMod 設定 (ログチャンネル) |
 | `/settings` | 設定画面 (パスワード変更等) |
 | `/settings/maintenance` | メンテナンス画面 (統計/クリーンアップ) |
 | `/forgot-password` | パスワードリセット |

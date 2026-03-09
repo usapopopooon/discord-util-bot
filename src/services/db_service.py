@@ -45,10 +45,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import (
-    AutoBanConfig,
-    AutoBanIntroPost,
-    AutoBanLog,
-    AutoBanRule,
+    AutoModConfig,
+    AutoModIntroPost,
+    AutoModLog,
+    AutoModRule,
     BanLog,
     BotActivity,
     BumpConfig,
@@ -1923,50 +1923,50 @@ async def get_discord_channels_by_guild(
 
 
 # =============================================================================
-# AutoBan (自動 BAN) 操作
+# AutoMod (自動モデレーション) 操作
 # =============================================================================
 
 
-async def get_all_autoban_rules(
+async def get_all_automod_rules(
     session: AsyncSession,
-) -> list[AutoBanRule]:
-    """全 autoban ルールを取得する。"""
+) -> list[AutoModRule]:
+    """全 automod ルールを取得する。"""
     result = await session.execute(
-        select(AutoBanRule).order_by(AutoBanRule.guild_id, AutoBanRule.created_at)
+        select(AutoModRule).order_by(AutoModRule.guild_id, AutoModRule.created_at)
     )
     return list(result.scalars().all())
 
 
-async def get_autoban_rules_by_guild(
+async def get_automod_rules_by_guild(
     session: AsyncSession, guild_id: str
-) -> list[AutoBanRule]:
-    """サーバーの全 autoban ルールを取得する。"""
+) -> list[AutoModRule]:
+    """サーバーの全 automod ルールを取得する。"""
     result = await session.execute(
-        select(AutoBanRule).where(AutoBanRule.guild_id == guild_id)
+        select(AutoModRule).where(AutoModRule.guild_id == guild_id)
     )
     return list(result.scalars().all())
 
 
-async def get_enabled_autoban_rules_by_guild(
+async def get_enabled_automod_rules_by_guild(
     session: AsyncSession, guild_id: str
-) -> list[AutoBanRule]:
-    """サーバーの有効な autoban ルールを取得する。"""
+) -> list[AutoModRule]:
+    """サーバーの有効な automod ルールを取得する。"""
     result = await session.execute(
-        select(AutoBanRule).where(
-            AutoBanRule.guild_id == guild_id,
-            AutoBanRule.is_enabled.is_(True),
+        select(AutoModRule).where(
+            AutoModRule.guild_id == guild_id,
+            AutoModRule.is_enabled.is_(True),
         )
     )
     return list(result.scalars().all())
 
 
-async def get_autoban_rule(session: AsyncSession, rule_id: int) -> AutoBanRule | None:
-    """ルール ID から autoban ルールを取得する。"""
-    result = await session.execute(select(AutoBanRule).where(AutoBanRule.id == rule_id))
+async def get_automod_rule(session: AsyncSession, rule_id: int) -> AutoModRule | None:
+    """ルール ID から automod ルールを取得する。"""
+    result = await session.execute(select(AutoModRule).where(AutoModRule.id == rule_id))
     return result.scalar_one_or_none()
 
 
-async def create_autoban_rule(
+async def create_automod_rule(
     session: AsyncSession,
     guild_id: str,
     rule_type: str,
@@ -1974,15 +1974,17 @@ async def create_autoban_rule(
     pattern: str | None = None,
     use_wildcard: bool = False,
     threshold_seconds: int | None = None,
-) -> AutoBanRule:
-    """新しい autoban ルールを作成する。"""
-    rule = AutoBanRule(
+    timeout_duration_seconds: int | None = None,
+) -> AutoModRule:
+    """新しい automod ルールを作成する。"""
+    rule = AutoModRule(
         guild_id=guild_id,
         rule_type=rule_type,
         action=action,
         pattern=pattern,
         use_wildcard=use_wildcard,
         threshold_seconds=threshold_seconds,
+        timeout_duration_seconds=timeout_duration_seconds,
     )
     session.add(rule)
     await session.commit()
@@ -1990,9 +1992,9 @@ async def create_autoban_rule(
     return rule
 
 
-async def delete_autoban_rule(session: AsyncSession, rule_id: int) -> bool:
-    """autoban ルールを削除する。"""
-    rule = await get_autoban_rule(session, rule_id)
+async def delete_automod_rule(session: AsyncSession, rule_id: int) -> bool:
+    """automod ルールを削除する。"""
+    rule = await get_automod_rule(session, rule_id)
     if rule:
         await session.delete(rule)
         await session.commit()
@@ -2000,9 +2002,9 @@ async def delete_autoban_rule(session: AsyncSession, rule_id: int) -> bool:
     return False
 
 
-async def toggle_autoban_rule(session: AsyncSession, rule_id: int) -> bool | None:
-    """autoban ルールの有効/無効を切り替える。新しい状態を返す。"""
-    rule = await get_autoban_rule(session, rule_id)
+async def toggle_automod_rule(session: AsyncSession, rule_id: int) -> bool | None:
+    """automod ルールの有効/無効を切り替える。新しい状態を返す。"""
+    rule = await get_automod_rule(session, rule_id)
     if rule:
         rule.is_enabled = not rule.is_enabled
         await session.commit()
@@ -2010,16 +2012,17 @@ async def toggle_autoban_rule(session: AsyncSession, rule_id: int) -> bool | Non
     return None
 
 
-async def update_autoban_rule(
+async def update_automod_rule(
     session: AsyncSession,
-    rule: AutoBanRule,
+    rule: AutoModRule,
     *,
     action: str | None = None,
     pattern: str | None = None,
     use_wildcard: bool | None = None,
     threshold_seconds: int | None = None,
-) -> AutoBanRule:
-    """autoban ルールを更新する。None のフィールドは変更しない。"""
+    timeout_duration_seconds: int | None = None,
+) -> AutoModRule:
+    """automod ルールを更新する。None のフィールドは変更しない。"""
     if action is not None:
         rule.action = action
     if pattern is not None:
@@ -2028,11 +2031,13 @@ async def update_autoban_rule(
         rule.use_wildcard = use_wildcard
     if threshold_seconds is not None:
         rule.threshold_seconds = threshold_seconds
+    if timeout_duration_seconds is not None:
+        rule.timeout_duration_seconds = timeout_duration_seconds
     await session.commit()
     return rule
 
 
-async def create_autoban_log(
+async def create_automod_log(
     session: AsyncSession,
     guild_id: str,
     user_id: str,
@@ -2040,9 +2045,9 @@ async def create_autoban_log(
     rule_id: int,
     action_taken: str,
     reason: str,
-) -> AutoBanLog:
-    """autoban 実行ログを作成する。"""
-    log = AutoBanLog(
+) -> AutoModLog:
+    """automod 実行ログを作成する。"""
+    log = AutoModLog(
         guild_id=guild_id,
         user_id=user_id,
         username=username,
@@ -2056,7 +2061,7 @@ async def create_autoban_log(
     return log
 
 
-async def claim_autoban_log(
+async def claim_automod_log(
     session: AsyncSession,
     guild_id: str,
     user_id: str,
@@ -2064,8 +2069,8 @@ async def claim_autoban_log(
     rule_id: int,
     action_taken: str,
     reason: str,
-) -> AutoBanLog | None:
-    """autoban 実行ログをアトミックに作成する。
+) -> AutoModLog | None:
+    """automod 実行ログをアトミックに作成する。
 
     同一 (guild_id, user_id, rule_id) のログが直近 10 秒以内に存在する場合は
     重複と見なし None を返す (別インスタンスが先に処理済み)。
@@ -2075,24 +2080,24 @@ async def claim_autoban_log(
 
     # ルール行をロックして並行書き込みを直列化
     rule_result = await session.execute(
-        select(AutoBanRule).where(AutoBanRule.id == rule_id).with_for_update()
+        select(AutoModRule).where(AutoModRule.id == rule_id).with_for_update()
     )
     if not rule_result.scalar_one_or_none():
         return None  # ルールが削除済み
 
     threshold = datetime.now(UTC) - timedelta(seconds=10)
     dup = await session.execute(
-        select(AutoBanLog.id).where(
-            AutoBanLog.guild_id == guild_id,
-            AutoBanLog.user_id == user_id,
-            AutoBanLog.rule_id == rule_id,
-            AutoBanLog.created_at >= threshold,
+        select(AutoModLog.id).where(
+            AutoModLog.guild_id == guild_id,
+            AutoModLog.user_id == user_id,
+            AutoModLog.rule_id == rule_id,
+            AutoModLog.created_at >= threshold,
         )
     )
     if dup.scalar_one_or_none() is not None:
         return None  # 別インスタンスが先に処理済み
 
-    log = AutoBanLog(
+    log = AutoModLog(
         guild_id=guild_id,
         user_id=user_id,
         username=username,
@@ -2106,67 +2111,67 @@ async def claim_autoban_log(
     return log
 
 
-async def get_autoban_logs_by_guild(
+async def get_automod_logs_by_guild(
     session: AsyncSession, guild_id: str, limit: int = 50
-) -> list[AutoBanLog]:
-    """サーバーの autoban ログを取得する (新しい順)。"""
+) -> list[AutoModLog]:
+    """サーバーの automod ログを取得する (新しい順)。"""
     result = await session.execute(
-        select(AutoBanLog)
-        .where(AutoBanLog.guild_id == guild_id)
-        .order_by(AutoBanLog.created_at.desc())
+        select(AutoModLog)
+        .where(AutoModLog.guild_id == guild_id)
+        .order_by(AutoModLog.created_at.desc())
         .limit(limit)
     )
     return list(result.scalars().all())
 
 
-async def get_all_autoban_logs(
+async def get_all_automod_logs(
     session: AsyncSession, limit: int = 100
-) -> list[AutoBanLog]:
-    """全 autoban ログを取得する (新しい順)。"""
+) -> list[AutoModLog]:
+    """全 automod ログを取得する (新しい順)。"""
     result = await session.execute(
-        select(AutoBanLog).order_by(AutoBanLog.created_at.desc()).limit(limit)
+        select(AutoModLog).order_by(AutoModLog.created_at.desc()).limit(limit)
     )
     return list(result.scalars().all())
 
 
-async def get_autoban_config(
+async def get_automod_config(
     session: AsyncSession, guild_id: str
-) -> AutoBanConfig | None:
-    """ギルドの autoban 設定を取得する。"""
+) -> AutoModConfig | None:
+    """ギルドの automod 設定を取得する。"""
     result = await session.execute(
-        select(AutoBanConfig).where(AutoBanConfig.guild_id == guild_id)
+        select(AutoModConfig).where(AutoModConfig.guild_id == guild_id)
     )
     return result.scalar_one_or_none()
 
 
-async def upsert_autoban_config(
+async def upsert_automod_config(
     session: AsyncSession,
     guild_id: str,
     log_channel_id: str | None,
-) -> AutoBanConfig:
-    """autoban 設定を作成または更新する。"""
-    existing = await get_autoban_config(session, guild_id)
+) -> AutoModConfig:
+    """automod 設定を作成または更新する。"""
+    existing = await get_automod_config(session, guild_id)
 
     if existing:
         existing.log_channel_id = log_channel_id
         await session.commit()
         return existing
 
-    config = AutoBanConfig(guild_id=guild_id, log_channel_id=log_channel_id)
+    config = AutoModConfig(guild_id=guild_id, log_channel_id=log_channel_id)
     session.add(config)
     await session.commit()
     await session.refresh(config)
     return config
 
 
-async def get_all_autoban_configs(session: AsyncSession) -> list[AutoBanConfig]:
-    """全 autoban 設定を取得する。"""
-    result = await session.execute(select(AutoBanConfig))
+async def get_all_automod_configs(session: AsyncSession) -> list[AutoModConfig]:
+    """全 automod 設定を取得する。"""
+    result = await session.execute(select(AutoModConfig))
     return list(result.scalars().all())
 
 
 # =============================================================================
-# AutoBanIntroPost (投稿追跡) 操作
+# AutoModIntroPost (投稿追跡) 操作
 # =============================================================================
 
 
@@ -2177,7 +2182,7 @@ async def record_intro_post(
     channel_id: str,
 ) -> None:
     """指定チャンネルへの投稿を記録する (重複は無視)。"""
-    post = AutoBanIntroPost(
+    post = AutoModIntroPost(
         guild_id=guild_id,
         user_id=user_id,
         channel_id=channel_id,
@@ -2197,11 +2202,11 @@ async def has_intro_post(
 ) -> bool:
     """指定チャンネルへの投稿があるか確認する。"""
     result = await session.execute(
-        select(AutoBanIntroPost.id)
+        select(AutoModIntroPost.id)
         .where(
-            AutoBanIntroPost.guild_id == guild_id,
-            AutoBanIntroPost.user_id == user_id,
-            AutoBanIntroPost.channel_id == channel_id,
+            AutoModIntroPost.guild_id == guild_id,
+            AutoModIntroPost.user_id == user_id,
+            AutoModIntroPost.channel_id == channel_id,
         )
         .limit(1)
     )
@@ -2214,7 +2219,7 @@ async def delete_intro_posts_by_guild(
 ) -> int:
     """ギルドの全投稿追跡レコードを削除する。"""
     result = await session.execute(
-        delete(AutoBanIntroPost).where(AutoBanIntroPost.guild_id == guild_id)
+        delete(AutoModIntroPost).where(AutoModIntroPost.guild_id == guild_id)
     )
     await session.commit()
     return int(result.rowcount)  # type: ignore[attr-defined]
@@ -2231,7 +2236,7 @@ async def create_ban_log(
     user_id: str,
     username: str,
     reason: str | None = None,
-    is_autoban: bool = False,
+    is_automod: bool = False,
 ) -> BanLog:
     """BAN ログを作成する。"""
     log = BanLog(
@@ -2239,7 +2244,7 @@ async def create_ban_log(
         user_id=user_id,
         username=username,
         reason=reason,
-        is_autoban=is_autoban,
+        is_automod=is_automod,
     )
     session.add(log)
     await session.commit()
@@ -2253,7 +2258,7 @@ async def claim_ban_log(
     user_id: str,
     username: str,
     reason: str | None = None,
-    is_autoban: bool = False,
+    is_automod: bool = False,
 ) -> BanLog | None:
     """BAN ログをアトミックに作成する。
 
@@ -2278,7 +2283,7 @@ async def claim_ban_log(
         user_id=user_id,
         username=username,
         reason=reason,
-        is_autoban=is_autoban,
+        is_automod=is_automod,
     )
     session.add(log)
     await session.commit()

@@ -1,6 +1,6 @@
-"""Autoban cog.
+"""AutoMod cog.
 
-新規メンバー参加時にルールに基づき自動 BAN/KICK する。
+新規メンバー参加時にルールに基づき自動 BAN/KICK/Timeout する。
 
 ルールタイプ:
   - username_match: ユーザー名マッチング (大文字小文字無視、ワイルドカード対応)
@@ -18,13 +18,13 @@
   - on_voice_state_update イベントでVC参加を検知
   - on_message イベントでメッセージ投稿を検知
   - DB から有効ルールを取得し、順にチェック
-  - マッチしたら ban/kick + DB にログ記録
+  - マッチしたら ban/kick/timeout + DB にログ記録
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import discord
 from discord import app_commands
@@ -32,16 +32,16 @@ from discord.ext import commands
 
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
-from src.database.models import AutoBanRule
+from src.database.models import AutoModRule
 from src.services.db_service import (
-    claim_autoban_log,
+    claim_automod_log,
     claim_ban_log,
-    create_autoban_rule,
-    delete_autoban_rule,
-    get_autoban_config,
-    get_autoban_logs_by_guild,
-    get_autoban_rules_by_guild,
-    get_enabled_autoban_rules_by_guild,
+    create_automod_rule,
+    delete_automod_rule,
+    get_automod_config,
+    get_automod_logs_by_guild,
+    get_automod_rules_by_guild,
+    get_enabled_automod_rules_by_guild,
     has_intro_post,
     record_intro_post,
 )
@@ -50,10 +50,11 @@ logger = logging.getLogger(__name__)
 
 MAX_ACCOUNT_AGE_MINUTES = 20160  # 14日
 MAX_THRESHOLD_SECONDS = 3600
+MAX_TIMEOUT_MINUTES = 40320
 
 
-class AutoBanCog(commands.Cog):
-    """Autoban 機能を提供する Cog。"""
+class AutoModCog(commands.Cog):
+    """AutoMod 機能を提供する Cog。"""
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -64,14 +65,14 @@ class AutoBanCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:
-        """新規メンバー参加時に autoban ルールをチェックする。"""
+        """新規メンバー参加時に automod ルールをチェックする。"""
         if member.bot:
             return
 
         guild_id = str(member.guild.id)
 
         async with async_session() as session:
-            rules = await get_enabled_autoban_rules_by_guild(session, guild_id)
+            rules = await get_enabled_automod_rules_by_guild(session, guild_id)
 
         if not rules:
             return
@@ -86,7 +87,7 @@ class AutoBanCog(commands.Cog):
     async def on_member_update(
         self, before: discord.Member, after: discord.Member
     ) -> None:
-        """メンバー更新時にロール取得の autoban ルールをチェックする。"""
+        """メンバー更新時にロール取得の automod ルールをチェックする。"""
         if after.bot:
             return
 
@@ -102,7 +103,7 @@ class AutoBanCog(commands.Cog):
         guild_id = str(after.guild.id)
 
         async with async_session() as session:
-            rules = await get_enabled_autoban_rules_by_guild(session, guild_id)
+            rules = await get_enabled_automod_rules_by_guild(session, guild_id)
 
         if not rules:
             return
@@ -122,7 +123,7 @@ class AutoBanCog(commands.Cog):
         before: discord.VoiceState,
         after: discord.VoiceState,
     ) -> None:
-        """VC参加時の autoban ルールをチェックする。"""
+        """VC参加時の automod ルールをチェックする。"""
         if member.bot:
             return
 
@@ -133,7 +134,7 @@ class AutoBanCog(commands.Cog):
         guild_id = str(member.guild.id)
 
         async with async_session() as session:
-            rules = await get_enabled_autoban_rules_by_guild(session, guild_id)
+            rules = await get_enabled_automod_rules_by_guild(session, guild_id)
 
         if not rules:
             return
@@ -152,7 +153,7 @@ class AutoBanCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        """メッセージ投稿時の autoban ルールをチェックする。"""
+        """メッセージ投稿時の automod ルールをチェックする。"""
         if not message.guild or not message.author:
             return
 
@@ -173,7 +174,7 @@ class AutoBanCog(commands.Cog):
         guild_id = str(message.guild.id)
 
         async with async_session() as session:
-            rules = await get_enabled_autoban_rules_by_guild(session, guild_id)
+            rules = await get_enabled_automod_rules_by_guild(session, guild_id)
 
         if not rules:
             return
@@ -212,12 +213,14 @@ class AutoBanCog(commands.Cog):
     async def on_member_ban(self, guild: discord.Guild, user: discord.User) -> None:
         """BAN イベントを検知して BAN ログを記録する。"""
         reason: str | None = None
-        is_autoban = False
+        is_automod = False
         try:
             ban_entry = await guild.fetch_ban(user)
             reason = ban_entry.reason
-            if reason and reason.startswith("[Autoban]"):
-                is_autoban = True
+            if reason and (
+                reason.startswith("[AutoMod]") or reason.startswith("[Autoban]")
+            ):
+                is_automod = True
         except discord.NotFound:
             pass
         except discord.HTTPException as e:
@@ -231,7 +234,7 @@ class AutoBanCog(commands.Cog):
                     user_id=str(user.id),
                     username=user.name,
                     reason=reason,
-                    is_autoban=is_autoban,
+                    is_automod=is_automod,
                 )
                 if not log:
                     logger.info(
@@ -247,7 +250,7 @@ class AutoBanCog(commands.Cog):
     # ==========================================================================
 
     def _check_rule(
-        self, rule: AutoBanRule, member: discord.Member
+        self, rule: AutoModRule, member: discord.Member
     ) -> tuple[bool, str]:
         """JOIN 時にチェックするルール (username_match / account_age / no_avatar のみ)。
 
@@ -264,7 +267,7 @@ class AutoBanCog(commands.Cog):
         return False, ""
 
     def _check_username_match(
-        self, rule: AutoBanRule, member: discord.Member
+        self, rule: AutoModRule, member: discord.Member
     ) -> tuple[bool, str]:
         """ユーザー名マッチングをチェック。"""
         if not rule.pattern:
@@ -282,7 +285,7 @@ class AutoBanCog(commands.Cog):
         return False, ""
 
     def _check_account_age(
-        self, rule: AutoBanRule, member: discord.Member
+        self, rule: AutoModRule, member: discord.Member
     ) -> tuple[bool, str]:
         """アカウント年齢をチェック。"""
         if not rule.threshold_seconds:
@@ -307,7 +310,7 @@ class AutoBanCog(commands.Cog):
         return False, ""
 
     def _check_join_timing(
-        self, rule: AutoBanRule, member: discord.Member
+        self, rule: AutoModRule, member: discord.Member
     ) -> tuple[bool, str]:
         """サーバーJOIN後の経過時間をチェック (role_acquired / vc_join 共通)。"""
         if not rule.threshold_seconds or not member.joined_at:
@@ -322,7 +325,7 @@ class AutoBanCog(commands.Cog):
         return False, ""
 
     async def _check_intro_missing(
-        self, rule: AutoBanRule, member: discord.Member
+        self, rule: AutoModRule, member: discord.Member
     ) -> tuple[bool, str]:
         """指定チャンネルに投稿していないかチェック。"""
         if not rule.required_channel_id or not member.joined_at:
@@ -351,13 +354,18 @@ class AutoBanCog(commands.Cog):
     async def _execute_action(
         self,
         member: discord.Member,
-        rule: AutoBanRule,
+        rule: AutoModRule,
         reason: str,
     ) -> None:
         """マッチしたルールに基づきアクションを実行する。"""
         guild = member.guild
-        action_taken = "banned" if rule.action == "ban" else "kicked"
-        full_reason = f"[Autoban] {reason}"
+        if rule.action == "ban":
+            action_taken = "banned"
+        elif rule.action == "kick":
+            action_taken = "kicked"
+        else:
+            action_taken = "timed_out"
+        full_reason = f"[AutoMod] {reason}"
 
         # ログ送信用にメンバー情報を事前に保存 (BAN後はアクセス不可)
         member_name = member.name
@@ -369,7 +377,7 @@ class AutoBanCog(commands.Cog):
 
         # アトミックにログを作成 — claim 成功インスタンスのみが BAN/KICK を実行
         async with async_session() as session:
-            log = await claim_autoban_log(
+            log = await claim_automod_log(
                 session,
                 guild_id=str(guild.id),
                 user_id=str(member_id),
@@ -380,7 +388,7 @@ class AutoBanCog(commands.Cog):
             )
             if not log:
                 logger.info(
-                    "Autoban already processed by another instance: "
+                    "AutoMod already processed by another instance: "
                     "guild=%s user=%s rule=%s",
                     guild.id,
                     member_id,
@@ -389,16 +397,19 @@ class AutoBanCog(commands.Cog):
                 return
 
             # ログチャンネルに通知を送信
-            config = await get_autoban_config(session, str(guild.id))
+            config = await get_automod_config(session, str(guild.id))
 
         try:
             if rule.action == "ban":
                 await guild.ban(member, reason=full_reason)
-            else:
+            elif rule.action == "kick":
                 await guild.kick(member, reason=full_reason)
+            elif rule.action == "timeout":
+                duration = timedelta(seconds=rule.timeout_duration_seconds or 60)
+                await member.timeout(duration, reason=full_reason)
 
             logger.info(
-                "Autoban %s user %s (%s) in guild %s: %s",
+                "AutoMod %s user %s (%s) in guild %s: %s",
                 action_taken,
                 member_name,
                 member_id,
@@ -446,7 +457,7 @@ class AutoBanCog(commands.Cog):
         guild: discord.Guild,
         channel_id: str,
         action_taken: str,
-        rule: AutoBanRule,
+        rule: AutoModRule,
         reason: str,
         member_name: str,
         member_id: int,
@@ -455,14 +466,19 @@ class AutoBanCog(commands.Cog):
         member_created_at: datetime,
         member_joined_at: datetime | None,
     ) -> None:
-        """ログチャンネルに BAN/KICK の通知 Embed を送信する。"""
+        """ログチャンネルに BAN/KICK/Timeout の通知 Embed を送信する。"""
         channel = guild.get_channel(int(channel_id))
         if not channel or not isinstance(channel, discord.TextChannel):
             logger.warning("Log channel %s not found in guild %s", channel_id, guild.id)
             return
 
-        color = 0xFF0000 if action_taken == "banned" else 0xFFA500
-        title = f"[AutoBan] User {action_taken.capitalize()}"
+        if action_taken == "banned":
+            color = 0xFF0000
+        elif action_taken == "timed_out":
+            color = 0xFFFF00
+        else:
+            color = 0xFFA500
+        title = f"[AutoMod] User {action_taken.capitalize()}"
 
         embed = discord.Embed(
             title=title,
@@ -537,20 +553,21 @@ class AutoBanCog(commands.Cog):
     # スラッシュコマンド
     # ==========================================================================
 
-    autoban_group = app_commands.Group(
-        name="autoban",
-        description="Autoban ルールの管理",
+    automod_group = app_commands.Group(
+        name="automod",
+        description="AutoMod ルールの管理",
         default_permissions=discord.Permissions(administrator=True),
     )
 
-    @autoban_group.command(name="add", description="Autoban ルールを追加")
+    @automod_group.command(name="add", description="AutoMod ルールを追加")
     @app_commands.describe(
         rule_type="ルールの種類",
-        action="アクション (ban または kick)",
+        action="アクション (ban, kick, または timeout)",
         pattern="ユーザー名パターン (username_match のみ)",
         use_wildcard="ワイルドカード: パターンがユーザー名に含まれていればマッチ",
         account_age_minutes="アカウント年齢の閾値 (分、account_age のみ、最大 20160)",
         threshold_seconds="JOIN後の閾値 (秒、role_acquired/vc_join のみ、最大 3600)",
+        timeout_duration_minutes="タイムアウト時間 (分、timeout のみ、最大 40320)",
     )
     @app_commands.choices(
         rule_type=[
@@ -566,9 +583,10 @@ class AutoBanCog(commands.Cog):
         action=[
             app_commands.Choice(name="Ban", value="ban"),
             app_commands.Choice(name="Kick", value="kick"),
+            app_commands.Choice(name="Timeout", value="timeout"),
         ],
     )
-    async def autoban_add(
+    async def automod_add(
         self,
         interaction: discord.Interaction,
         rule_type: str,
@@ -577,8 +595,9 @@ class AutoBanCog(commands.Cog):
         use_wildcard: bool = False,
         account_age_minutes: int | None = None,
         threshold_seconds: int | None = None,
+        timeout_duration_minutes: int | None = None,
     ) -> None:
-        """Autoban ルールを追加する。"""
+        """AutoMod ルールを追加する。"""
         if not interaction.guild:
             await interaction.response.send_message(
                 "このコマンドはサーバー内でのみ使用できます。", ephemeral=True
@@ -622,10 +641,28 @@ class AutoBanCog(commands.Cog):
                 )
                 return
 
+        # Timeout バリデーション
+        timeout_duration_seconds: int | None = None
+        if action == "timeout":
+            if not timeout_duration_minutes or timeout_duration_minutes < 1:
+                await interaction.response.send_message(
+                    "timeout には 1 以上の timeout_duration_minutes が必要です。",
+                    ephemeral=True,
+                )
+                return
+            if timeout_duration_minutes > MAX_TIMEOUT_MINUTES:
+                await interaction.response.send_message(
+                    f"timeout_duration_minutes は最大 "
+                    f"{MAX_TIMEOUT_MINUTES} (28日) です。",
+                    ephemeral=True,
+                )
+                return
+            timeout_duration_seconds = timeout_duration_minutes * 60
+
         guild_id = str(interaction.guild.id)
 
         async with async_session() as session:
-            rule = await create_autoban_rule(
+            rule = await create_automod_rule(
                 session,
                 guild_id=guild_id,
                 rule_type=rule_type,
@@ -633,6 +670,7 @@ class AutoBanCog(commands.Cog):
                 pattern=pattern,
                 use_wildcard=use_wildcard,
                 threshold_seconds=threshold_seconds,
+                timeout_duration_seconds=timeout_duration_seconds,
             )
 
         desc_parts = [f"Type: {rule_type}", f"Action: {action}"]
@@ -644,18 +682,20 @@ class AutoBanCog(commands.Cog):
             desc_parts.append(f"Threshold: {account_age_minutes}min")
         elif threshold_seconds:
             desc_parts.append(f"Threshold: {threshold_seconds}s")
+        if action == "timeout" and timeout_duration_minutes:
+            desc_parts.append(f"Timeout Duration: {timeout_duration_minutes}min")
 
         await interaction.response.send_message(
-            f"Autoban rule #{rule.id} added.\n" + "\n".join(desc_parts),
+            f"AutoMod rule #{rule.id} added.\n" + "\n".join(desc_parts),
             ephemeral=True,
         )
 
-    @autoban_group.command(name="remove", description="Autoban ルールを削除")
+    @automod_group.command(name="remove", description="AutoMod ルールを削除")
     @app_commands.describe(rule_id="削除するルールの ID")
-    async def autoban_remove(
+    async def automod_remove(
         self, interaction: discord.Interaction, rule_id: int
     ) -> None:
-        """Autoban ルールを削除する。"""
+        """AutoMod ルールを削除する。"""
         if not interaction.guild:
             await interaction.response.send_message(
                 "このコマンドはサーバー内でのみ使用できます。", ephemeral=True
@@ -663,20 +703,20 @@ class AutoBanCog(commands.Cog):
             return
 
         async with async_session() as session:
-            deleted = await delete_autoban_rule(session, rule_id)
+            deleted = await delete_automod_rule(session, rule_id)
 
         if deleted:
             await interaction.response.send_message(
-                f"Autoban rule #{rule_id} deleted.", ephemeral=True
+                f"AutoMod rule #{rule_id} deleted.", ephemeral=True
             )
         else:
             await interaction.response.send_message(
                 f"Rule #{rule_id} not found.", ephemeral=True
             )
 
-    @autoban_group.command(name="list", description="Autoban ルール一覧")
-    async def autoban_list(self, interaction: discord.Interaction) -> None:
-        """Autoban ルール一覧を表示する。"""
+    @automod_group.command(name="list", description="AutoMod ルール一覧")
+    async def automod_list(self, interaction: discord.Interaction) -> None:
+        """AutoMod ルール一覧を表示する。"""
         if not interaction.guild:
             await interaction.response.send_message(
                 "このコマンドはサーバー内でのみ使用できます。", ephemeral=True
@@ -685,15 +725,15 @@ class AutoBanCog(commands.Cog):
 
         guild_id = str(interaction.guild.id)
         async with async_session() as session:
-            rules = await get_autoban_rules_by_guild(session, guild_id)
+            rules = await get_automod_rules_by_guild(session, guild_id)
 
         if not rules:
             await interaction.response.send_message(
-                "No autoban rules configured.", ephemeral=True
+                "No automod rules configured.", ephemeral=True
             )
             return
 
-        embed = discord.Embed(title="Autoban Rules", color=DEFAULT_EMBED_COLOR)
+        embed = discord.Embed(title="AutoMod Rules", color=DEFAULT_EMBED_COLOR)
         for rule in rules:
             status = "Enabled" if rule.is_enabled else "Disabled"
             desc = f"Action: {rule.action} | Status: {status}"
@@ -713,9 +753,9 @@ class AutoBanCog(commands.Cog):
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @autoban_group.command(name="logs", description="Autoban ログを表示")
-    async def autoban_logs(self, interaction: discord.Interaction) -> None:
-        """直近の autoban ログを表示する。"""
+    @automod_group.command(name="logs", description="AutoMod ログを表示")
+    async def automod_logs(self, interaction: discord.Interaction) -> None:
+        """直近の automod ログを表示する。"""
         if not interaction.guild:
             await interaction.response.send_message(
                 "このコマンドはサーバー内でのみ使用できます。", ephemeral=True
@@ -724,15 +764,15 @@ class AutoBanCog(commands.Cog):
 
         guild_id = str(interaction.guild.id)
         async with async_session() as session:
-            logs = await get_autoban_logs_by_guild(session, guild_id, limit=10)
+            logs = await get_automod_logs_by_guild(session, guild_id, limit=10)
 
         if not logs:
             await interaction.response.send_message(
-                "No autoban logs found.", ephemeral=True
+                "No automod logs found.", ephemeral=True
             )
             return
 
-        embed = discord.Embed(title="Autoban Logs (Last 10)", color=DEFAULT_EMBED_COLOR)
+        embed = discord.Embed(title="AutoMod Logs (Last 10)", color=DEFAULT_EMBED_COLOR)
         for log_entry in logs:
             embed.add_field(
                 name=f"{log_entry.username} ({log_entry.user_id})",
@@ -750,5 +790,5 @@ class AutoBanCog(commands.Cog):
 
 async def setup(bot: commands.Bot) -> None:
     """Cog を Bot に登録する。"""
-    await bot.add_cog(AutoBanCog(bot))
-    logger.info("AutoBan cog loaded")
+    await bot.add_cog(AutoModCog(bot))
+    logger.info("AutoMod cog loaded")

@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from src.database.models import (
-    AutoBanLog,
-    AutoBanRule,
+    AutoModLog,
+    AutoModRule,
     BanLog,
     BumpConfig,
     BumpReminder,
@@ -24,11 +24,11 @@ from src.web.templates import (
     _breadcrumb,
     _build_emoji_list,
     _nav,
-    autoban_create_page,
-    autoban_edit_page,
-    autoban_list_page,
-    autoban_logs_page,
-    autoban_settings_page,
+    automod_create_page,
+    automod_edit_page,
+    automod_list_page,
+    automod_logs_page,
+    automod_settings_page,
     ban_logs_page,
     bump_list_page,
     dashboard_page,
@@ -1877,33 +1877,33 @@ class TestMaintenancePageCleanupModal:
 
 
 # ===========================================================================
-# Autoban テンプレート
+# AutoMod テンプレート
 # ===========================================================================
 
 
-class TestAutobanListPage:
-    """autoban_list_page テンプレートのテスト。"""
+class TestAutomodListPage:
+    """automod_list_page テンプレートのテスト。"""
 
     def test_empty_state(self) -> None:
         """ルールなしで空メッセージが表示される。"""
-        result = autoban_list_page([])
-        assert "No autoban rules configured" in result
+        result = automod_list_page([])
+        assert "No automod rules configured" in result
 
     def test_contains_create_link(self) -> None:
         """作成リンクが含まれる。"""
-        result = autoban_list_page([])
-        assert "/autoban/new" in result
+        result = automod_list_page([])
+        assert "/automod/new" in result
         assert "Create Rule" in result
 
     def test_contains_logs_link(self) -> None:
         """ログリンクが含まれる。"""
-        result = autoban_list_page([])
-        assert "/autoban/logs" in result
+        result = automod_list_page([])
+        assert "/automod/logs" in result
         assert "View Logs" in result
 
     def test_displays_rule(self) -> None:
         """ルールが表示される。"""
-        rule = AutoBanRule(
+        rule = AutoModRule(
             id=1,
             guild_id="123",
             rule_type="username_match",
@@ -1911,134 +1911,134 @@ class TestAutobanListPage:
             pattern="spammer",
             use_wildcard=True,
         )
-        result = autoban_list_page([rule])
+        result = automod_list_page([rule])
         assert "username_match" in result
         assert "spammer" in result
         assert "wildcard" in result
 
     def test_displays_toggle_and_delete(self) -> None:
         """Toggle と Delete ボタンが表示される。"""
-        rule = AutoBanRule(
+        rule = AutoModRule(
             id=1,
             guild_id="123",
             rule_type="no_avatar",
             action="ban",
         )
-        result = autoban_list_page([rule], csrf_token="test_csrf")
-        assert "/autoban/1/toggle" in result
-        assert "/autoban/1/delete" in result
+        result = automod_list_page([rule], csrf_token="test_csrf")
+        assert "/automod/1/toggle" in result
+        assert "/automod/1/delete" in result
         assert "Toggle" in result
         assert "Delete" in result
 
     def test_displays_guild_name(self) -> None:
         """ギルド名が表示される。"""
-        rule = AutoBanRule(
+        rule = AutoModRule(
             id=1,
             guild_id="123",
             rule_type="no_avatar",
             action="ban",
         )
-        result = autoban_list_page([rule], guilds_map={"123": "Test Server"})
+        result = automod_list_page([rule], guilds_map={"123": "Test Server"})
         assert "Test Server" in result
 
     def test_breadcrumbs(self) -> None:
         """パンくずリストが含まれる。"""
-        result = autoban_list_page([])
+        result = automod_list_page([])
         assert "Dashboard" in result
-        assert "Autoban Rules" in result
+        assert "AutoMod Rules" in result
 
 
-class TestAutobanCreatePage:
-    """autoban_create_page テンプレートのテスト。"""
+class TestAutomodCreatePage:
+    """automod_create_page テンプレートのテスト。"""
 
     def test_contains_form(self) -> None:
         """フォームが含まれる。"""
-        result = autoban_create_page()
-        assert 'action="/autoban/new"' in result
+        result = automod_create_page()
+        assert 'action="/automod/new"' in result
         assert 'method="POST"' in result
 
     def test_contains_rule_types(self) -> None:
         """ルールタイプのラジオボタンが含まれる。"""
-        result = autoban_create_page()
+        result = automod_create_page()
         assert "username_match" in result
         assert "account_age" in result
         assert "no_avatar" in result
 
     def test_contains_action_select(self) -> None:
         """アクション選択が含まれる。"""
-        result = autoban_create_page()
+        result = automod_create_page()
         assert '"ban"' in result
         assert '"kick"' in result
 
     def test_contains_pattern_field(self) -> None:
         """パターンフィールドが含まれる。"""
-        result = autoban_create_page()
+        result = automod_create_page()
         assert 'name="pattern"' in result
 
     def test_contains_wildcard_checkbox(self) -> None:
         """ワイルドカードチェックボックスが含まれる。"""
-        result = autoban_create_page()
+        result = automod_create_page()
         assert 'name="use_wildcard"' in result
 
     def test_contains_threshold_field(self) -> None:
         """閾値フィールドが含まれる。"""
-        result = autoban_create_page()
+        result = automod_create_page()
         assert 'name="account_age_minutes"' in result
 
     def test_contains_guild_options(self) -> None:
         """ギルド選択にオプションが含まれる。"""
-        result = autoban_create_page(guilds_map={"123": "Test Server"})
+        result = automod_create_page(guilds_map={"123": "Test Server"})
         assert "Test Server" in result
         assert "123" in result
 
     def test_contains_js_toggle(self) -> None:
         """JS のフィールド切替関数が含まれる。"""
-        result = autoban_create_page()
+        result = automod_create_page()
         assert "updateRuleFields" in result
 
     def test_breadcrumbs(self) -> None:
         """パンくずリストが含まれる。"""
-        result = autoban_create_page()
+        result = automod_create_page()
         assert "Dashboard" in result
-        assert "Autoban Rules" in result
+        assert "AutoMod Rules" in result
         assert "Create" in result
 
     def test_contains_intro_rule_types(self) -> None:
         """新しいルールタイプのラジオボタンが含まれる。"""
-        result = autoban_create_page()
+        result = automod_create_page()
         assert "vc_without_intro" in result
         assert "msg_without_intro" in result
 
     def test_contains_required_channel_field(self) -> None:
         """required_channel_id のドロップダウンが含まれる。"""
-        result = autoban_create_page()
+        result = automod_create_page()
         assert 'name="required_channel_id"' in result
         assert "requiredChannelFields" in result
 
     def test_channels_json_in_page(self) -> None:
         """channels_map が JSON でページに含まれる。"""
         channels = {"123": [("456", "general")]}
-        result = autoban_create_page(channels_map=channels)
+        result = automod_create_page(channels_map=channels)
         assert "general" in result
         assert "456" in result
 
     def test_guild_select_updates_channels(self) -> None:
         """ギルド選択で updateRequiredChannel が呼ばれる。"""
-        result = autoban_create_page()
+        result = automod_create_page()
         assert "updateRequiredChannel" in result
 
 
-class TestAutobanLogsPage:
-    """autoban_logs_page テンプレートのテスト。"""
+class TestAutomodLogsPage:
+    """automod_logs_page テンプレートのテスト。"""
 
     def test_empty_state(self) -> None:
         """ログなしで空メッセージが表示される。"""
-        result = autoban_logs_page([])
-        assert "No autoban logs" in result
+        result = automod_logs_page([])
+        assert "No automod logs" in result
 
     def test_displays_log(self) -> None:
         """ログが表示される。"""
-        log = AutoBanLog(
+        log = AutoModLog(
             id=1,
             guild_id="123",
             user_id="456",
@@ -2047,14 +2047,14 @@ class TestAutobanLogsPage:
             action_taken="banned",
             reason="No avatar set",
         )
-        result = autoban_logs_page([log])
+        result = automod_logs_page([log])
         assert "baduser" in result
         assert "banned" in result
         assert "No avatar set" in result
 
     def test_displays_guild_name(self) -> None:
         """ギルド名が表示される。"""
-        log = AutoBanLog(
+        log = AutoModLog(
             id=1,
             guild_id="123",
             user_id="456",
@@ -2063,35 +2063,35 @@ class TestAutobanLogsPage:
             action_taken="banned",
             reason="Test",
         )
-        result = autoban_logs_page([log], guilds_map={"123": "Test Server"})
+        result = automod_logs_page([log], guilds_map={"123": "Test Server"})
         assert "Test Server" in result
 
     def test_breadcrumbs(self) -> None:
         """パンくずリストが含まれる。"""
-        result = autoban_logs_page([])
+        result = automod_logs_page([])
         assert "Dashboard" in result
-        assert "Autoban Rules" in result
+        assert "AutoMod Rules" in result
         assert "Logs" in result
 
 
-class TestDashboardAutobanCard:
-    """ダッシュボードの Autoban カードのテスト。"""
+class TestDashboardAutomodCard:
+    """ダッシュボードの AutoMod カードのテスト。"""
 
-    def test_autoban_card_exists(self) -> None:
-        """ダッシュボードに Autoban カードが存在する。"""
+    def test_automod_card_exists(self) -> None:
+        """ダッシュボードに AutoMod カードが存在する。"""
         result = dashboard_page()
-        assert "/autoban" in result
-        assert "Autoban" in result
+        assert "/automod" in result
+        assert "AutoMod" in result
 
 
-class TestAutobanSettingsPage:
-    """autoban_settings_page テンプレートのテスト。"""
+class TestAutomodSettingsPage:
+    """automod_settings_page テンプレートのテスト。"""
 
     def test_default_page_elements(self) -> None:
         """デフォルトページにフォーム、セレクト、ボタン、JS等が含まれる。"""
-        result = autoban_settings_page()
+        result = automod_settings_page()
         # フォーム
-        assert 'action="/autoban/settings"' in result
+        assert 'action="/automod/settings"' in result
         assert 'method="POST"' in result
         # ギルド選択
         assert 'name="guild_id"' in result
@@ -2105,7 +2105,7 @@ class TestAutobanSettingsPage:
         assert "Save Settings" in result
         # パンくず
         assert "Dashboard" in result
-        assert "Autoban Rules" in result
+        assert "AutoMod Rules" in result
         assert "Settings" in result
         # ラベル
         assert "Log Channel" in result
@@ -2113,7 +2113,7 @@ class TestAutobanSettingsPage:
 
     def test_contains_guild_options(self) -> None:
         """ギルドオプションが表示される。"""
-        result = autoban_settings_page(
+        result = automod_settings_page(
             guilds_map={"123": "Test Server", "456": "Other Server"}
         )
         assert "Test Server" in result
@@ -2123,7 +2123,7 @@ class TestAutobanSettingsPage:
 
     def test_contains_channels_js_data(self) -> None:
         """チャンネル JS データが含まれる。"""
-        result = autoban_settings_page(
+        result = automod_settings_page(
             channels_map={"123": [("ch1", "general"), ("ch2", "logs")]}
         )
         assert "channelsData" in result
@@ -2132,30 +2132,30 @@ class TestAutobanSettingsPage:
 
     def test_contains_configs_js_data(self) -> None:
         """既存設定の JS データが含まれる。"""
-        result = autoban_settings_page(configs_map={"123": "ch1", "456": None})
+        result = automod_settings_page(configs_map={"123": "ch1", "456": None})
         assert "configsData" in result
 
     def test_csrf_field(self) -> None:
         """CSRF フィールドが含まれる。"""
-        result = autoban_settings_page(csrf_token="test_csrf_token")
+        result = automod_settings_page(csrf_token="test_csrf_token")
         assert "test_csrf_token" in result
 
 
-class TestAutobanListPageSettingsLink:
-    """autoban_list_page の Settings リンクのテスト。"""
+class TestAutomodListPageSettingsLink:
+    """automod_list_page の Settings リンクのテスト。"""
 
     def test_contains_settings_link(self) -> None:
         """Settings リンクが含まれる。"""
-        result = autoban_list_page([])
-        assert "/autoban/settings" in result
+        result = automod_list_page([])
+        assert "/automod/settings" in result
         assert "Settings" in result
 
 
-class TestAutobanEditPage:
-    """autoban_edit_page テンプレートのテスト。"""
+class TestAutomodEditPage:
+    """automod_edit_page テンプレートのテスト。"""
 
     def _make_rule(self, **kwargs: object) -> object:
-        """テスト用 AutoBanRule を作成する。"""
+        """テスト用 AutoModRule を作成する。"""
         from unittest.mock import MagicMock
 
         defaults = {
@@ -2178,7 +2178,7 @@ class TestAutobanEditPage:
     def test_no_avatar_page(self) -> None:
         """no_avatar ルールの編集ページ表示。"""
         rule = self._make_rule(rule_type="no_avatar", action="ban")
-        result = autoban_edit_page(rule)
+        result = automod_edit_page(rule)
         assert "Edit" in result
         assert "No Avatar" in result
         assert "Save" in result
@@ -2191,7 +2191,7 @@ class TestAutobanEditPage:
             pattern="spam.*",
             use_wildcard=True,
         )
-        result = autoban_edit_page(rule)
+        result = automod_edit_page(rule)
         assert "spam.*" in result
         assert "pattern" in result.lower() or "Pattern" in result
         assert "checked" in result
@@ -2199,21 +2199,21 @@ class TestAutobanEditPage:
     def test_account_age_page(self) -> None:
         """account_age ルールの編集ページに account_age_minutes 入力がある。"""
         rule = self._make_rule(rule_type="account_age", threshold_seconds=172800)
-        result = autoban_edit_page(rule)
+        result = automod_edit_page(rule)
         assert "2880" in result
         assert "account_age_minutes" in result or "minutes" in result.lower()
 
     def test_threshold_seconds_page(self) -> None:
         """role_acquired ルールの編集ページに threshold_seconds 入力がある。"""
         rule = self._make_rule(rule_type="role_acquired", threshold_seconds=300)
-        result = autoban_edit_page(rule)
+        result = automod_edit_page(rule)
         assert "300" in result
         assert "threshold_seconds" in result or "seconds" in result.lower()
 
     def test_action_selected(self) -> None:
         """現在の action が選択済みになっている。"""
         rule = self._make_rule(action="kick")
-        result = autoban_edit_page(rule)
+        result = automod_edit_page(rule)
         assert "kick" in result
         assert "selected" in result
 
@@ -2221,7 +2221,7 @@ class TestAutobanEditPage:
         """guilds_map にある場合はギルド名が表示される。"""
         rule = self._make_rule()
         guilds = {"123456789012345678": "Test Server"}
-        result = autoban_edit_page(rule, guilds_map=guilds)
+        result = automod_edit_page(rule, guilds_map=guilds)
         assert "Test Server" in result
 
     def test_vc_without_intro_page(self) -> None:
@@ -2231,7 +2231,7 @@ class TestAutobanEditPage:
             required_channel_id="555",
         )
         channels = {"123456789012345678": [("555", "intro-ch"), ("666", "general")]}
-        result = autoban_edit_page(rule, channels_map=channels)
+        result = automod_edit_page(rule, channels_map=channels)
         assert "VC Join without Intro Post" in result
         assert "#intro-ch" in result
         assert "selected" in result
@@ -2243,12 +2243,12 @@ class TestAutobanEditPage:
             required_channel_id="777",
         )
         channels = {"123456789012345678": [("777", "self-intro")]}
-        result = autoban_edit_page(rule, channels_map=channels)
+        result = automod_edit_page(rule, channels_map=channels)
         assert "Message without Intro Post" in result
         assert "#self-intro" in result
 
     def test_edit_link_in_list(self) -> None:
-        """autoban_list_page に Edit リンクが含まれる。"""
+        """automod_list_page に Edit リンクが含まれる。"""
         from unittest.mock import MagicMock
 
         rule = MagicMock()
@@ -2262,13 +2262,13 @@ class TestAutobanEditPage:
         rule.threshold_seconds = None
         rule.required_channel_id = None
         rule.is_enabled = True
-        result = autoban_list_page([rule])
-        assert "/autoban/42/edit" in result
+        result = automod_list_page([rule])
+        assert "/automod/42/edit" in result
         assert "Edit" in result
 
 
-class TestAutobanListPageIntroRules:
-    """autoban_list_page の新ルールタイプ表示テスト。"""
+class TestAutomodListPageIntroRules:
+    """automod_list_page の新ルールタイプ表示テスト。"""
 
     def test_vc_without_intro_with_channel_name(self) -> None:
         """vc_without_intro でチャンネル名が表示される。"""
@@ -2286,7 +2286,7 @@ class TestAutobanListPageIntroRules:
         rule.required_channel_id = "555"
         rule.is_enabled = True
         channels = {"123": [("555", "self-intro"), ("666", "general")]}
-        result = autoban_list_page([rule], channels_map=channels)
+        result = automod_list_page([rule], channels_map=channels)
         assert "#self-intro" in result
 
     def test_vc_without_intro_channel_not_found(self) -> None:
@@ -2304,7 +2304,7 @@ class TestAutobanListPageIntroRules:
         rule.threshold_seconds = None
         rule.required_channel_id = "555"
         rule.is_enabled = True
-        result = autoban_list_page([rule])
+        result = automod_list_page([rule])
         assert "Ch: 555" in result
 
     def test_msg_without_intro_with_channel_name(self) -> None:
@@ -2323,7 +2323,7 @@ class TestAutobanListPageIntroRules:
         rule.required_channel_id = "777"
         rule.is_enabled = True
         channels = {"123": [("777", "introduce")]}
-        result = autoban_list_page([rule], channels_map=channels)
+        result = automod_list_page([rule], channels_map=channels)
         assert "#introduce" in result
 
 
@@ -3019,23 +3019,23 @@ class TestBanLogsPage:
     """ban_logs_page テンプレートのテスト。"""
 
     @pytest.mark.parametrize(
-        ("is_autoban", "expected_badge", "expected_class"),
+        ("is_automod", "expected_badge", "expected_class"),
         [
             (False, "Manual", "bg-gray-600"),
-            (True, "AutoBan", "bg-red-600"),
+            (True, "AutoMod", "bg-red-600"),
         ],
     )
     def test_source_label(
-        self, is_autoban: bool, expected_badge: str, expected_class: str
+        self, is_automod: bool, expected_badge: str, expected_class: str
     ) -> None:
-        """AutoBan / Manual のバッジが正しく表示される。"""
+        """AutoMod / Manual のバッジが正しく表示される。"""
         log = BanLog(
             id=1,
             guild_id="123",
             user_id="456",
             username="testuser",
             reason="Test reason",
-            is_autoban=is_autoban,
+            is_automod=is_automod,
         )
         result = ban_logs_page([log])
         assert expected_badge in result
@@ -3048,18 +3048,18 @@ class TestBanLogsPage:
         assert "No ban logs" in result
 
     def test_ban_logs_page_reason_prefix_stripped(self) -> None:
-        """[Autoban] プレフィックスが reason から除去される。"""
+        """[AutoMod] プレフィックスが reason から除去される。"""
         log = BanLog(
             id=1,
             guild_id="123",
             user_id="456",
             username="baduser",
-            reason="[Autoban] some reason",
-            is_autoban=True,
+            reason="[AutoMod] some reason",
+            is_automod=True,
         )
         result = ban_logs_page([log])
         assert "some reason" in result
-        assert "[Autoban]" not in result
+        assert "[AutoMod]" not in result
 
     def test_reason_none_shows_dash(self) -> None:
         """reason が None の場合は '-' が表示される。"""
@@ -3069,7 +3069,7 @@ class TestBanLogsPage:
             user_id="456",
             username="user1",
             reason=None,
-            is_autoban=False,
+            is_automod=False,
         )
         result = ban_logs_page([log])
         assert ">-<" in result
@@ -3088,7 +3088,7 @@ class TestBanLogsPage:
             user_id="456",
             username="testuser",
             reason="Test",
-            is_autoban=False,
+            is_automod=False,
         )
         result = ban_logs_page([log], guilds_map={"123": "My Server"})
         assert "My Server" in result
@@ -3101,7 +3101,7 @@ class TestBanLogsPage:
             user_id="456",
             username="testuser",
             reason="Test",
-            is_autoban=False,
+            is_automod=False,
         )
         result = ban_logs_page([log], guilds_map={})
         assert "999888777" in result
@@ -3119,7 +3119,7 @@ class TestBanLogsPage:
             user_id="456",
             username=field_value,
             reason="Test",
-            is_autoban=False,
+            is_automod=False,
         )
         result = ban_logs_page([log])
         assert "<script>alert" not in result
@@ -3133,7 +3133,7 @@ class TestBanLogsPage:
             user_id="456",
             username="user1",
             reason="<script>alert('xss')</script>",
-            is_autoban=False,
+            is_automod=False,
         )
         result = ban_logs_page([log])
         assert "&lt;script&gt;" in result
@@ -3362,15 +3362,15 @@ class TestEmailChangePageSuccess:
 
 
 # ===========================================================================
-# Autoban list ルールタイプ別表示 (lines 2975, 2977)
+# AutoMod list ルールタイプ別表示 (lines 2975, 2977)
 # ===========================================================================
 
 
-class TestAutobanListPageRuleTypes:
-    """autoban_list_page のルールタイプ別詳細表示テスト。"""
+class TestAutomodListPageRuleTypes:
+    """automod_list_page のルールタイプ別詳細表示テスト。"""
 
     def test_account_age_rule_shows_minutes(self) -> None:
-        rule = AutoBanRule(
+        rule = AutoModRule(
             id=1,
             guild_id="123",
             rule_type="account_age",
@@ -3378,11 +3378,11 @@ class TestAutobanListPageRuleTypes:
             threshold_seconds=172800,
             is_enabled=True,
         )
-        result = autoban_list_page([rule])
+        result = automod_list_page([rule])
         assert "2880min" in result
 
     def test_vc_join_rule_shows_seconds(self) -> None:
-        rule = AutoBanRule(
+        rule = AutoModRule(
             id=1,
             guild_id="123",
             rule_type="vc_join",
@@ -3390,11 +3390,11 @@ class TestAutobanListPageRuleTypes:
             threshold_seconds=120,
             is_enabled=True,
         )
-        result = autoban_list_page([rule])
+        result = automod_list_page([rule])
         assert "120s after join" in result
 
     def test_message_post_rule_shows_seconds(self) -> None:
-        rule = AutoBanRule(
+        rule = AutoModRule(
             id=1,
             guild_id="123",
             rule_type="message_post",
@@ -3402,11 +3402,11 @@ class TestAutobanListPageRuleTypes:
             threshold_seconds=30,
             is_enabled=True,
         )
-        result = autoban_list_page([rule])
+        result = automod_list_page([rule])
         assert "30s after join" in result
 
     def test_role_acquired_rule(self) -> None:
-        rule = AutoBanRule(
+        rule = AutoModRule(
             id=1,
             guild_id="123",
             rule_type="role_acquired",
@@ -3414,7 +3414,7 @@ class TestAutobanListPageRuleTypes:
             threshold_seconds=60,
             is_enabled=True,
         )
-        result = autoban_list_page([rule])
+        result = automod_list_page([rule])
         assert "60s after join" in result
 
 

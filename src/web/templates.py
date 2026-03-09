@@ -8,8 +8,8 @@ from src.utils import format_datetime
 
 if TYPE_CHECKING:
     from src.database.models import (
-        AutoBanLog,
-        AutoBanRule,
+        AutoModLog,
+        AutoModRule,
         BanLog,
         BumpConfig,
         BumpReminder,
@@ -416,9 +416,9 @@ def dashboard_page(email: str = "Admin") -> str:
                 <h2 class="text-lg font-semibold mb-2">Role Panels</h2>
                 <p class="text-gray-400 text-sm">View role assignment panels</p>
             </a>
-            <a href="/autoban" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
-                <h2 class="text-lg font-semibold mb-2">Autoban</h2>
-                <p class="text-gray-400 text-sm">Manage autoban rules and logs</p>
+            <a href="/automod" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
+                <h2 class="text-lg font-semibold mb-2">AutoMod</h2>
+                <p class="text-gray-400 text-sm">Manage automod rules and logs</p>
             </a>
             <a href="/banlogs" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
                 <h2 class="text-lg font-semibold mb-2">Ban Logs</h2>
@@ -3138,13 +3138,13 @@ def role_panel_detail_page(
     return _base(f"Panel: {panel.title}", content)
 
 
-def autoban_list_page(
-    rules: list["AutoBanRule"],
+def automod_list_page(
+    rules: list["AutoModRule"],
     csrf_token: str = "",
     guilds_map: dict[str, str] | None = None,
     channels_map: dict[str, list[tuple[str, str]]] | None = None,
 ) -> str:
-    """Autoban rules list page template."""
+    """AutoMod rules list page template."""
     if guilds_map is None:
         guilds_map = {}
     if channels_map is None:
@@ -3199,22 +3199,26 @@ def autoban_list_page(
         status_class = "text-green-400" if rule.is_enabled else "text-gray-500"
         created = format_datetime(rule.created_at)
 
+        action_display = escape(rule.action)
+        if rule.action == "timeout" and getattr(rule, "timeout_duration_seconds", None):
+            action_display += f" ({(rule.timeout_duration_seconds or 0) // 60}min)"
+
         row_parts.append(f"""
         <tr class="border-b border-gray-700">
             <td class="py-3 px-4 align-middle">{guild_display}</td>
             <td class="py-3 px-4 align-middle">{escape(rule.rule_type)}</td>
-            <td class="py-3 px-4 align-middle">{escape(rule.action)}</td>
+            <td class="py-3 px-4 align-middle">{action_display}</td>
             <td class="py-3 px-4 align-middle text-gray-400 text-sm">{details}</td>
             <td class="py-3 px-4 align-middle">
                 <span class="{status_class}">{status}</span>
             </td>
             <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created}</td>
             <td class="py-3 px-4 align-middle space-x-2">
-                <a href="/autoban/{rule.id}/edit"
+                <a href="/automod/{rule.id}/edit"
                    class="text-blue-400 hover:text-blue-300 text-sm">Edit</a>
-                <a href="#" onclick="postAction('/autoban/{rule.id}/toggle', '{csrf_token}'); return false;"
+                <a href="#" onclick="postAction('/automod/{rule.id}/toggle', '{csrf_token}'); return false;"
                    class="text-blue-400 hover:text-blue-300 text-sm">Toggle</a>
-                <a href="#" onclick="postAction('/autoban/{rule.id}/delete', '{csrf_token}', 'Delete this autoban rule?'); return false;"
+                <a href="#" onclick="postAction('/automod/{rule.id}/delete', '{csrf_token}', 'Delete this automod rule?'); return false;"
                    class="text-red-400 hover:text-red-300 text-sm">Delete</a>
             </td>
         </tr>
@@ -3225,7 +3229,7 @@ def autoban_list_page(
         rows = """
         <tr>
             <td colspan="7" class="py-8 text-center text-gray-500">
-                No autoban rules configured
+                No automod rules configured
             </td>
         </tr>
         """
@@ -3234,23 +3238,23 @@ def autoban_list_page(
     <div class="p-6">
         {
         _nav(
-            "Autoban Rules",
+            "AutoMod Rules",
             breadcrumbs=[
                 ("Dashboard", "/dashboard"),
-                ("Autoban Rules", None),
+                ("AutoMod Rules", None),
             ],
         )
     }
         <div class="flex gap-3 mb-4">
-            <a href="/autoban/new"
+            <a href="/automod/new"
                class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm transition-colors">
                 + Create Rule
             </a>
-            <a href="/autoban/logs"
+            <a href="/automod/logs"
                class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition-colors">
                 View Logs
             </a>
-            <a href="/autoban/settings"
+            <a href="/automod/settings"
                class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition-colors">
                 Settings
             </a>
@@ -3275,15 +3279,15 @@ def autoban_list_page(
         </div>
     </div>
     """
-    return _base("Autoban Rules", content)
+    return _base("AutoMod Rules", content)
 
 
-def autoban_create_page(
+def automod_create_page(
     guilds_map: dict[str, str] | None = None,
     channels_map: dict[str, list[tuple[str, str]]] | None = None,
     csrf_token: str = "",
 ) -> str:
-    """Autoban rule create page template."""
+    """AutoMod rule create page template."""
     import json as json_mod
 
     if guilds_map is None:
@@ -3306,16 +3310,16 @@ def autoban_create_page(
     <div class="p-6">
         {
         _nav(
-            "Create Autoban Rule",
+            "Create AutoMod Rule",
             breadcrumbs=[
                 ("Dashboard", "/dashboard"),
-                ("Autoban Rules", "/autoban"),
+                ("AutoMod Rules", "/automod"),
                 ("Create", None),
             ],
         )
     }
         <div class="max-w-2xl">
-            <form method="POST" action="/autoban/new" class="space-y-6">
+            <form method="POST" action="/automod/new" class="space-y-6">
                 {_csrf_field(csrf_token)}
 
                 <div>
@@ -3376,11 +3380,21 @@ def autoban_create_page(
 
                 <div>
                     <label class="block text-sm font-medium mb-1">Action</label>
-                    <select name="action"
+                    <select name="action" id="actionSelect" onchange="updateTimeoutField()"
                             class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                         <option value="ban">Ban</option>
                         <option value="kick">Kick</option>
+                        <option value="timeout">Timeout</option>
                     </select>
+                </div>
+
+                <div id="timeoutDurationFields" class="hidden">
+                    <label class="block text-sm font-medium mb-1">
+                        Timeout Duration (min)
+                    </label>
+                    <input type="number" name="timeout_duration_minutes"
+                           min="1" max="40320" placeholder="e.g. 60"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                 </div>
 
                 <div id="usernameFields">
@@ -3464,18 +3478,22 @@ def autoban_create_page(
             }});
         }}
     }}
+    function updateTimeoutField() {{
+        const action = document.getElementById('actionSelect').value;
+        document.getElementById('timeoutDurationFields').classList.toggle('hidden', action !== 'timeout');
+    }}
     </script>
     """
-    return _base("Create Autoban Rule", content)
+    return _base("Create AutoMod Rule", content)
 
 
-def autoban_edit_page(
-    rule: "AutoBanRule",
+def automod_edit_page(
+    rule: "AutoModRule",
     guilds_map: dict[str, str] | None = None,
     channels_map: dict[str, list[tuple[str, str]]] | None = None,
     csrf_token: str = "",
 ) -> str:
-    """Autoban rule edit page template."""
+    """AutoMod rule edit page template."""
     if guilds_map is None:
         guilds_map = {}
     if channels_map is None:
@@ -3486,6 +3504,13 @@ def autoban_edit_page(
 
     ban_selected = " selected" if rule.action == "ban" else ""
     kick_selected = " selected" if rule.action == "kick" else ""
+    timeout_selected = " selected" if rule.action == "timeout" else ""
+    timeout_duration_val = (
+        (rule.timeout_duration_seconds or 0) // 60
+        if getattr(rule, "timeout_duration_seconds", None)
+        else ""
+    )
+    timeout_hidden = "" if rule.action == "timeout" else " hidden"
 
     # Rule-type-specific fields
     type_fields = ""
@@ -3566,16 +3591,16 @@ def autoban_edit_page(
     <div class="p-6">
         {
         _nav(
-            f"Edit Autoban Rule #{rule.id}",
+            f"Edit AutoMod Rule #{rule.id}",
             breadcrumbs=[
                 ("Dashboard", "/dashboard"),
-                ("Autoban Rules", "/autoban"),
+                ("AutoMod Rules", "/automod"),
                 (f"Edit #{rule.id}", None),
             ],
         )
     }
         <div class="max-w-2xl">
-            <form method="POST" action="/autoban/{rule.id}/edit" class="space-y-6">
+            <form method="POST" action="/automod/{rule.id}/edit" class="space-y-6">
                 {_csrf_field(csrf_token)}
 
                 <div>
@@ -3594,11 +3619,21 @@ def autoban_edit_page(
 
                 <div>
                     <label class="block text-sm font-medium mb-1">Action</label>
-                    <select name="action"
+                    <select name="action" id="actionSelect" onchange="updateTimeoutField()"
                             class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                         <option value="ban"{ban_selected}>Ban</option>
                         <option value="kick"{kick_selected}>Kick</option>
+                        <option value="timeout"{timeout_selected}>Timeout</option>
                     </select>
+                </div>
+
+                <div id="timeoutDurationFields" class="{timeout_hidden}">
+                    <label class="block text-sm font-medium mb-1">
+                        Timeout Duration (min)
+                    </label>
+                    <input type="number" name="timeout_duration_minutes"
+                           min="1" max="40320" value="{timeout_duration_val}"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                 </div>
 
                 {type_fields}
@@ -3608,7 +3643,7 @@ def autoban_edit_page(
                             class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded transition-colors">
                         Save Changes
                     </button>
-                    <a href="/autoban"
+                    <a href="/automod"
                        class="bg-gray-600 hover:bg-gray-700 px-6 py-2 rounded transition-colors">
                         Cancel
                     </a>
@@ -3616,15 +3651,22 @@ def autoban_edit_page(
             </form>
         </div>
     </div>
+
+    <script>
+    function updateTimeoutField() {{
+        const action = document.getElementById('actionSelect').value;
+        document.getElementById('timeoutDurationFields').classList.toggle('hidden', action !== 'timeout');
+    }}
+    </script>
     """
-    return _base(f"Edit Autoban Rule #{rule.id}", content)
+    return _base(f"Edit AutoMod Rule #{rule.id}", content)
 
 
-def autoban_logs_page(
-    logs: list["AutoBanLog"],
+def automod_logs_page(
+    logs: list["AutoModLog"],
     guilds_map: dict[str, str] | None = None,
 ) -> str:
-    """Autoban logs page template."""
+    """AutoMod logs page template."""
     if guilds_map is None:
         guilds_map = {}
 
@@ -3666,7 +3708,7 @@ def autoban_logs_page(
         rows = """
         <tr>
             <td colspan="7" class="py-8 text-center text-gray-500">
-                No autoban logs
+                No automod logs
             </td>
         </tr>
         """
@@ -3675,10 +3717,10 @@ def autoban_logs_page(
     <div class="p-6">
         {
         _nav(
-            "Autoban Logs",
+            "AutoMod Logs",
             breadcrumbs=[
                 ("Dashboard", "/dashboard"),
-                ("Autoban Rules", "/autoban"),
+                ("AutoMod Rules", "/automod"),
                 ("Logs", None),
             ],
         )
@@ -3703,7 +3745,7 @@ def autoban_logs_page(
         </div>
     </div>
     """
-    return _base("Autoban Logs", content)
+    return _base("AutoMod Logs", content)
 
 
 def ban_logs_page(
@@ -3729,15 +3771,15 @@ def ban_logs_page(
             )
 
         # Source label
-        if log.is_autoban:
-            source_html = '<span class="bg-red-600 text-white text-xs px-2 py-0.5 rounded">AutoBan</span>'
+        if log.is_automod:
+            source_html = '<span class="bg-red-600 text-white text-xs px-2 py-0.5 rounded">AutoMod</span>'
         else:
             source_html = '<span class="bg-gray-600 text-gray-300 text-xs px-2 py-0.5 rounded">Manual</span>'
 
-        # Reason display: strip [Autoban] prefix if present
+        # Reason display: strip [AutoMod] prefix if present
         reason_display = log.reason or "-"
-        if reason_display.startswith("[Autoban] "):
-            reason_display = reason_display[len("[Autoban] ") :]
+        if reason_display.startswith("[AutoMod] "):
+            reason_display = reason_display[len("[AutoMod] ") :]
 
         created = format_datetime(log.created_at)
 
@@ -3795,13 +3837,13 @@ def ban_logs_page(
     return _base("Ban Logs", content)
 
 
-def autoban_settings_page(
+def automod_settings_page(
     guilds_map: dict[str, str] | None = None,
     channels_map: dict[str, list[tuple[str, str]]] | None = None,
     configs_map: dict[str, str | None] | None = None,
     csrf_token: str = "",
 ) -> str:
-    """Autoban settings page template."""
+    """AutoMod settings page template."""
     import json as json_mod
 
     if guilds_map is None:
@@ -3830,16 +3872,16 @@ def autoban_settings_page(
     <div class="p-6">
         {
         _nav(
-            "Autoban Settings",
+            "AutoMod Settings",
             breadcrumbs=[
                 ("Dashboard", "/dashboard"),
-                ("Autoban Rules", "/autoban"),
+                ("AutoMod Rules", "/automod"),
                 ("Settings", None),
             ],
         )
     }
         <div class="max-w-2xl">
-            <form method="POST" action="/autoban/settings" class="space-y-6">
+            <form method="POST" action="/automod/settings" class="space-y-6">
                 {_csrf_field(csrf_token)}
 
                 <div>
@@ -3893,7 +3935,7 @@ def autoban_settings_page(
     }}
     </script>
     """
-    return _base("Autoban Settings", content)
+    return _base("AutoMod Settings", content)
 
 
 # =============================================================================

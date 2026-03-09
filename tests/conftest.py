@@ -141,6 +141,14 @@ def db_session() -> Session:
             _schema_created = False
 
     if not _schema_created:
+        # リネーム前の旧テーブルが残っている場合に備えてドロップ
+        with _sync_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "DROP TABLE IF EXISTS autoban_logs, autoban_intro_posts, "
+                    "autoban_configs, autoban_rules CASCADE"
+                )
+            )
         Base.metadata.drop_all(_sync_engine)
         Base.metadata.create_all(_sync_engine)
         _schema_created = True

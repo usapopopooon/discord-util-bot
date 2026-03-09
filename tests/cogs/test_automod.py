@@ -1,4 +1,4 @@
-"""Tests for AutoBanCog (autoban feature)."""
+"""Tests for AutoModCog (automod feature)."""
 
 from __future__ import annotations
 
@@ -9,19 +9,19 @@ import discord
 import pytest
 from discord.ext import commands
 
-from src.cogs.autoban import AutoBanCog
+from src.cogs.automod import AutoModCog
 
 # ---------------------------------------------------------------------------
 # テスト用ヘルパー
 # ---------------------------------------------------------------------------
 
 
-def _make_cog() -> AutoBanCog:
-    """Create an AutoBanCog with a mock bot."""
+def _make_cog() -> AutoModCog:
+    """Create an AutoModCog with a mock bot."""
     bot = MagicMock(spec=commands.Bot)
     bot.user = MagicMock()
     bot.user.id = 99999
-    return AutoBanCog(bot)
+    return AutoModCog(bot)
 
 
 def _make_member(
@@ -50,6 +50,7 @@ def _make_member(
     member.guild.name = "Test Server"
     member.guild.ban = AsyncMock()
     member.guild.kick = AsyncMock()
+    member.timeout = AsyncMock()
     return member
 
 
@@ -64,9 +65,10 @@ def _make_rule(
     use_wildcard: bool = False,
     threshold_seconds: int | None = None,
     required_channel_id: str | None = None,
+    timeout_duration_seconds: int | None = None,
     created_at: datetime | None = None,
 ) -> MagicMock:
-    """Create a mock AutoBanRule."""
+    """Create a mock AutoModRule."""
     rule = MagicMock()
     rule.id = rule_id
     rule.guild_id = guild_id
@@ -77,6 +79,7 @@ def _make_rule(
     rule.use_wildcard = use_wildcard
     rule.threshold_seconds = threshold_seconds
     rule.required_channel_id = required_channel_id
+    rule.timeout_duration_seconds = timeout_duration_seconds
     rule.created_at = created_at or datetime.now(UTC) - timedelta(days=1)
     return rule
 
@@ -323,7 +326,7 @@ class TestOnMemberJoin:
     async def test_ignores_bots(self) -> None:
         cog = _make_cog()
         member = _make_member(is_bot=True)
-        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+        with patch("src.cogs.automod.get_enabled_automod_rules_by_guild") as mock_get:
             await cog.on_member_join(member)
             mock_get.assert_not_called()
 
@@ -332,7 +335,7 @@ class TestOnMemberJoin:
         cog = _make_cog()
         member = _make_member()
         with patch(
-            "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+            "src.cogs.automod.get_enabled_automod_rules_by_guild",
             return_value=[],
         ):
             await cog.on_member_join(member)
@@ -346,12 +349,12 @@ class TestOnMemberJoin:
         rule = _make_rule(action="ban", pattern="spammer")
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 return_value=[rule],
             ),
-            patch("src.cogs.autoban.claim_autoban_log", new_callable=AsyncMock),
+            patch("src.cogs.automod.claim_automod_log", new_callable=AsyncMock),
             patch(
-                "src.cogs.autoban.get_autoban_config",
+                "src.cogs.automod.get_automod_config",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
@@ -366,12 +369,12 @@ class TestOnMemberJoin:
         rule = _make_rule(action="kick", pattern="spammer")
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 return_value=[rule],
             ),
-            patch("src.cogs.autoban.claim_autoban_log", new_callable=AsyncMock),
+            patch("src.cogs.automod.claim_automod_log", new_callable=AsyncMock),
             patch(
-                "src.cogs.autoban.get_autoban_config",
+                "src.cogs.automod.get_automod_config",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
@@ -380,12 +383,38 @@ class TestOnMemberJoin:
             member.guild.kick.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_matching_rule_timeouts(self) -> None:
+        cog = _make_cog()
+        member = _make_member(name="spammer")
+        rule = _make_rule(
+            action="timeout",
+            pattern="spammer",
+            timeout_duration_seconds=300,
+        )
+        with (
+            patch(
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
+                return_value=[rule],
+            ),
+            patch("src.cogs.automod.claim_automod_log", new_callable=AsyncMock),
+            patch(
+                "src.cogs.automod.get_automod_config",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            await cog.on_member_join(member)
+            member.timeout.assert_called_once()
+            call_args = member.timeout.call_args
+            assert call_args.args[0] == timedelta(seconds=300)
+
+    @pytest.mark.asyncio
     async def test_no_match_no_action(self) -> None:
         cog = _make_cog()
         member = _make_member(name="gooduser")
         rule = _make_rule(pattern="baduser")
         with patch(
-            "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+            "src.cogs.automod.get_enabled_automod_rules_by_guild",
             return_value=[rule],
         ):
             await cog.on_member_join(member)
@@ -399,12 +428,12 @@ class TestOnMemberJoin:
         rule2 = _make_rule(rule_id=2, rule_type="no_avatar", pattern=None, action="ban")
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 return_value=[rule1, rule2],
             ),
-            patch("src.cogs.autoban.claim_autoban_log", new_callable=AsyncMock),
+            patch("src.cogs.automod.claim_automod_log", new_callable=AsyncMock),
             patch(
-                "src.cogs.autoban.get_autoban_config",
+                "src.cogs.automod.get_automod_config",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
@@ -442,7 +471,7 @@ class TestOnMemberJoin:
             ),
         ]
         with patch(
-            "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+            "src.cogs.automod.get_enabled_automod_rules_by_guild",
             return_value=rules,
         ):
             await cog.on_member_join(member)
@@ -456,15 +485,15 @@ class TestOnMemberJoin:
         rule = _make_rule(action="ban", pattern="spammer")
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 return_value=[rule],
             ),
             patch(
-                "src.cogs.autoban.claim_autoban_log",
+                "src.cogs.automod.claim_automod_log",
                 new_callable=AsyncMock,
             ) as mock_log,
             patch(
-                "src.cogs.autoban.get_autoban_config",
+                "src.cogs.automod.get_automod_config",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
@@ -483,15 +512,15 @@ class TestOnMemberJoin:
         rule = _make_rule(action="ban", pattern="spammer")
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 return_value=[rule],
             ),
             patch(
-                "src.cogs.autoban.claim_autoban_log",
+                "src.cogs.automod.claim_automod_log",
                 new_callable=AsyncMock,
             ) as mock_log,
             patch(
-                "src.cogs.autoban.get_autoban_config",
+                "src.cogs.automod.get_automod_config",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
@@ -511,15 +540,15 @@ class TestOnMemberJoin:
         rule = _make_rule(action="ban", pattern="spammer")
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 return_value=[rule],
             ),
             patch(
-                "src.cogs.autoban.claim_autoban_log",
+                "src.cogs.automod.claim_automod_log",
                 new_callable=AsyncMock,
             ) as mock_log,
             patch(
-                "src.cogs.autoban.get_autoban_config",
+                "src.cogs.automod.get_automod_config",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
@@ -534,15 +563,15 @@ class TestOnMemberJoin:
 # ---------------------------------------------------------------------------
 
 
-class TestAutobanAdd:
-    """autoban_add コマンドのテスト。"""
+class TestAutomodAdd:
+    """automod_add コマンドのテスト。"""
 
     @pytest.mark.asyncio
     async def test_no_guild_returns_error(self) -> None:
         cog = _make_cog()
         interaction = _make_interaction()
         interaction.guild = None
-        await cog.autoban_add.callback(cog, interaction, rule_type="username_match")
+        await cog.automod_add.callback(cog, interaction, rule_type="username_match")
         interaction.response.send_message.assert_called_once()
         call_args = interaction.response.send_message.call_args
         assert "サーバー内" in call_args.args[0]
@@ -551,7 +580,7 @@ class TestAutobanAdd:
     async def test_username_match_without_pattern(self) -> None:
         cog = _make_cog()
         interaction = _make_interaction()
-        await cog.autoban_add.callback(
+        await cog.automod_add.callback(
             cog, interaction, rule_type="username_match", pattern=None
         )
         call_args = interaction.response.send_message.call_args
@@ -561,7 +590,7 @@ class TestAutobanAdd:
     async def test_account_age_without_threshold(self) -> None:
         cog = _make_cog()
         interaction = _make_interaction()
-        await cog.autoban_add.callback(
+        await cog.automod_add.callback(
             cog, interaction, rule_type="account_age", account_age_minutes=None
         )
         call_args = interaction.response.send_message.call_args
@@ -571,7 +600,7 @@ class TestAutobanAdd:
     async def test_account_age_exceeds_max(self) -> None:
         cog = _make_cog()
         interaction = _make_interaction()
-        await cog.autoban_add.callback(
+        await cog.automod_add.callback(
             cog, interaction, rule_type="account_age", account_age_minutes=30000
         )
         call_args = interaction.response.send_message.call_args
@@ -583,11 +612,11 @@ class TestAutobanAdd:
         interaction = _make_interaction()
         mock_rule = _make_rule(rule_id=42)
         with patch(
-            "src.cogs.autoban.create_autoban_rule",
+            "src.cogs.automod.create_automod_rule",
             new_callable=AsyncMock,
             return_value=mock_rule,
         ):
-            await cog.autoban_add.callback(
+            await cog.automod_add.callback(
                 cog,
                 interaction,
                 rule_type="username_match",
@@ -597,15 +626,15 @@ class TestAutobanAdd:
             assert "#42" in call_args.args[0]
 
 
-class TestAutobanRemove:
-    """autoban_remove コマンドのテスト。"""
+class TestAutomodRemove:
+    """automod_remove コマンドのテスト。"""
 
     @pytest.mark.asyncio
     async def test_no_guild_returns_error(self) -> None:
         cog = _make_cog()
         interaction = _make_interaction()
         interaction.guild = None
-        await cog.autoban_remove.callback(cog, interaction, rule_id=1)
+        await cog.automod_remove.callback(cog, interaction, rule_id=1)
         call_args = interaction.response.send_message.call_args
         assert "サーバー内" in call_args.args[0]
 
@@ -614,11 +643,11 @@ class TestAutobanRemove:
         cog = _make_cog()
         interaction = _make_interaction()
         with patch(
-            "src.cogs.autoban.delete_autoban_rule",
+            "src.cogs.automod.delete_automod_rule",
             new_callable=AsyncMock,
             return_value=True,
         ):
-            await cog.autoban_remove.callback(cog, interaction, rule_id=1)
+            await cog.automod_remove.callback(cog, interaction, rule_id=1)
             call_args = interaction.response.send_message.call_args
             assert "deleted" in call_args.args[0].lower()
 
@@ -627,24 +656,24 @@ class TestAutobanRemove:
         cog = _make_cog()
         interaction = _make_interaction()
         with patch(
-            "src.cogs.autoban.delete_autoban_rule",
+            "src.cogs.automod.delete_automod_rule",
             new_callable=AsyncMock,
             return_value=False,
         ):
-            await cog.autoban_remove.callback(cog, interaction, rule_id=999)
+            await cog.automod_remove.callback(cog, interaction, rule_id=999)
             call_args = interaction.response.send_message.call_args
             assert "not found" in call_args.args[0].lower()
 
 
-class TestAutobanList:
-    """autoban_list コマンドのテスト。"""
+class TestAutomodList:
+    """automod_list コマンドのテスト。"""
 
     @pytest.mark.asyncio
     async def test_no_guild_returns_error(self) -> None:
         cog = _make_cog()
         interaction = _make_interaction()
         interaction.guild = None
-        await cog.autoban_list.callback(cog, interaction)
+        await cog.automod_list.callback(cog, interaction)
         call_args = interaction.response.send_message.call_args
         assert "サーバー内" in call_args.args[0]
 
@@ -653,13 +682,13 @@ class TestAutobanList:
         cog = _make_cog()
         interaction = _make_interaction()
         with patch(
-            "src.cogs.autoban.get_autoban_rules_by_guild",
+            "src.cogs.automod.get_automod_rules_by_guild",
             new_callable=AsyncMock,
             return_value=[],
         ):
-            await cog.autoban_list.callback(cog, interaction)
+            await cog.automod_list.callback(cog, interaction)
             call_args = interaction.response.send_message.call_args
-            assert "no autoban rules" in call_args.args[0].lower()
+            assert "no automod rules" in call_args.args[0].lower()
 
     @pytest.mark.asyncio
     async def test_shows_rules(self) -> None:
@@ -675,24 +704,24 @@ class TestAutobanList:
             ),
         ]
         with patch(
-            "src.cogs.autoban.get_autoban_rules_by_guild",
+            "src.cogs.automod.get_automod_rules_by_guild",
             new_callable=AsyncMock,
             return_value=rules,
         ):
-            await cog.autoban_list.callback(cog, interaction)
+            await cog.automod_list.callback(cog, interaction)
             call_kwargs = interaction.response.send_message.call_args.kwargs
             assert "embed" in call_kwargs
 
 
-class TestAutobanLogs:
-    """autoban_logs コマンドのテスト。"""
+class TestAutomodLogs:
+    """automod_logs コマンドのテスト。"""
 
     @pytest.mark.asyncio
     async def test_no_guild_returns_error(self) -> None:
         cog = _make_cog()
         interaction = _make_interaction()
         interaction.guild = None
-        await cog.autoban_logs.callback(cog, interaction)
+        await cog.automod_logs.callback(cog, interaction)
         call_args = interaction.response.send_message.call_args
         assert "サーバー内" in call_args.args[0]
 
@@ -701,13 +730,13 @@ class TestAutobanLogs:
         cog = _make_cog()
         interaction = _make_interaction()
         with patch(
-            "src.cogs.autoban.get_autoban_logs_by_guild",
+            "src.cogs.automod.get_automod_logs_by_guild",
             new_callable=AsyncMock,
             return_value=[],
         ):
-            await cog.autoban_logs.callback(cog, interaction)
+            await cog.automod_logs.callback(cog, interaction)
             call_args = interaction.response.send_message.call_args
-            assert "no autoban logs" in call_args.args[0].lower()
+            assert "no automod logs" in call_args.args[0].lower()
 
     @pytest.mark.asyncio
     async def test_shows_logs(self) -> None:
@@ -721,11 +750,11 @@ class TestAutobanLogs:
         log_entry.rule_id = 1
         log_entry.created_at = datetime.now(UTC)
         with patch(
-            "src.cogs.autoban.get_autoban_logs_by_guild",
+            "src.cogs.automod.get_automod_logs_by_guild",
             new_callable=AsyncMock,
             return_value=[log_entry],
         ):
-            await cog.autoban_logs.callback(cog, interaction)
+            await cog.automod_logs.callback(cog, interaction)
             call_kwargs = interaction.response.send_message.call_args.kwargs
             assert "embed" in call_kwargs
 
@@ -740,7 +769,7 @@ class TestSetup:
 
     @pytest.mark.asyncio
     async def test_setup_adds_cog(self) -> None:
-        from src.cogs.autoban import setup
+        from src.cogs.automod import setup
 
         bot = MagicMock(spec=commands.Bot)
         bot.add_cog = AsyncMock()
@@ -830,12 +859,12 @@ class TestFirstMatchWins:
         )
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 return_value=[enabled_rule],
             ),
-            patch("src.cogs.autoban.claim_autoban_log", new_callable=AsyncMock),
+            patch("src.cogs.automod.claim_automod_log", new_callable=AsyncMock),
             patch(
-                "src.cogs.autoban.get_autoban_config",
+                "src.cogs.automod.get_automod_config",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
@@ -862,12 +891,12 @@ class TestFirstMatchWins:
         )
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 return_value=[rule1, rule2],
             ),
-            patch("src.cogs.autoban.claim_autoban_log", new_callable=AsyncMock),
+            patch("src.cogs.automod.claim_automod_log", new_callable=AsyncMock),
             patch(
-                "src.cogs.autoban.get_autoban_config",
+                "src.cogs.automod.get_automod_config",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
@@ -995,7 +1024,7 @@ class TestOnMemberJoinEdgeCases:
         )
         rule3 = _make_rule(rule_id=3, rule_type="no_avatar", pattern=None)
         with patch(
-            "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+            "src.cogs.automod.get_enabled_automod_rules_by_guild",
             return_value=[rule1, rule2, rule3],
         ):
             await cog.on_member_join(member)
@@ -1010,11 +1039,11 @@ class TestOnMemberJoinEdgeCases:
         rule = _make_rule(action="ban", pattern="spammer")
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 return_value=[rule],
             ),
             patch(
-                "src.cogs.autoban.claim_autoban_log",
+                "src.cogs.automod.claim_automod_log",
                 new_callable=AsyncMock,
                 side_effect=Exception("DB error"),
             ),
@@ -1035,19 +1064,19 @@ class TestDuplicateGuard:
 
     @pytest.mark.asyncio
     async def test_execute_action_skips_all_on_duplicate(self) -> None:
-        """claim_autoban_log が None → ban/kick も embed も実行しない。"""
+        """claim_automod_log が None → ban/kick も embed も実行しない。"""
         cog = _make_cog()
         member = _make_member(name="spammer")
         rule = _make_rule(action="ban", pattern="spammer")
 
         with (
             patch(
-                "src.cogs.autoban.claim_autoban_log",
+                "src.cogs.automod.claim_automod_log",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
             patch(
-                "src.cogs.autoban.get_autoban_config",
+                "src.cogs.automod.get_automod_config",
                 new_callable=AsyncMock,
             ) as mock_cfg,
             patch.object(cog, "_send_log_embed", new_callable=AsyncMock) as mock_send,
@@ -1069,11 +1098,11 @@ class TestDuplicateGuard:
 
         with (
             patch(
-                "src.cogs.autoban.async_session",
+                "src.cogs.automod.async_session",
                 return_value=mock_session,
             ),
             patch(
-                "src.cogs.autoban.claim_ban_log",
+                "src.cogs.automod.claim_ban_log",
                 new_callable=AsyncMock,
                 return_value=None,
             ) as mock_claim,
@@ -1106,7 +1135,7 @@ class TestSendLogEmbed:
 
     @staticmethod
     async def _call(
-        cog: AutoBanCog,
+        cog: AutoModCog,
         guild: MagicMock,
         *,
         channel_id: str = "100",
@@ -1139,8 +1168,8 @@ class TestSendLogEmbed:
     @pytest.mark.parametrize(
         ("action", "expected_title", "expected_color"),
         [
-            ("banned", "[AutoBan] User Banned", 0xFF0000),
-            ("kicked", "[AutoBan] User Kicked", 0xFFA500),
+            ("banned", "[AutoMod] User Banned", 0xFF0000),
+            ("kicked", "[AutoMod] User Kicked", 0xFFA500),
         ],
     )
     async def test_embed_title_and_color(
@@ -1275,11 +1304,11 @@ class TestExecuteActionWithLogChannel:
         """共通 patch オブジェクトを返す。"""
         return (
             patch(
-                "src.cogs.autoban.claim_autoban_log",
+                "src.cogs.automod.claim_automod_log",
                 new_callable=AsyncMock,
             ),
             patch(
-                "src.cogs.autoban.get_autoban_config",
+                "src.cogs.automod.get_automod_config",
                 new_callable=AsyncMock,
                 return_value=config_return,
             ),
@@ -1412,11 +1441,11 @@ class TestOnMemberBan:
 
         with (
             patch(
-                "src.cogs.autoban.async_session",
+                "src.cogs.automod.async_session",
                 return_value=mock_session,
             ),
             patch(
-                "src.cogs.autoban.claim_ban_log",
+                "src.cogs.automod.claim_ban_log",
                 new_callable=AsyncMock,
             ) as mock_create,
         ):
@@ -1427,26 +1456,26 @@ class TestOnMemberBan:
                 user_id="12345",
                 username="testuser",
                 reason="Spam behavior",
-                is_autoban=False,
+                is_automod=False,
             )
 
     @pytest.mark.asyncio
-    async def test_autoban_detected(self) -> None:
-        """理由が [Autoban] で始まる場合 is_autoban=True。"""
+    async def test_automod_detected(self) -> None:
+        """理由が [AutoMod] で始まる場合 is_automod=True。"""
         cog = _make_cog()
         guild, user = _make_guild_and_user()
         ban_entry = MagicMock()
-        ban_entry.reason = "[Autoban] Username match"
+        ban_entry.reason = "[AutoMod] Username match"
         guild.fetch_ban.return_value = ban_entry
         mock_session = _make_mock_session()
 
         with (
             patch(
-                "src.cogs.autoban.async_session",
+                "src.cogs.automod.async_session",
                 return_value=mock_session,
             ),
             patch(
-                "src.cogs.autoban.claim_ban_log",
+                "src.cogs.automod.claim_ban_log",
                 new_callable=AsyncMock,
             ) as mock_create,
         ):
@@ -1456,13 +1485,13 @@ class TestOnMemberBan:
                 guild_id="789",
                 user_id="12345",
                 username="testuser",
-                reason="[Autoban] Username match",
-                is_autoban=True,
+                reason="[AutoMod] Username match",
+                is_automod=True,
             )
 
     @pytest.mark.asyncio
     async def test_manual_ban(self) -> None:
-        """通常の理由では is_autoban=False。"""
+        """通常の理由では is_automod=False。"""
         cog = _make_cog()
         guild, user = _make_guild_and_user()
         ban_entry = MagicMock()
@@ -1472,17 +1501,17 @@ class TestOnMemberBan:
 
         with (
             patch(
-                "src.cogs.autoban.async_session",
+                "src.cogs.automod.async_session",
                 return_value=mock_session,
             ),
             patch(
-                "src.cogs.autoban.claim_ban_log",
+                "src.cogs.automod.claim_ban_log",
                 new_callable=AsyncMock,
             ) as mock_create,
         ):
             await cog.on_member_ban(guild, user)
             call_kwargs = mock_create.call_args
-            assert call_kwargs.kwargs["is_autoban"] is False
+            assert call_kwargs.kwargs["is_automod"] is False
             assert call_kwargs.kwargs["reason"] == "Manual ban by admin"
 
     @pytest.mark.asyncio
@@ -1503,11 +1532,11 @@ class TestOnMemberBan:
 
         with (
             patch(
-                "src.cogs.autoban.async_session",
+                "src.cogs.automod.async_session",
                 return_value=mock_session,
             ),
             patch(
-                "src.cogs.autoban.claim_ban_log",
+                "src.cogs.automod.claim_ban_log",
                 new_callable=AsyncMock,
             ) as mock_create,
         ):
@@ -1515,7 +1544,7 @@ class TestOnMemberBan:
             mock_create.assert_called_once()
             call_kwargs = mock_create.call_args
             assert call_kwargs.kwargs["reason"] is None
-            assert call_kwargs.kwargs["is_autoban"] is False
+            assert call_kwargs.kwargs["is_automod"] is False
 
     @pytest.mark.asyncio
     async def test_claim_ban_log_exception_handled(self) -> None:
@@ -1529,11 +1558,11 @@ class TestOnMemberBan:
 
         with (
             patch(
-                "src.cogs.autoban.async_session",
+                "src.cogs.automod.async_session",
                 return_value=mock_session,
             ),
             patch(
-                "src.cogs.autoban.claim_ban_log",
+                "src.cogs.automod.claim_ban_log",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("DB error"),
             ),
@@ -1553,18 +1582,18 @@ class TestOnMemberBan:
 
         with (
             patch(
-                "src.cogs.autoban.async_session",
+                "src.cogs.automod.async_session",
                 return_value=mock_session,
             ),
             patch(
-                "src.cogs.autoban.claim_ban_log",
+                "src.cogs.automod.claim_ban_log",
                 new_callable=AsyncMock,
             ) as mock_create,
         ):
             await cog.on_member_ban(guild, user)
             call_kwargs = mock_create.call_args
             assert call_kwargs.kwargs["reason"] is None
-            assert call_kwargs.kwargs["is_autoban"] is False
+            assert call_kwargs.kwargs["is_automod"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -1580,7 +1609,7 @@ class TestOnMemberUpdate:
         cog = _make_cog()
         before = _make_member(is_bot=True)
         after = _make_member(is_bot=True)
-        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+        with patch("src.cogs.automod.get_enabled_automod_rules_by_guild") as mock_get:
             await cog.on_member_update(before, after)
             mock_get.assert_not_called()
 
@@ -1592,7 +1621,7 @@ class TestOnMemberUpdate:
         before.roles = [role]
         after = _make_member()
         after.roles = [role]
-        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+        with patch("src.cogs.automod.get_enabled_automod_rules_by_guild") as mock_get:
             await cog.on_member_update(before, after)
             mock_get.assert_not_called()
 
@@ -1605,7 +1634,7 @@ class TestOnMemberUpdate:
         before.roles = [role]
         after = _make_member()
         after.roles = []
-        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+        with patch("src.cogs.automod.get_enabled_automod_rules_by_guild") as mock_get:
             await cog.on_member_update(before, after)
             mock_get.assert_not_called()
 
@@ -1618,7 +1647,7 @@ class TestOnMemberUpdate:
         after = _make_member()
         after.roles = [role]
         with patch(
-            "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+            "src.cogs.automod.get_enabled_automod_rules_by_guild",
             new_callable=AsyncMock,
             return_value=[],
         ):
@@ -1640,7 +1669,7 @@ class TestOnMemberUpdate:
         )
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 new_callable=AsyncMock,
                 return_value=[rule],
             ),
@@ -1661,7 +1690,7 @@ class TestOnMemberUpdate:
         rule = _make_rule(rule_type="username_match", pattern="test")
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 new_callable=AsyncMock,
                 return_value=[rule],
             ),
@@ -1687,7 +1716,7 @@ class TestOnVoiceStateUpdate:
         before.channel = None
         after = MagicMock(spec=discord.VoiceState)
         after.channel = MagicMock()
-        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+        with patch("src.cogs.automod.get_enabled_automod_rules_by_guild") as mock_get:
             await cog.on_voice_state_update(member, before, after)
             mock_get.assert_not_called()
 
@@ -1700,7 +1729,7 @@ class TestOnVoiceStateUpdate:
         before.channel = MagicMock()
         after = MagicMock(spec=discord.VoiceState)
         after.channel = MagicMock()
-        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+        with patch("src.cogs.automod.get_enabled_automod_rules_by_guild") as mock_get:
             await cog.on_voice_state_update(member, before, after)
             mock_get.assert_not_called()
 
@@ -1713,7 +1742,7 @@ class TestOnVoiceStateUpdate:
         before.channel = MagicMock()
         after = MagicMock(spec=discord.VoiceState)
         after.channel = None
-        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+        with patch("src.cogs.automod.get_enabled_automod_rules_by_guild") as mock_get:
             await cog.on_voice_state_update(member, before, after)
             mock_get.assert_not_called()
 
@@ -1726,7 +1755,7 @@ class TestOnVoiceStateUpdate:
         after = MagicMock(spec=discord.VoiceState)
         after.channel = MagicMock()
         with patch(
-            "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+            "src.cogs.automod.get_enabled_automod_rules_by_guild",
             new_callable=AsyncMock,
             return_value=[],
         ):
@@ -1744,7 +1773,7 @@ class TestOnVoiceStateUpdate:
         rule = _make_rule(rule_type="vc_join", pattern=None, threshold_seconds=60)
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 new_callable=AsyncMock,
                 return_value=[rule],
             ),
@@ -1764,7 +1793,7 @@ class TestOnVoiceStateUpdate:
         rule = _make_rule(rule_type="no_avatar", pattern=None)
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 new_callable=AsyncMock,
                 return_value=[rule],
             ),
@@ -1813,7 +1842,7 @@ class TestOnMessage:
     async def test_no_guild_skips(self) -> None:
         cog = _make_cog()
         msg = self._make_message(has_guild=False)
-        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+        with patch("src.cogs.automod.get_enabled_automod_rules_by_guild") as mock_get:
             await cog.on_message(msg)
             mock_get.assert_not_called()
 
@@ -1821,7 +1850,7 @@ class TestOnMessage:
     async def test_bot_message_skips(self) -> None:
         cog = _make_cog()
         msg = self._make_message(is_bot=True)
-        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+        with patch("src.cogs.automod.get_enabled_automod_rules_by_guild") as mock_get:
             await cog.on_message(msg)
             mock_get.assert_not_called()
 
@@ -1830,7 +1859,7 @@ class TestOnMessage:
         """システムメッセージ (参加通知など) はスキップ。"""
         cog = _make_cog()
         msg = self._make_message(message_type=discord.MessageType.new_member)
-        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+        with patch("src.cogs.automod.get_enabled_automod_rules_by_guild") as mock_get:
             await cog.on_message(msg)
             mock_get.assert_not_called()
 
@@ -1844,7 +1873,7 @@ class TestOnMessage:
         msg.guild.id = 789
         msg.author = MagicMock(spec=discord.User)  # Not a Member
         msg.author.bot = False
-        with patch("src.cogs.autoban.get_enabled_autoban_rules_by_guild") as mock_get:
+        with patch("src.cogs.automod.get_enabled_automod_rules_by_guild") as mock_get:
             await cog.on_message(msg)
             mock_get.assert_not_called()
 
@@ -1858,7 +1887,7 @@ class TestOnMessage:
         msg.guild.id = 789
         msg.author = member
         with patch(
-            "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+            "src.cogs.automod.get_enabled_automod_rules_by_guild",
             new_callable=AsyncMock,
             return_value=[],
         ):
@@ -1876,7 +1905,7 @@ class TestOnMessage:
         rule = _make_rule(rule_type="message_post", pattern=None, threshold_seconds=60)
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 new_callable=AsyncMock,
                 return_value=[rule],
             ),
@@ -1899,7 +1928,7 @@ class TestOnMessage:
         )
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 new_callable=AsyncMock,
                 return_value=[rule],
             ),
@@ -1910,18 +1939,18 @@ class TestOnMessage:
 
 
 # ---------------------------------------------------------------------------
-# TestAutobanAddTimingRules: slash command for timing-based rules
+# TestAutomodAddTimingRules: slash command for timing-based rules
 # ---------------------------------------------------------------------------
 
 
-class TestAutobanAddTimingRules:
-    """autoban_add タイミングベースルール テスト。"""
+class TestAutomodAddTimingRules:
+    """automod_add タイミングベースルール テスト。"""
 
     @pytest.mark.asyncio
     async def test_role_acquired_without_threshold(self) -> None:
         cog = _make_cog()
         interaction = _make_interaction()
-        await cog.autoban_add.callback(
+        await cog.automod_add.callback(
             cog, interaction, rule_type="role_acquired", threshold_seconds=None
         )
         call_args = interaction.response.send_message.call_args
@@ -1931,7 +1960,7 @@ class TestAutobanAddTimingRules:
     async def test_vc_join_threshold_zero(self) -> None:
         cog = _make_cog()
         interaction = _make_interaction()
-        await cog.autoban_add.callback(
+        await cog.automod_add.callback(
             cog, interaction, rule_type="vc_join", threshold_seconds=0
         )
         call_args = interaction.response.send_message.call_args
@@ -1941,7 +1970,7 @@ class TestAutobanAddTimingRules:
     async def test_message_post_exceeds_max(self) -> None:
         cog = _make_cog()
         interaction = _make_interaction()
-        await cog.autoban_add.callback(
+        await cog.automod_add.callback(
             cog, interaction, rule_type="message_post", threshold_seconds=5000
         )
         call_args = interaction.response.send_message.call_args
@@ -1953,11 +1982,11 @@ class TestAutobanAddTimingRules:
         interaction = _make_interaction()
         mock_rule = _make_rule(rule_id=10, rule_type="vc_join", threshold_seconds=30)
         with patch(
-            "src.cogs.autoban.create_autoban_rule",
+            "src.cogs.automod.create_automod_rule",
             new_callable=AsyncMock,
             return_value=mock_rule,
         ):
-            await cog.autoban_add.callback(
+            await cog.automod_add.callback(
                 cog,
                 interaction,
                 rule_type="vc_join",
@@ -1973,11 +2002,11 @@ class TestAutobanAddTimingRules:
         interaction = _make_interaction()
         mock_rule = _make_rule(rule_id=11, use_wildcard=True)
         with patch(
-            "src.cogs.autoban.create_autoban_rule",
+            "src.cogs.automod.create_automod_rule",
             new_callable=AsyncMock,
             return_value=mock_rule,
         ):
-            await cog.autoban_add.callback(
+            await cog.automod_add.callback(
                 cog,
                 interaction,
                 rule_type="username_match",
@@ -1995,11 +2024,11 @@ class TestAutobanAddTimingRules:
             rule_id=12, rule_type="account_age", threshold_seconds=172800
         )
         with patch(
-            "src.cogs.autoban.create_autoban_rule",
+            "src.cogs.automod.create_automod_rule",
             new_callable=AsyncMock,
             return_value=mock_rule,
         ):
-            await cog.autoban_add.callback(
+            await cog.automod_add.callback(
                 cog,
                 interaction,
                 rule_type="account_age",
@@ -2010,12 +2039,12 @@ class TestAutobanAddTimingRules:
 
 
 # ---------------------------------------------------------------------------
-# TestAutobanListTimingRules: list command for timing-based rules
+# TestAutomodListTimingRules: list command for timing-based rules
 # ---------------------------------------------------------------------------
 
 
-class TestAutobanListTimingRules:
-    """autoban_list のタイミングベースルール表示テスト。"""
+class TestAutomodListTimingRules:
+    """automod_list のタイミングベースルール表示テスト。"""
 
     @pytest.mark.asyncio
     async def test_shows_account_age_threshold(self) -> None:
@@ -2025,11 +2054,11 @@ class TestAutobanListTimingRules:
             rule_type="account_age", threshold_seconds=86400, pattern=None
         )
         with patch(
-            "src.cogs.autoban.get_autoban_rules_by_guild",
+            "src.cogs.automod.get_automod_rules_by_guild",
             new_callable=AsyncMock,
             return_value=[rule],
         ):
-            await cog.autoban_list.callback(cog, interaction)
+            await cog.automod_list.callback(cog, interaction)
             call_kwargs = interaction.response.send_message.call_args
             embed = call_kwargs.kwargs["embed"]
             assert "1440min" in embed.fields[0].value
@@ -2040,11 +2069,11 @@ class TestAutobanListTimingRules:
         interaction = _make_interaction()
         rule = _make_rule(rule_type="vc_join", threshold_seconds=120, pattern=None)
         with patch(
-            "src.cogs.autoban.get_autoban_rules_by_guild",
+            "src.cogs.automod.get_automod_rules_by_guild",
             new_callable=AsyncMock,
             return_value=[rule],
         ):
-            await cog.autoban_list.callback(cog, interaction)
+            await cog.automod_list.callback(cog, interaction)
             call_kwargs = interaction.response.send_message.call_args
             embed = call_kwargs.kwargs["embed"]
             assert "120s" in embed.fields[0].value
@@ -2112,7 +2141,7 @@ class TestCheckIntroMissing:
         )
         member = _make_member(joined_at=datetime.now(UTC))
         with patch(
-            "src.cogs.autoban.has_intro_post",
+            "src.cogs.automod.has_intro_post",
             new_callable=AsyncMock,
             return_value=False,
         ):
@@ -2132,7 +2161,7 @@ class TestCheckIntroMissing:
         )
         member = _make_member(joined_at=datetime.now(UTC))
         with patch(
-            "src.cogs.autoban.has_intro_post",
+            "src.cogs.automod.has_intro_post",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -2164,7 +2193,7 @@ class TestVcWithoutIntro:
         )
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 new_callable=AsyncMock,
                 return_value=[rule],
             ),
@@ -2195,7 +2224,7 @@ class TestVcWithoutIntro:
         )
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 new_callable=AsyncMock,
                 return_value=[rule],
             ),
@@ -2250,7 +2279,7 @@ class TestMsgWithoutIntro:
         )
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 new_callable=AsyncMock,
                 return_value=[rule],
             ),
@@ -2280,7 +2309,7 @@ class TestMsgWithoutIntro:
         )
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 new_callable=AsyncMock,
                 return_value=[rule],
             ),
@@ -2310,12 +2339,12 @@ class TestMsgWithoutIntro:
         )
         with (
             patch(
-                "src.cogs.autoban.get_enabled_autoban_rules_by_guild",
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
                 new_callable=AsyncMock,
                 return_value=[rule],
             ),
             patch(
-                "src.cogs.autoban.record_intro_post",
+                "src.cogs.automod.record_intro_post",
                 new_callable=AsyncMock,
             ) as mock_record,
             patch.object(cog, "_execute_action", new_callable=AsyncMock) as mock_exec,

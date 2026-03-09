@@ -408,6 +408,14 @@ class TestGetOrCreateAdminEdgeCases:
         engine = create_async_engine(TEST_DATABASE_URL)
         try:
             async with engine.begin() as conn:
+                from sqlalchemy import text as sa_text
+
+                await conn.execute(
+                    sa_text(
+                        "DROP TABLE IF EXISTS autoban_logs, autoban_intro_posts, "
+                        "autoban_configs, autoban_rules CASCADE"
+                    )
+                )
                 await conn.run_sync(Base.metadata.drop_all)
                 await conn.run_sync(Base.metadata.create_all)
 
@@ -439,6 +447,14 @@ class TestGetOrCreateAdminEdgeCases:
         engine = create_async_engine(TEST_DATABASE_URL)
         try:
             async with engine.begin() as conn:
+                from sqlalchemy import text as sa_text
+
+                await conn.execute(
+                    sa_text(
+                        "DROP TABLE IF EXISTS autoban_logs, autoban_intro_posts, "
+                        "autoban_configs, autoban_rules CASCADE"
+                    )
+                )
                 await conn.run_sync(Base.metadata.drop_all)
                 await conn.run_sync(Base.metadata.create_all)
 
@@ -468,6 +484,14 @@ class TestGetOrCreateAdminEdgeCases:
         engine = create_async_engine(TEST_DATABASE_URL)
         try:
             async with engine.begin() as conn:
+                from sqlalchemy import text as sa_text
+
+                await conn.execute(
+                    sa_text(
+                        "DROP TABLE IF EXISTS autoban_logs, autoban_intro_posts, "
+                        "autoban_configs, autoban_rules CASCADE"
+                    )
+                )
                 await conn.run_sync(Base.metadata.drop_all)
                 await conn.run_sync(Base.metadata.create_all)
 
@@ -512,6 +536,14 @@ class TestGetOrCreateAdminEdgeCases:
         engine = create_async_engine(TEST_DATABASE_URL)
         try:
             async with engine.begin() as conn:
+                from sqlalchemy import text as sa_text
+
+                await conn.execute(
+                    sa_text(
+                        "DROP TABLE IF EXISTS autoban_logs, autoban_intro_posts, "
+                        "autoban_configs, autoban_rules CASCADE"
+                    )
+                )
                 await conn.run_sync(Base.metadata.drop_all)
                 await conn.run_sync(Base.metadata.create_all)
 

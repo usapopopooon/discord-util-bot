@@ -82,6 +82,8 @@
     "poolclass",
     "isready",
     "Unposted",
+    "automod",
+    "Automod",
     "autoban",
     "Autoban",
     "baduser",

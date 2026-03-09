@@ -197,7 +197,7 @@ class EphemeralVCBot(commands.Bot):
             "src.cogs.bump",
             "src.cogs.sticky",
             "src.cogs.role_panel",
-            "src.cogs.autoban",
+            "src.cogs.automod",
             "src.cogs.ticket",
             "src.cogs.join_role",
         ]

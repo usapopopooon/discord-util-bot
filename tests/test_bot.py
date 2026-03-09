@@ -83,7 +83,7 @@ class TestSetupHook:
         bot.load_extension.assert_any_await("src.cogs.bump")
         bot.load_extension.assert_any_await("src.cogs.sticky")
         bot.load_extension.assert_any_await("src.cogs.role_panel")
-        bot.load_extension.assert_any_await("src.cogs.autoban")
+        bot.load_extension.assert_any_await("src.cogs.automod")
         bot.load_extension.assert_any_await("src.cogs.ticket")
         bot.load_extension.assert_any_await("src.cogs.join_role")
 

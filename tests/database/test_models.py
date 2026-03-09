@@ -13,10 +13,10 @@ from sqlalchemy.orm import selectinload
 
 from src.database.models import (
     AdminUser,
-    AutoBanConfig,
-    AutoBanIntroPost,
-    AutoBanLog,
-    AutoBanRule,
+    AutoModConfig,
+    AutoModIntroPost,
+    AutoModLog,
+    AutoModRule,
     BanLog,
     BotActivity,
     BumpConfig,
@@ -1324,16 +1324,16 @@ class TestDiscordEntityConstraints:
 
 
 # ===========================================================================
-# AutoBanRule / AutoBanLog — カスケード削除・デフォルト値・FK
+# AutoModRule / AutoModLog — カスケード削除・デフォルト値・FK
 # ===========================================================================
 
 
-class TestAutoBanConfigModel:
-    """AutoBanConfig モデルのテスト。"""
+class TestAutoModConfigModel:
+    """AutoModConfig モデルのテスト。"""
 
     async def test_create_config(self, db_session: AsyncSession) -> None:
-        """AutoBanConfig を作成できる。"""
-        config = AutoBanConfig(
+        """AutoModConfig を作成できる。"""
+        config = AutoModConfig(
             guild_id=snowflake(),
             log_channel_id=snowflake(),
         )
@@ -1341,7 +1341,7 @@ class TestAutoBanConfigModel:
         await db_session.commit()
 
         result = await db_session.execute(
-            select(AutoBanConfig).where(AutoBanConfig.guild_id == config.guild_id)
+            select(AutoModConfig).where(AutoModConfig.guild_id == config.guild_id)
         )
         found = result.scalar_one()
         assert found.guild_id == config.guild_id
@@ -1350,32 +1350,32 @@ class TestAutoBanConfigModel:
     async def test_create_config_without_log_channel(
         self, db_session: AsyncSession
     ) -> None:
-        """log_channel_id なしで AutoBanConfig を作成できる。"""
-        config = AutoBanConfig(guild_id=snowflake())
+        """log_channel_id なしで AutoModConfig を作成できる。"""
+        config = AutoModConfig(guild_id=snowflake())
         db_session.add(config)
         await db_session.commit()
 
         result = await db_session.execute(
-            select(AutoBanConfig).where(AutoBanConfig.guild_id == config.guild_id)
+            select(AutoModConfig).where(AutoModConfig.guild_id == config.guild_id)
         )
         found = result.scalar_one()
         assert found.log_channel_id is None
 
     async def test_guild_id_primary_key(self, db_session: AsyncSession) -> None:
-        """同じ guild_id で2つ目の AutoBanConfig は IntegrityError。"""
+        """同じ guild_id で2つ目の AutoModConfig は IntegrityError。"""
         gid = snowflake()
-        config1 = AutoBanConfig(guild_id=gid, log_channel_id=snowflake())
+        config1 = AutoModConfig(guild_id=gid, log_channel_id=snowflake())
         db_session.add(config1)
         await db_session.commit()
 
-        config2 = AutoBanConfig(guild_id=gid, log_channel_id=snowflake())
+        config2 = AutoModConfig(guild_id=gid, log_channel_id=snowflake())
         db_session.add(config2)
         with pytest.raises(IntegrityError):
             await db_session.commit()
 
     async def test_repr(self) -> None:
         """__repr__ にギルド ID とチャンネル ID が含まれる。"""
-        config = AutoBanConfig(guild_id="111", log_channel_id="222")
+        config = AutoModConfig(guild_id="111", log_channel_id="222")
         r = repr(config)
         assert "111" in r
         assert "222" in r
@@ -1384,7 +1384,7 @@ class TestAutoBanConfigModel:
         """log_channel_id を更新できる。"""
         gid = snowflake()
         new_channel = snowflake()
-        config = AutoBanConfig(guild_id=gid, log_channel_id=snowflake())
+        config = AutoModConfig(guild_id=gid, log_channel_id=snowflake())
         db_session.add(config)
         await db_session.commit()
 
@@ -1392,7 +1392,7 @@ class TestAutoBanConfigModel:
         await db_session.commit()
 
         result = await db_session.execute(
-            select(AutoBanConfig).where(AutoBanConfig.guild_id == gid)
+            select(AutoModConfig).where(AutoModConfig.guild_id == gid)
         )
         found = result.scalar_one()
         assert found.log_channel_id == new_channel
@@ -1400,7 +1400,7 @@ class TestAutoBanConfigModel:
     async def test_set_log_channel_to_none(self, db_session: AsyncSession) -> None:
         """log_channel_id を None に設定できる。"""
         gid = snowflake()
-        config = AutoBanConfig(guild_id=gid, log_channel_id=snowflake())
+        config = AutoModConfig(guild_id=gid, log_channel_id=snowflake())
         db_session.add(config)
         await db_session.commit()
 
@@ -1408,7 +1408,7 @@ class TestAutoBanConfigModel:
         await db_session.commit()
 
         result = await db_session.execute(
-            select(AutoBanConfig).where(AutoBanConfig.guild_id == gid)
+            select(AutoModConfig).where(AutoModConfig.guild_id == gid)
         )
         found = result.scalar_one()
         assert found.log_channel_id is None
@@ -1424,7 +1424,7 @@ class TestBanLogModel:
             user_id=snowflake(),
             username="banned_user",
             reason="Spamming",
-            is_autoban=False,
+            is_automod=False,
         )
         db_session.add(log)
         await db_session.commit()
@@ -1433,11 +1433,11 @@ class TestBanLogModel:
         found = result.scalar_one()
         assert found.username == "banned_user"
         assert found.reason == "Spamming"
-        assert found.is_autoban is False
+        assert found.is_automod is False
         assert found.created_at is not None
 
-    async def test_is_autoban_default(self, db_session: AsyncSession) -> None:
-        """is_autoban のデフォルト値は False。"""
+    async def test_is_automod_default(self, db_session: AsyncSession) -> None:
+        """is_automod のデフォルト値は False。"""
         log = BanLog(
             guild_id=snowflake(),
             user_id=snowflake(),
@@ -1446,7 +1446,7 @@ class TestBanLogModel:
         db_session.add(log)
         await db_session.commit()
         await db_session.refresh(log)
-        assert log.is_autoban is False
+        assert log.is_automod is False
 
     async def test_reason_nullable(self, db_session: AsyncSession) -> None:
         """reason は None にできる。"""
@@ -1467,7 +1467,7 @@ class TestBanLogModel:
             guild_id="123",
             user_id="456",
             username="user1",
-            is_autoban=True,
+            is_automod=True,
         )
         db_session.add(log)
         await db_session.commit()
@@ -1478,12 +1478,12 @@ class TestBanLogModel:
         assert "True" in text
 
 
-class TestAutoBanConstraints:
-    """AutoBan モデルの制約テスト。"""
+class TestAutoModConstraints:
+    """AutoMod モデルの制約テスト。"""
 
     async def test_logs_cascade_on_rule_delete(self, db_session: AsyncSession) -> None:
         """ルール削除時にログもカスケード削除される。"""
-        rule = AutoBanRule(
+        rule = AutoModRule(
             guild_id=snowflake(),
             rule_type="username_match",
             action="ban",
@@ -1494,7 +1494,7 @@ class TestAutoBanConstraints:
 
         for _ in range(3):
             db_session.add(
-                AutoBanLog(
+                AutoModLog(
                     guild_id=rule.guild_id,
                     user_id=snowflake(),
                     username=fake.user_name(),
@@ -1508,12 +1508,12 @@ class TestAutoBanConstraints:
         await db_session.delete(rule)
         await db_session.commit()
 
-        result = await db_session.execute(select(AutoBanLog))
+        result = await db_session.execute(select(AutoModLog))
         assert list(result.scalars().all()) == []
 
     async def test_default_values(self, db_session: AsyncSession) -> None:
-        """AutoBanRule のデフォルト値が正しい。"""
-        rule = AutoBanRule(
+        """AutoModRule のデフォルト値が正しい。"""
+        rule = AutoModRule(
             guild_id=snowflake(),
             rule_type="no_avatar",
         )
@@ -1528,7 +1528,7 @@ class TestAutoBanConstraints:
     ) -> None:
         """存在しない rule_id は FK 違反。"""
         db_session.add(
-            AutoBanLog(
+            AutoModLog(
                 guild_id=snowflake(),
                 user_id=snowflake(),
                 username="test",
@@ -1808,22 +1808,31 @@ class TestModelValidators:
                 style="primary2",
             )
 
-    async def test_autoban_invalid_rule_type_rejected(self) -> None:
-        """AutoBanRule の rule_type に不正な値は ValueError。"""
+    async def test_automod_invalid_rule_type_rejected(self) -> None:
+        """AutoModRule の rule_type に不正な値は ValueError。"""
         with pytest.raises(ValueError, match="rule_type"):
-            AutoBanRule(
+            AutoModRule(
                 guild_id=snowflake(),
                 rule_type="unknown",
             )
 
-    async def test_autoban_invalid_action_rejected(self) -> None:
-        """AutoBanRule の action に不正な値は ValueError。"""
+    async def test_automod_invalid_action_rejected(self) -> None:
+        """AutoModRule の action に不正な値は ValueError。"""
         with pytest.raises(ValueError, match="action"):
-            AutoBanRule(
+            AutoModRule(
                 guild_id=snowflake(),
                 rule_type="no_avatar",
                 action="warn",
             )
+
+    async def test_automod_timeout_action_accepted(self) -> None:
+        """AutoModRule の action='timeout' は有効な値として受け入れられる。"""
+        rule = AutoModRule(
+            guild_id=snowflake(),
+            rule_type="no_avatar",
+            action="timeout",
+        )
+        assert rule.action == "timeout"
 
     async def test_ticket_invalid_status_rejected(self) -> None:
         """Ticket の status に不正な値は ValueError。"""
@@ -2278,9 +2287,9 @@ class TestModelValidatorsEdgeCases:
     @pytest.mark.parametrize(
         "rule_type", ["username_match", "account_age", "no_avatar"]
     )
-    async def test_autoban_all_valid_rule_types(self, rule_type: str) -> None:
-        """AutoBanRule の全ての有効な rule_type が受け入れられる。"""
-        rule = AutoBanRule(
+    async def test_automod_all_valid_rule_types(self, rule_type: str) -> None:
+        """AutoModRule の全ての有効な rule_type が受け入れられる。"""
+        rule = AutoModRule(
             guild_id=snowflake(),
             rule_type=rule_type,
         )
@@ -2664,8 +2673,8 @@ class TestModelReprCoverage:
     """未カバーの __repr__ メソッドをテスト。"""
 
     @pytest.mark.asyncio
-    async def test_autoban_rule_repr(self, db_session: AsyncSession) -> None:
-        rule = AutoBanRule(
+    async def test_automod_rule_repr(self, db_session: AsyncSession) -> None:
+        rule = AutoModRule(
             guild_id=snowflake(),
             rule_type="no_avatar",
             action="ban",
@@ -2673,12 +2682,12 @@ class TestModelReprCoverage:
         db_session.add(rule)
         await db_session.commit()
         text = repr(rule)
-        assert "AutoBanRule" in text
+        assert "AutoModRule" in text
         assert rule.guild_id in text
 
     @pytest.mark.asyncio
-    async def test_autoban_log_repr(self, db_session: AsyncSession) -> None:
-        rule = AutoBanRule(
+    async def test_automod_log_repr(self, db_session: AsyncSession) -> None:
+        rule = AutoModRule(
             guild_id=snowflake(),
             rule_type="no_avatar",
             action="ban",
@@ -2686,7 +2695,7 @@ class TestModelReprCoverage:
         db_session.add(rule)
         await db_session.flush()
 
-        log = AutoBanLog(
+        log = AutoModLog(
             guild_id=rule.guild_id,
             user_id=snowflake(),
             username="testuser",
@@ -2697,7 +2706,7 @@ class TestModelReprCoverage:
         db_session.add(log)
         await db_session.commit()
         text = repr(log)
-        assert "AutoBanLog" in text
+        assert "AutoModLog" in text
         assert log.guild_id in text
 
     @pytest.mark.asyncio
@@ -2784,17 +2793,17 @@ class TestModelReprCoverage:
 
 
 # ===========================================================================
-# AutoBanIntroPost モデル
+# AutoModIntroPost モデル
 # ===========================================================================
 
 
-class TestAutoBanIntroPost:
-    """AutoBanIntroPost モデルのテスト。"""
+class TestAutoModIntroPost:
+    """AutoModIntroPost モデルのテスト。"""
 
     @pytest.mark.asyncio
     async def test_create_intro_post(self, db_session: AsyncSession) -> None:
         """投稿記録を作成できる。"""
-        post = AutoBanIntroPost(
+        post = AutoModIntroPost(
             guild_id=snowflake(),
             user_id=snowflake(),
             channel_id=snowflake(),
@@ -2811,11 +2820,11 @@ class TestAutoBanIntroPost:
         gid = snowflake()
         uid = snowflake()
         cid = snowflake()
-        post1 = AutoBanIntroPost(guild_id=gid, user_id=uid, channel_id=cid)
+        post1 = AutoModIntroPost(guild_id=gid, user_id=uid, channel_id=cid)
         db_session.add(post1)
         await db_session.commit()
 
-        post2 = AutoBanIntroPost(guild_id=gid, user_id=uid, channel_id=cid)
+        post2 = AutoModIntroPost(guild_id=gid, user_id=uid, channel_id=cid)
         db_session.add(post2)
         with pytest.raises(IntegrityError):
             await db_session.commit()
@@ -2823,7 +2832,7 @@ class TestAutoBanIntroPost:
     @pytest.mark.asyncio
     async def test_repr(self, db_session: AsyncSession) -> None:
         """__repr__ にモデル名が含まれる。"""
-        post = AutoBanIntroPost(
+        post = AutoModIntroPost(
             guild_id=snowflake(),
             user_id=snowflake(),
             channel_id=snowflake(),
@@ -2831,7 +2840,7 @@ class TestAutoBanIntroPost:
         db_session.add(post)
         await db_session.commit()
         text = repr(post)
-        assert "AutoBanIntroPost" in text
+        assert "AutoModIntroPost" in text
 
 
 class TestProcessedEventModel:
@@ -2882,13 +2891,13 @@ class TestProcessedEventModel:
         assert "test:repr:1" in text
 
 
-class TestAutoBanRuleNewTypes:
+class TestAutoModRuleNewTypes:
     """新ルールタイプのバリデーションテスト。"""
 
     @pytest.mark.asyncio
     async def test_vc_without_intro_valid(self, db_session: AsyncSession) -> None:
         """vc_without_intro ルールを作成できる。"""
-        rule = AutoBanRule(
+        rule = AutoModRule(
             guild_id=snowflake(),
             rule_type="vc_without_intro",
             action="ban",
@@ -2903,7 +2912,7 @@ class TestAutoBanRuleNewTypes:
     @pytest.mark.asyncio
     async def test_msg_without_intro_valid(self, db_session: AsyncSession) -> None:
         """msg_without_intro ルールを作成できる。"""
-        rule = AutoBanRule(
+        rule = AutoModRule(
             guild_id=snowflake(),
             rule_type="msg_without_intro",
             action="kick",

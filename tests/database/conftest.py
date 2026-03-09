@@ -84,6 +84,13 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     if not _schema_created:
         # 初回 or TRUNCATE フォールバック: スキーマ作成
         async with _engine.begin() as conn:
+            # リネーム前の旧テーブルが残っている場合に備えてドロップ
+            await conn.execute(
+                text(
+                    "DROP TABLE IF EXISTS autoban_logs, autoban_intro_posts, "
+                    "autoban_configs, autoban_rules CASCADE"
+                )
+            )
             await conn.run_sync(Base.metadata.drop_all)
             await conn.run_sync(Base.metadata.create_all)
         _schema_created = True

@@ -1091,10 +1091,10 @@ class RolePanelItem(Base):
         )
 
 
-class AutoBanRule(Base):
-    """Autoban ルール設定テーブル。
+class AutoModRule(Base):
+    """AutoMod ルール設定テーブル。
 
-    新規メンバー参加時に自動 BAN/KICK するルールを定義する。
+    新規メンバー参加時に自動 BAN/KICK/Timeout するルールを定義する。
     1つのサーバーに複数のルールを設定可能。
 
     Attributes:
@@ -1104,22 +1104,24 @@ class AutoBanRule(Base):
             "username_match", "account_age", "no_avatar",
             "role_acquired", "vc_join", "message_post"
         is_enabled (bool): ルールが有効かどうか (デフォルト True)。
-        action (str): アクション ("ban" または "kick")。
+        action (str): アクション ("ban", "kick", "timeout")。
         pattern (str | None): ユーザー名マッチング用パターン (username_match のみ)。
         use_wildcard (bool): ワイルドカード (部分一致) を使用するか (デフォルト False)。
         threshold_seconds (int | None): 時間ベースの閾値 (秒)。
             account_age: アカウント年齢の閾値 (最大 1209600 = 14日)。
             role_acquired/vc_join/message_post: JOIN後の閾値 (最大 3600 = 1時間)。
+        timeout_duration_seconds (int | None): タイムアウト時間 (秒)。
+            action="timeout" 時のみ使用 (最大 2419200 = 28日)。
         created_at (datetime): ルール作成日時 (UTC)。
-        logs (list[AutoBanLog]): このルールの実行ログ一覧。
+        logs (list[AutoModLog]): このルールの実行ログ一覧。
 
     Notes:
-        - テーブル名: ``autoban_rules``
+        - テーブル名: ``automod_rules``
         - on_member_join, on_member_update, on_voice_state_update でルールを評価
         - rule_type に応じて使用するフィールドが異なる
     """
 
-    __tablename__ = "autoban_rules"
+    __tablename__ = "automod_rules"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
@@ -1130,12 +1132,13 @@ class AutoBanRule(Base):
     use_wildcard: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     threshold_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     required_channel_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    timeout_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
 
-    logs: Mapped[list["AutoBanLog"]] = relationship(
-        "AutoBanLog", back_populates="rule", cascade="all, delete-orphan"
+    logs: Mapped[list["AutoModLog"]] = relationship(
+        "AutoModLog", back_populates="rule", cascade="all, delete-orphan"
     )
 
     @validates("rule_type")
@@ -1157,34 +1160,34 @@ class AutoBanRule(Base):
 
     @validates("action")
     def _validate_action(self, _key: str, value: str) -> str:
-        if value not in ("ban", "kick"):
-            msg = f"action must be 'ban' or 'kick', got: {value!r}"
+        if value not in ("ban", "kick", "timeout"):
+            msg = f"action must be 'ban', 'kick', or 'timeout', got: {value!r}"
             raise ValueError(msg)
         return value
 
     def __repr__(self) -> str:
         """デバッグ用の文字列表現。"""
         return (
-            f"<AutoBanRule(id={self.id}, guild_id={self.guild_id}, "
+            f"<AutoModRule(id={self.id}, guild_id={self.guild_id}, "
             f"type={self.rule_type}, enabled={self.is_enabled})>"
         )
 
 
-class AutoBanConfig(Base):
-    """Autoban のギルドごと設定テーブル。
+class AutoModConfig(Base):
+    """AutoMod のギルドごと設定テーブル。
 
-    ギルドごとに autoban のログチャンネルを設定する。
+    ギルドごとに AutoMod のログチャンネルを設定する。
 
     Attributes:
         guild_id (str): Discord サーバーの ID (主キー、1ギルド1設定)。
-        log_channel_id (str | None): BAN/KICK ログ送信先チャンネルの ID。
+        log_channel_id (str | None): BAN/KICK/Timeout ログ送信先チャンネルの ID。
 
     Notes:
-        - テーブル名: ``autoban_configs``
+        - テーブル名: ``automod_configs``
         - guild_id が主キー (1ギルドにつき1設定のみ)
     """
 
-    __tablename__ = "autoban_configs"
+    __tablename__ = "automod_configs"
 
     guild_id: Mapped[str] = mapped_column(String, primary_key=True)
     log_channel_id: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -1192,7 +1195,7 @@ class AutoBanConfig(Base):
     def __repr__(self) -> str:
         """デバッグ用の文字列表現。"""
         return (
-            f"<AutoBanConfig(guild_id={self.guild_id}, "
+            f"<AutoModConfig(guild_id={self.guild_id}, "
             f"log_channel_id={self.log_channel_id})>"
         )
 
@@ -1222,35 +1225,35 @@ class HealthConfig(Base):
         return f"<HealthConfig(guild_id={self.guild_id}, channel_id={self.channel_id})>"
 
 
-class AutoBanLog(Base):
-    """Autoban 実行ログテーブル。
+class AutoModLog(Base):
+    """AutoMod 実行ログテーブル。
 
-    Autoban ルールにマッチしてアクションが実行された記録を保存する。
+    AutoMod ルールにマッチしてアクションが実行された記録を保存する。
 
     Attributes:
         id (int): 自動採番の主キー。
         guild_id (str): Discord サーバーの ID。インデックス付き。
-        user_id (str): BAN/KICK されたユーザーの ID。
+        user_id (str): BAN/KICK/Timeout されたユーザーの ID。
         username (str): アクション時のユーザー名。
         rule_id (int): 適用されたルールへの外部キー。
-        action_taken (str): 実行されたアクション ("banned" または "kicked")。
+        action_taken (str): 実行されたアクション ("banned", "kicked", "timed_out")。
         reason (str): 人間可読な理由文字列。
         created_at (datetime): 実行日時 (UTC)。
-        rule (AutoBanRule): 適用されたルール。
+        rule (AutoModRule): 適用されたルール。
 
     Notes:
-        - テーブル名: ``autoban_logs``
+        - テーブル名: ``automod_logs``
         - ルール削除時にログもカスケード削除される
     """
 
-    __tablename__ = "autoban_logs"
+    __tablename__ = "automod_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     user_id: Mapped[str] = mapped_column(String, nullable=False)
     username: Mapped[str] = mapped_column(String, nullable=False)
     rule_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("autoban_rules.id", ondelete="CASCADE"), nullable=False
+        Integer, ForeignKey("automod_rules.id", ondelete="CASCADE"), nullable=False
     )
     action_taken: Mapped[str] = mapped_column(String, nullable=False)
     reason: Mapped[str] = mapped_column(String, nullable=False)
@@ -1258,18 +1261,18 @@ class AutoBanLog(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
 
-    rule: Mapped["AutoBanRule"] = relationship("AutoBanRule", back_populates="logs")
+    rule: Mapped["AutoModRule"] = relationship("AutoModRule", back_populates="logs")
 
     def __repr__(self) -> str:
         """デバッグ用の文字列表現。"""
         return (
-            f"<AutoBanLog(id={self.id}, guild_id={self.guild_id}, "
+            f"<AutoModLog(id={self.id}, guild_id={self.guild_id}, "
             f"user_id={self.user_id}, action={self.action_taken})>"
         )
 
 
-class AutoBanIntroPost(Base):
-    """Autoban 指定チャンネル投稿追跡テーブル。
+class AutoModIntroPost(Base):
+    """AutoMod 指定チャンネル投稿追跡テーブル。
 
     vc_without_intro / msg_without_intro ルール用。
     メンバーが指定チャンネルに投稿したことを記録する。
@@ -1282,11 +1285,11 @@ class AutoBanIntroPost(Base):
         posted_at (datetime): 投稿日時 (UTC)。
 
     Notes:
-        - テーブル名: ``autoban_intro_posts``
+        - テーブル名: ``automod_intro_posts``
         - (guild_id, user_id, channel_id) でユニーク制約
     """
 
-    __tablename__ = "autoban_intro_posts"
+    __tablename__ = "automod_intro_posts"
     __table_args__ = (
         UniqueConstraint(
             "guild_id",
@@ -1307,7 +1310,7 @@ class AutoBanIntroPost(Base):
     def __repr__(self) -> str:
         """デバッグ用の文字列表現。"""
         return (
-            f"<AutoBanIntroPost(id={self.id}, guild_id={self.guild_id}, "
+            f"<AutoModIntroPost(id={self.id}, guild_id={self.guild_id}, "
             f"user_id={self.user_id}, channel_id={self.channel_id})>"
         )
 
@@ -1315,7 +1318,7 @@ class AutoBanIntroPost(Base):
 class BanLog(Base):
     """BAN ログテーブル。
 
-    Discord 上の全ての BAN (AutoBan + 手動) を記録する。
+    Discord 上の全ての BAN (AutoMod + 手動) を記録する。
 
     Attributes:
         id (int): 自動採番の主キー。
@@ -1323,12 +1326,12 @@ class BanLog(Base):
         user_id (str): BAN されたユーザーの ID。
         username (str): BAN 時のユーザー名。
         reason (str | None): BAN 理由 (なしの場合 None)。
-        is_autoban (bool): AutoBan による BAN かどうか。
+        is_automod (bool): AutoMod による BAN かどうか。
         created_at (datetime): 実行日時 (UTC)。
 
     Notes:
         - テーブル名: ``ban_logs``
-        - AutoBan / 手動 BAN を問わず全ての BAN を記録
+        - AutoMod / 手動 BAN を問わず全ての BAN を記録
     """
 
     __tablename__ = "ban_logs"
@@ -1338,7 +1341,7 @@ class BanLog(Base):
     user_id: Mapped[str] = mapped_column(String, nullable=False)
     username: Mapped[str] = mapped_column(String, nullable=False)
     reason: Mapped[str | None] = mapped_column(String, nullable=True)
-    is_autoban: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_automod: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
@@ -1347,7 +1350,7 @@ class BanLog(Base):
         """デバッグ用の文字列表現。"""
         return (
             f"<BanLog(id={self.id}, guild_id={self.guild_id}, "
-            f"user_id={self.user_id}, is_autoban={self.is_autoban})>"
+            f"user_id={self.user_id}, is_automod={self.is_automod})>"
         )
 
 
