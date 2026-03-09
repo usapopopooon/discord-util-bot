@@ -491,7 +491,7 @@ class AutoModCog(commands.Cog):
 
         embed.add_field(
             name="User",
-            value=f"{member_display_name} (`{member_name}`)",
+            value=f"<@{member_id}> (`{member_name}`)",
             inline=True,
         )
         embed.add_field(
@@ -775,7 +775,7 @@ class AutoModCog(commands.Cog):
         embed = discord.Embed(title="AutoMod Logs (Last 10)", color=DEFAULT_EMBED_COLOR)
         for log_entry in logs:
             embed.add_field(
-                name=f"{log_entry.username} ({log_entry.user_id})",
+                name=f"<@{log_entry.user_id}> ({log_entry.user_id})",
                 value=(
                     f"Action: {log_entry.action_taken}\n"
                     f"Reason: {log_entry.reason}\n"
