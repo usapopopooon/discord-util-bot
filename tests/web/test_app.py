@@ -23,6 +23,7 @@ from src.database.models import (
     DiscordChannel,
     DiscordGuild,
     DiscordRole,
+    EventLogConfig,
     HealthConfig,
     JoinRoleConfig,
     Lobby,
@@ -14120,3 +14121,165 @@ class TestHealthSettings:
 
         result = await db_session.execute(select(HealthConfig))
         assert list(result.scalars().all()) == []
+
+
+# ===========================================================================
+# Event Log ルート
+# ===========================================================================
+
+
+class TestEventLogRoutes:
+    """/eventlog ルートのテスト。"""
+
+    async def test_eventlog_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.get("/eventlog", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_eventlog_list_empty(self, authenticated_client: AsyncClient) -> None:
+        """設定がない場合は空メッセージが表示される。"""
+        response = await authenticated_client.get("/eventlog")
+        assert response.status_code == 200
+        assert "No event log configs configured" in response.text
+
+    async def test_eventlog_list_with_data(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """設定がある場合は一覧が表示される。"""
+        config = EventLogConfig(
+            guild_id="123456789012345678",
+            event_type="message_delete",
+            channel_id="987654321012345678",
+        )
+        db_session.add(config)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/eventlog")
+        assert response.status_code == 200
+        assert "Message Delete" in response.text
+
+    async def test_eventlog_create(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Event Log 設定を作成できる。"""
+        response = await authenticated_client.post(
+            "/eventlog/new",
+            data={
+                "guild_id": "123456789012345678",
+                "event_type": "message_delete",
+                "channel_id": "987654321012345678",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/eventlog"
+
+        result = await db_session.execute(select(EventLogConfig))
+        configs = list(result.scalars().all())
+        assert len(configs) == 1
+        assert configs[0].event_type == "message_delete"
+
+    async def test_eventlog_create_invalid_event_type(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """無効なイベントタイプはリダイレクトで拒否される。"""
+        response = await authenticated_client.post(
+            "/eventlog/new",
+            data={
+                "guild_id": "123",
+                "event_type": "invalid_type",
+                "channel_id": "456",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(EventLogConfig))
+        assert len(list(result.scalars().all())) == 0
+
+    async def test_eventlog_create_duplicate(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """同一ギルド+イベントタイプの重複はエラーにならない。"""
+        config = EventLogConfig(
+            guild_id="123456789012345678",
+            event_type="member_join",
+            channel_id="987654321012345678",
+        )
+        db_session.add(config)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            "/eventlog/new",
+            data={
+                "guild_id": "123456789012345678",
+                "event_type": "member_join",
+                "channel_id": "111222333444555666",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+    async def test_eventlog_delete(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Event Log 設定を削除できる。"""
+        config = EventLogConfig(
+            guild_id="123456789012345678",
+            event_type="message_edit",
+            channel_id="987654321012345678",
+        )
+        db_session.add(config)
+        await db_session.commit()
+        await db_session.refresh(config)
+
+        response = await authenticated_client.post(
+            f"/eventlog/{config.id}/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(EventLogConfig))
+        assert len(list(result.scalars().all())) == 0
+
+    async def test_eventlog_toggle(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Event Log 設定の有効/無効を切り替えられる。"""
+        config = EventLogConfig(
+            guild_id="123456789012345678",
+            event_type="voice_state",
+            channel_id="987654321012345678",
+        )
+        db_session.add(config)
+        await db_session.commit()
+        await db_session.refresh(config)
+        assert config.enabled is True
+
+        response = await authenticated_client.post(
+            f"/eventlog/{config.id}/toggle",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(config)
+        assert config.enabled is False
+
+    async def test_eventlog_create_empty_guild(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """空の guild_id はリダイレクトで拒否される。"""
+        response = await authenticated_client.post(
+            "/eventlog/new",
+            data={
+                "guild_id": "",
+                "event_type": "message_delete",
+                "channel_id": "456",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(EventLogConfig))
+        assert len(list(result.scalars().all())) == 0

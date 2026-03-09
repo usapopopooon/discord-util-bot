@@ -48,6 +48,7 @@ from src.database.models import (
     DiscordChannel,
     DiscordGuild,
     DiscordRole,
+    EventLogConfig,
     HealthConfig,
     JoinRoleConfig,
     Lobby,
@@ -84,6 +85,7 @@ from src.web.templates import (
     dashboard_page,
     email_change_page,
     email_verification_pending_page,
+    eventlog_page,
     forgot_password_page,
     health_settings_page,
     initial_setup_page,
@@ -4287,3 +4289,148 @@ async def health_settings_delete(
         record_form_submit(user_email, path)
 
     return RedirectResponse(url="/health/settings", status_code=302)
+
+
+# =============================================================================
+# Event Log
+# =============================================================================
+
+
+@app.get("/eventlog", response_model=None)
+async def eventlog_list(
+    user: dict[str, Any] | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Event Log 設定一覧ページ。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    result = await db.execute(select(EventLogConfig).order_by(EventLogConfig.id))
+    configs = list(result.scalars().all())
+
+    guilds_map, channels_map = await _get_discord_guilds_and_channels(db)
+
+    return HTMLResponse(
+        content=eventlog_page(
+            configs,
+            csrf_token=generate_csrf_token(),
+            guilds_map=guilds_map,
+            channels_map=channels_map,
+        )
+    )
+
+
+@app.post("/eventlog/new", response_model=None)
+async def eventlog_create(
+    request: Request,
+    guild_id: Annotated[str, Form()],
+    event_type: Annotated[str, Form()],
+    channel_id: Annotated[str, Form()],
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Event Log 設定を作成する。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/eventlog", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/eventlog", status_code=302)
+
+    if not guild_id or not channel_id:
+        return RedirectResponse(url="/eventlog", status_code=302)
+
+    if event_type not in EventLogConfig.VALID_EVENT_TYPES:
+        return RedirectResponse(url="/eventlog", status_code=302)
+
+    async with get_resource_lock(f"eventlog:create:{guild_id}:{event_type}"):
+        config = EventLogConfig(
+            guild_id=guild_id,
+            event_type=event_type,
+            channel_id=channel_id,
+        )
+        db.add(config)
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+
+        record_form_submit(user_email, path)
+
+    return RedirectResponse(url="/eventlog", status_code=302)
+
+
+@app.post("/eventlog/{config_id}/delete", response_model=None)
+async def eventlog_delete(
+    request: Request,
+    config_id: int,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Event Log 設定を削除する。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/eventlog", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/eventlog", status_code=302)
+
+    async with get_resource_lock(f"eventlog:delete:{config_id}"):
+        result = await db.execute(
+            select(EventLogConfig).where(EventLogConfig.id == config_id)
+        )
+        config = result.scalar_one_or_none()
+        if config:
+            await db.delete(config)
+            await db.commit()
+
+        record_form_submit(user_email, path)
+
+    return RedirectResponse(url="/eventlog", status_code=302)
+
+
+@app.post("/eventlog/{config_id}/toggle", response_model=None)
+async def eventlog_toggle(
+    request: Request,
+    config_id: int,
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Event Log 設定の有効/無効を切り替える。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/eventlog", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/eventlog", status_code=302)
+
+    async with get_resource_lock(f"eventlog:toggle:{config_id}"):
+        result = await db.execute(
+            select(EventLogConfig).where(EventLogConfig.id == config_id)
+        )
+        config = result.scalar_one_or_none()
+        if config:
+            config.enabled = not config.enabled
+            await db.commit()
+
+        record_form_submit(user_email, path)
+
+    return RedirectResponse(url="/eventlog", status_code=302)

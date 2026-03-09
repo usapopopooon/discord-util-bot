@@ -56,6 +56,7 @@ from src.database.models import (
     DiscordChannel,
     DiscordGuild,
     DiscordRole,
+    EventLogConfig,
     HealthConfig,
     JoinRoleAssignment,
     JoinRoleConfig,
@@ -2962,3 +2963,35 @@ async def delete_health_config(session: AsyncSession, guild_id: str) -> bool:
         await session.commit()
         return True
     return False
+
+
+# =============================================================================
+# EventLogConfig (イベントログ) 操作
+# =============================================================================
+
+
+async def get_event_log_configs(
+    session: AsyncSession, guild_id: str | None = None
+) -> list[EventLogConfig]:
+    """EventLog 設定を取得する。guild_id 指定で絞り込み。"""
+    stmt = select(EventLogConfig).order_by(EventLogConfig.id)
+    if guild_id is not None:
+        stmt = stmt.where(EventLogConfig.guild_id == guild_id)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_enabled_event_log_configs(
+    session: AsyncSession, guild_id: str
+) -> list[EventLogConfig]:
+    """指定ギルドの有効な EventLog 設定を取得する。"""
+    stmt = (
+        select(EventLogConfig)
+        .where(
+            EventLogConfig.guild_id == guild_id,
+            EventLogConfig.enabled.is_(True),
+        )
+        .order_by(EventLogConfig.id)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())

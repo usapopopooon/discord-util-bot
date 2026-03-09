@@ -370,7 +370,6 @@ class AutoModCog(commands.Cog):
         # ログ送信用にメンバー情報を事前に保存 (BAN後はアクセス不可)
         member_name = member.name
         member_id = member.id
-        member_display_name = member.display_name
         member_avatar_url = member.display_avatar.url if member.display_avatar else None
         member_created_at = member.created_at
         member_joined_at = member.joined_at
@@ -445,7 +444,6 @@ class AutoModCog(commands.Cog):
                 reason=reason,
                 member_name=member_name,
                 member_id=member_id,
-                member_display_name=member_display_name,
                 member_avatar_url=member_avatar_url,
                 member_created_at=member_created_at,
                 member_joined_at=member_joined_at,
@@ -461,7 +459,6 @@ class AutoModCog(commands.Cog):
         reason: str,
         member_name: str,
         member_id: int,
-        member_display_name: str,
         member_avatar_url: str | None,
         member_created_at: datetime,
         member_joined_at: datetime | None,

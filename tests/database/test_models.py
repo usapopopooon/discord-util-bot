@@ -24,6 +24,7 @@ from src.database.models import (
     DiscordChannel,
     DiscordGuild,
     DiscordRole,
+    EventLogConfig,
     JoinRoleAssignment,
     JoinRoleConfig,
     Lobby,
@@ -2923,6 +2924,79 @@ class TestAutoModRuleNewTypes:
         await db_session.refresh(rule)
         assert rule.rule_type == "msg_without_intro"
         assert rule.action == "kick"
+
+
+# ===========================================================================
+# EventLogConfig — モデルテスト
+# ===========================================================================
+
+
+class TestEventLogConfigModel:
+    """EventLogConfig モデルのテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_create_event_log_config(self, db_session: AsyncSession) -> None:
+        """EventLogConfig レコードを作成できる。"""
+        config = EventLogConfig(
+            guild_id=snowflake(),
+            event_type="message_delete",
+            channel_id=snowflake(),
+        )
+        db_session.add(config)
+        await db_session.commit()
+        await db_session.refresh(config)
+        assert config.id is not None
+        assert config.enabled is True
+        assert config.event_type == "message_delete"
+
+    @pytest.mark.asyncio
+    async def test_unique_constraint(self, db_session: AsyncSession) -> None:
+        """同一ギルド+イベントタイプの重複は拒否される。"""
+        gid = snowflake()
+        config1 = EventLogConfig(
+            guild_id=gid,
+            event_type="member_join",
+            channel_id=snowflake(),
+        )
+        db_session.add(config1)
+        await db_session.commit()
+
+        config2 = EventLogConfig(
+            guild_id=gid,
+            event_type="member_join",
+            channel_id=snowflake(),
+        )
+        db_session.add(config2)
+        with pytest.raises(IntegrityError):
+            await db_session.commit()
+
+    @pytest.mark.asyncio
+    async def test_repr(self, db_session: AsyncSession) -> None:
+        """repr が正しい情報を含む。"""
+        config = EventLogConfig(
+            guild_id=snowflake(),
+            event_type="voice_state",
+            channel_id=snowflake(),
+        )
+        db_session.add(config)
+        await db_session.commit()
+        text = repr(config)
+        assert "EventLogConfig" in text
+        assert config.guild_id in text
+
+    @pytest.mark.asyncio
+    async def test_all_event_types(self, db_session: AsyncSession) -> None:
+        """全てのイベントタイプを保存できる。"""
+        for event_type in EventLogConfig.VALID_EVENT_TYPES:
+            config = EventLogConfig(
+                guild_id=snowflake(),
+                event_type=event_type,
+                channel_id=snowflake(),
+            )
+            db_session.add(config)
+            await db_session.commit()
+            await db_session.refresh(config)
+            assert config.event_type == event_type
 
 
 # ===========================================================================

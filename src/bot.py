@@ -200,6 +200,7 @@ class EphemeralVCBot(commands.Bot):
             "src.cogs.automod",
             "src.cogs.ticket",
             "src.cogs.join_role",
+            "src.cogs.eventlog",
         ]
         for ext in extensions:
             try:

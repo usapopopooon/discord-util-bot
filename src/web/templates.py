@@ -13,6 +13,7 @@ if TYPE_CHECKING:
         BanLog,
         BumpConfig,
         BumpReminder,
+        EventLogConfig,
         JoinRoleConfig,
         Lobby,
         RolePanel,
@@ -439,6 +440,10 @@ def dashboard_page(email: str = "Admin") -> str:
             <a href="/activity" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
                 <h2 class="text-lg font-semibold mb-2">Bot Activity</h2>
                 <p class="text-gray-400 text-sm">Change bot presence status</p>
+            </a>
+            <a href="/eventlog" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
+                <h2 class="text-lg font-semibold mb-2">Event Log</h2>
+                <p class="text-gray-400 text-sm">Configure event logging channels</p>
             </a>
             <a href="/health/settings" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
                 <h2 class="text-lg font-semibold mb-2">Health Monitor</h2>
@@ -5210,3 +5215,194 @@ def health_settings_page(
     </script>
     """
     return _base("Health Monitor", content)
+
+
+def eventlog_page(
+    configs: list["EventLogConfig"],
+    csrf_token: str = "",
+    guilds_map: dict[str, str] | None = None,
+    channels_map: dict[str, list[tuple[str, str]]] | None = None,
+) -> str:
+    """Event Log 設定一覧＋新規作成ページ。"""
+    import json as json_mod
+
+    if guilds_map is None:
+        guilds_map = {}
+    if channels_map is None:
+        channels_map = {}
+
+    # イベントタイプの表示名
+    event_type_labels = {
+        "message_delete": "Message Delete",
+        "message_edit": "Message Edit",
+        "member_join": "Member Join",
+        "member_leave": "Member Leave",
+        "member_kick": "Member Kick",
+        "member_ban": "Member Ban",
+        "member_unban": "Member Unban",
+        "member_timeout": "Member Timeout",
+        "role_change": "Role Change",
+        "nickname_change": "Nickname Change",
+        "channel_create": "Channel Create",
+        "channel_delete": "Channel Delete",
+        "voice_state": "Voice State",
+    }
+
+    # チャンネル名マップ (全ギルドのチャンネルをフラット化)
+    channel_name_map: dict[str, str] = {}
+    for ch_list in channels_map.values():
+        for cid, cname in ch_list:
+            channel_name_map[cid] = cname
+
+    row_parts: list[str] = []
+    for config in configs:
+        guild_name = guilds_map.get(config.guild_id)
+        if guild_name:
+            guild_display = (
+                f'<span class="font-medium">{escape(guild_name)}</span>'
+                f'<br><span class="font-mono text-xs text-gray-500">'
+                f"{escape(config.guild_id)}</span>"
+            )
+        else:
+            guild_display = (
+                f'<span class="font-mono text-yellow-400">'
+                f"{escape(config.guild_id)}</span>"
+            )
+
+        event_label = event_type_labels.get(config.event_type, config.event_type)
+        ch_name = channel_name_map.get(config.channel_id, config.channel_id)
+
+        status = "Enabled" if config.enabled else "Disabled"
+        status_class = "text-green-400" if config.enabled else "text-gray-500"
+        created = format_datetime(config.created_at)
+
+        row_parts.append(f"""
+        <tr class="border-b border-gray-700">
+            <td class="py-3 px-4 align-middle">{guild_display}</td>
+            <td class="py-3 px-4 align-middle">{escape(event_label)}</td>
+            <td class="py-3 px-4 align-middle">#{escape(ch_name)}</td>
+            <td class="py-3 px-4 align-middle">
+                <span class="{status_class}">{status}</span>
+            </td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">{created}</td>
+            <td class="py-3 px-4 align-middle space-x-2">
+                <a href="#" onclick="postAction('/eventlog/{config.id}/toggle', '{csrf_token}'); return false;"
+                   class="text-blue-400 hover:text-blue-300 text-sm">Toggle</a>
+                <a href="#" onclick="postAction('/eventlog/{config.id}/delete', '{csrf_token}', 'Delete this event log config?'); return false;"
+                   class="text-red-400 hover:text-red-300 text-sm">Delete</a>
+            </td>
+        </tr>
+        """)
+    rows = "".join(row_parts)
+
+    if not configs:
+        rows = """
+        <tr>
+            <td colspan="6" class="py-8 text-center text-gray-500">
+                No event log configs configured
+            </td>
+        </tr>
+        """
+
+    # ギルド選択肢
+    guild_options = "".join(
+        f'<option value="{escape(gid)}">{escape(gname)}</option>'
+        for gid, gname in guilds_map.items()
+    )
+
+    # イベントタイプ選択肢
+    event_options = "".join(
+        f'<option value="{escape(k)}">{escape(v)}</option>'
+        for k, v in event_type_labels.items()
+    )
+
+    # チャンネル情報を JSON 化 (JS で guild 選択時にフィルタ)
+    channels_data: dict[str, list[dict[str, str]]] = {}
+    for gid, ch_list in channels_map.items():
+        channels_data[gid] = [{"id": cid, "name": cname} for cid, cname in ch_list]
+    channels_json = json_mod.dumps(channels_data)
+
+    content = f"""
+    <div class="p-6">
+        {
+        _nav(
+            "Event Log",
+            breadcrumbs=[
+                ("Dashboard", "/dashboard"),
+                ("Event Log", None),
+            ],
+        )
+    }
+        <div class="bg-gray-800 rounded-lg overflow-hidden overflow-x-auto mb-6">
+            <table class="w-full">
+                <thead class="bg-gray-700">
+                    <tr>
+                        <th class="py-3 px-4 text-left">Server</th>
+                        <th class="py-3 px-4 text-left">Event Type</th>
+                        <th class="py-3 px-4 text-left">Channel</th>
+                        <th class="py-3 px-4 text-left">Status</th>
+                        <th class="py-3 px-4 text-left">Created</th>
+                        <th class="py-3 px-4 text-left">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="bg-gray-800 rounded-lg p-6">
+            <h2 class="text-lg font-semibold mb-4">Add Event Log Config</h2>
+            <form method="POST" action="/eventlog/new">
+                {_csrf_field(csrf_token)}
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Server</label>
+                        <select name="guild_id" id="eventlogGuildSelect" onchange="updateEventlogChannel()"
+                                class="w-full bg-gray-700 rounded px-3 py-2 text-sm" required>
+                            <option value="">Select server...</option>
+                            {guild_options}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Event Type</label>
+                        <select name="event_type" id="eventlogEventType"
+                                class="w-full bg-gray-700 rounded px-3 py-2 text-sm" required>
+                            <option value="">Select event type...</option>
+                            {event_options}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Channel</label>
+                        <select name="channel_id" id="eventlogChannelSelect"
+                                class="w-full bg-gray-700 rounded px-3 py-2 text-sm" required>
+                            <option value="">Select channel...</option>
+                        </select>
+                    </div>
+                </div>
+                <button type="submit"
+                        class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm transition-colors">
+                    Add Config
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+    const eventlogChannelsData = {channels_json};
+    function updateEventlogChannel() {{
+        const guildId = document.getElementById('eventlogGuildSelect').value;
+        const chSelect = document.getElementById('eventlogChannelSelect');
+        chSelect.innerHTML = '<option value="">Select channel...</option>';
+        if (eventlogChannelsData[guildId]) {{
+            eventlogChannelsData[guildId].forEach(ch => {{
+                const opt = document.createElement('option');
+                opt.value = ch.id;
+                opt.textContent = '#' + ch.name;
+                chSelect.appendChild(opt);
+            }});
+        }}
+    }}
+    </script>
+    """
+    return _base("Event Log", content)

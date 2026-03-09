@@ -1643,6 +1643,50 @@ class JoinRoleAssignment(Base):
         )
 
 
+class EventLogConfig(Base):
+    """イベントログのルーティング設定テーブル。
+
+    ギルドごとにどのイベントタイプをどのチャンネルに送信するかを定義する。
+    1行 = 1つのイベントタイプ → 1つのチャンネル のマッピング。
+    """
+
+    __tablename__ = "event_log_configs"
+    __table_args__ = (
+        UniqueConstraint("guild_id", "event_type", name="uq_event_log_guild_event"),
+    )
+
+    VALID_EVENT_TYPES = (
+        "message_delete",
+        "message_edit",
+        "member_join",
+        "member_leave",
+        "member_kick",
+        "member_ban",
+        "member_unban",
+        "member_timeout",
+        "role_change",
+        "nickname_change",
+        "channel_create",
+        "channel_delete",
+        "voice_state",
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    channel_id: Mapped[str] = mapped_column(String, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<EventLogConfig(id={self.id}, guild_id={self.guild_id}, "
+            f"event_type={self.event_type}, channel_id={self.channel_id})>"
+        )
+
+
 class ProcessedEvent(Base):
     """重複排除テーブル (マルチインスタンス重複防止)。
 
