@@ -600,7 +600,8 @@ class AutoBanCog(commands.Cog):
                 return
             if account_age_minutes > MAX_ACCOUNT_AGE_MINUTES:
                 await interaction.response.send_message(
-                    f"account_age_minutes は最大 {MAX_ACCOUNT_AGE_MINUTES} (14日) です。",
+                    f"account_age_minutes は最大 "
+                    f"{MAX_ACCOUNT_AGE_MINUTES} (14日) です。",
                     ephemeral=True,
                 )
                 return

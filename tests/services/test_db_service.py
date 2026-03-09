@@ -4804,8 +4804,10 @@ class TestUpdateAutobanRule:
         updated = await update_autoban_rule(db_session, rule, threshold_seconds=172800)
         assert updated.threshold_seconds == 172800
 
-    async def test_update_threshold_seconds(self, db_session: AsyncSession) -> None:
-        """threshold_seconds を更新できる。"""
+    async def test_update_threshold_seconds_role_acquired(
+        self, db_session: AsyncSession
+    ) -> None:
+        """role_acquired の threshold_seconds を更新できる。"""
         rule = await create_autoban_rule(
             db_session,
             guild_id="123",
