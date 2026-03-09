@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 from urllib.parse import urlencode
 
 import pytest
@@ -13062,7 +13063,7 @@ class TestJoinRoleRoutes:
 
 
 # ===========================================================================
-# 追加 CSRF / バリデーション テスト (カバレッジ向上)
+# 追加 CSRF / バリデーション テスト
 # ===========================================================================
 
 
@@ -14283,3 +14284,321 @@ class TestEventLogRoutes:
 
         result = await db_session.execute(select(EventLogConfig))
         assert len(list(result.scalars().all())) == 0
+
+    async def test_eventlog_create_requires_auth(
+        self, client: AsyncClient
+    ) -> None:
+        response = await client.post(
+            "/eventlog/new",
+            data={
+                "guild_id": "123",
+                "event_type": "message_delete",
+                "channel_id": "456",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_eventlog_create_csrf_failure(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await authenticated_client.post(
+                "/eventlog/new",
+                data={
+                    "guild_id": "123",
+                    "event_type": "message_delete",
+                    "channel_id": "456",
+                },
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/eventlog"
+
+    async def test_eventlog_create_cooldown(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        record_form_submit(TEST_ADMIN_EMAIL, "/eventlog/new")
+        response = await authenticated_client.post(
+            "/eventlog/new",
+            data={
+                "guild_id": "123",
+                "event_type": "message_delete",
+                "channel_id": "456",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        result = await db_session.execute(select(EventLogConfig))
+        assert len(list(result.scalars().all())) == 0
+
+    async def test_eventlog_delete_requires_auth(
+        self, client: AsyncClient
+    ) -> None:
+        response = await client.post(
+            "/eventlog/999/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_eventlog_delete_csrf_failure(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await authenticated_client.post(
+                "/eventlog/999/delete",
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/eventlog"
+
+    async def test_eventlog_delete_cooldown(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        record_form_submit(TEST_ADMIN_EMAIL, "/eventlog/999/delete")
+        response = await authenticated_client.post(
+            "/eventlog/999/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+    async def test_eventlog_delete_nonexistent(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.post(
+            "/eventlog/999999/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+    async def test_eventlog_toggle_requires_auth(
+        self, client: AsyncClient
+    ) -> None:
+        response = await client.post(
+            "/eventlog/999/toggle",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_eventlog_toggle_csrf_failure(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await authenticated_client.post(
+                "/eventlog/999/toggle",
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/eventlog"
+
+    async def test_eventlog_toggle_cooldown(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        record_form_submit(TEST_ADMIN_EMAIL, "/eventlog/999/toggle")
+        response = await authenticated_client.post(
+            "/eventlog/999/toggle",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+    async def test_eventlog_toggle_nonexistent(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.post(
+            "/eventlog/999999/toggle",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+
+class TestHealthSettingsCSRFAndCooldown:
+
+    async def test_health_settings_delete_csrf_failure(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await authenticated_client.post(
+                "/health/settings/123/delete",
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "/health/settings" in response.headers["location"]
+
+    async def test_health_settings_delete_cooldown(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        record_form_submit(TEST_ADMIN_EMAIL, "/health/settings/123/delete")
+        response = await authenticated_client.post(
+            "/health/settings/123/delete",
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+    async def test_health_settings_post_csrf_failure(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await authenticated_client.post(
+                "/health/settings",
+                data={"guild_id": "123", "channel_id": "456"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert "/health/settings" in response.headers["location"]
+
+
+class TestActivityCSRF:
+
+    async def test_activity_post_csrf_failure(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        with patch("src.web.app.validate_csrf_token", return_value=False):
+            response = await authenticated_client.post(
+                "/activity",
+                data={"activity_type": "playing", "activity_text": "test"},
+                follow_redirects=False,
+            )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/activity"
+
+
+class TestAutomodTimeoutValidation:
+
+    async def test_automod_create_timeout_invalid_duration(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        response = await authenticated_client.post(
+            "/automod/new",
+            data={
+                "guild_id": "123456789012345678",
+                "rule_type": "username_match",
+                "action": "timeout",
+                "pattern": "spammer",
+                "timeout_duration_minutes": "invalid",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/automod/new" in response.headers["location"]
+        result = await db_session.execute(select(AutoModRule))
+        assert len(list(result.scalars().all())) == 0
+
+    async def test_automod_create_timeout_out_of_range(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        response = await authenticated_client.post(
+            "/automod/new",
+            data={
+                "guild_id": "123456789012345678",
+                "rule_type": "username_match",
+                "action": "timeout",
+                "pattern": "spammer",
+                "timeout_duration_minutes": "99999",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/automod/new" in response.headers["location"]
+        result = await db_session.execute(select(AutoModRule))
+        assert len(list(result.scalars().all())) == 0
+
+    async def test_automod_create_timeout_success(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        response = await authenticated_client.post(
+            "/automod/new",
+            data={
+                "guild_id": "123456789012345678",
+                "rule_type": "username_match",
+                "action": "timeout",
+                "pattern": "spammer",
+                "timeout_duration_minutes": "60",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/automod"
+        result = await db_session.execute(select(AutoModRule))
+        rules = list(result.scalars().all())
+        assert len(rules) == 1
+        assert rules[0].timeout_duration_seconds == 3600
+
+    async def test_automod_edit_timeout_invalid_duration(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        rule = AutoModRule(
+            guild_id="123456789012345678",
+            rule_type="username_match",
+            action="ban",
+            pattern="old",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/automod/{rule.id}/edit",
+            data={
+                "action": "timeout",
+                "pattern": "old",
+                "timeout_duration_minutes": "abc",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert f"/automod/{rule.id}/edit" in response.headers["location"]
+
+    async def test_automod_edit_timeout_out_of_range(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        rule = AutoModRule(
+            guild_id="123456789012345678",
+            rule_type="username_match",
+            action="ban",
+            pattern="old",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/automod/{rule.id}/edit",
+            data={
+                "action": "timeout",
+                "pattern": "old",
+                "timeout_duration_minutes": "0",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert f"/automod/{rule.id}/edit" in response.headers["location"]
+
+    async def test_automod_edit_timeout_success(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        rule = AutoModRule(
+            guild_id="123456789012345678",
+            rule_type="username_match",
+            action="ban",
+            pattern="old",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/automod/{rule.id}/edit",
+            data={
+                "action": "timeout",
+                "pattern": "old",
+                "timeout_duration_minutes": "120",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/automod"
+        await db_session.refresh(rule)
+        assert rule.timeout_duration_seconds == 7200

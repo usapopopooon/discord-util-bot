@@ -562,3 +562,28 @@ class TestDuplicateGuard:
         ):
             await cog._check_expired_roles()
             member.remove_roles.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestSetup / BeforeLoop
+# ---------------------------------------------------------------------------
+
+
+class TestSetupAndBeforeLoop:
+    """setup 関数と before_loop のテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_setup_adds_cog(self) -> None:
+        from src.cogs.join_role import setup
+
+        bot = MagicMock(spec=commands.Bot)
+        bot.add_cog = AsyncMock()
+        await setup(bot)
+        bot.add_cog.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_before_loop_waits_until_ready(self) -> None:
+        cog = _make_cog()
+        cog.bot.wait_until_ready = AsyncMock()
+        await cog._before_check_expired_roles()
+        cog.bot.wait_until_ready.assert_awaited_once()

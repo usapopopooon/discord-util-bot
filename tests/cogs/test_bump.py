@@ -3964,3 +3964,116 @@ class TestBumpDetectionDuplicateGuard:
         # claim 成功 → メッセージ送信される
         mock_claim.assert_awaited_once()
         message.channel.send.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# キャッシュ連携テスト
+# ---------------------------------------------------------------------------
+
+
+class TestBumpCacheIntegration:
+    """_bump_guild_ids キャッシュの連携テスト。"""
+
+    @patch("src.cogs.bump.async_session")
+    @patch("src.cogs.bump.get_bump_config")
+    @patch("src.cogs.bump.delete_bump_config")
+    @patch("src.cogs.bump.delete_bump_reminders_by_guild")
+    async def test_channel_delete_discards_from_cache(
+        self,
+        mock_delete_reminders: AsyncMock,
+        mock_delete_config: AsyncMock,
+        mock_get_config: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """チャンネル削除時にキャッシュからも削除される。"""
+        cog = _make_cog()
+        cog._bump_guild_ids = {"789", "999"}
+
+        mock_config = MagicMock()
+        mock_config.channel_id = "456"
+        mock_get_config.return_value = mock_config
+        mock_delete_reminders.return_value = 0
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.id = 456
+        channel.guild = MagicMock()
+        channel.guild.id = 789
+
+        await cog.on_guild_channel_delete(channel)
+
+        assert "789" not in cog._bump_guild_ids
+        assert "999" in cog._bump_guild_ids
+
+    @patch("src.cogs.bump.async_session")
+    @patch("src.cogs.bump.delete_bump_config")
+    @patch("src.cogs.bump.delete_bump_reminders_by_guild")
+    async def test_guild_remove_discards_from_cache(
+        self,
+        mock_delete_reminders: AsyncMock,
+        mock_delete_config: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """ギルド削除時にキャッシュからも削除される。"""
+        cog = _make_cog()
+        cog._bump_guild_ids = {"789"}
+
+        mock_delete_reminders.return_value = 0
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+
+        await cog.on_guild_remove(guild)
+
+        assert "789" not in cog._bump_guild_ids
+
+    async def test_on_message_skips_unconfigured_guild(self) -> None:
+        """キャッシュに含まれないギルドのメッセージはスキップ。"""
+        cog = _make_cog()
+        cog._bump_guild_ids = {"999"}  # 789 は含まない
+
+        message = MagicMock(spec=discord.Message)
+        message.guild = MagicMock()
+        message.guild.id = 789
+        message.author = MagicMock()
+        message.author.id = 302050872383242240  # DISBOARD
+
+        await cog.on_message(message)
+        # DB にアクセスしないことを暗黙的に検証 (例外が出ない)
+
+    @patch("src.cogs.bump.async_session")
+    @patch("src.cogs.bump.delete_bump_config")
+    async def test_disable_discards_from_cache(
+        self,
+        mock_delete: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """bump disable でキャッシュからも削除される。"""
+        cog = _make_cog()
+        cog._bump_guild_ids = {"789"}
+
+        mock_delete.return_value = True
+
+        mock_session_ctx = MagicMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_session.return_value = mock_session_ctx
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock()
+        interaction.guild.id = 789
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+
+        await cog.bump_disable.callback(cog, interaction)
+
+        assert "789" not in cog._bump_guild_ids

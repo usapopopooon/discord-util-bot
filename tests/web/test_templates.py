@@ -3722,3 +3722,77 @@ class TestHealthSettingsPage:
             configs_map={"123": "ch1"},
         )
         assert '/health/settings/123/delete"' in result
+
+
+class TestAutomodListPageTimeoutDisplay:
+
+    def test_timeout_action_with_duration(self) -> None:
+        from unittest.mock import MagicMock
+
+        rule = MagicMock()
+        rule.id = 1
+        rule.guild_id = "123"
+        rule.rule_type = "username_match"
+        rule.action = "timeout"
+        rule.pattern = "spammer"
+        rule.use_wildcard = False
+        rule.threshold_seconds = None
+        rule.required_channel_id = None
+        rule.timeout_duration_seconds = 3600
+        rule.is_enabled = True
+        rule.created_at = None
+        result = automod_list_page([rule])
+        assert "timeout (60min)" in result
+
+    def test_intro_rule_no_required_channel(self) -> None:
+        from unittest.mock import MagicMock
+
+        rule = MagicMock()
+        rule.id = 1
+        rule.guild_id = "123"
+        rule.rule_type = "vc_without_intro"
+        rule.action = "ban"
+        rule.pattern = None
+        rule.use_wildcard = False
+        rule.threshold_seconds = None
+        rule.required_channel_id = None
+        rule.timeout_duration_seconds = None
+        rule.is_enabled = True
+        rule.created_at = None
+        result = automod_list_page([rule])
+        assert "<td" in result
+
+
+class TestEventlogPage:
+
+    def test_empty_configs(self) -> None:
+        from src.web.templates import eventlog_page
+
+        result = eventlog_page([])
+        assert "No event log configs" in result
+
+    def test_with_guilds_and_channels(self) -> None:
+        from unittest.mock import MagicMock
+
+        from src.web.templates import eventlog_page
+
+        config = MagicMock()
+        config.id = 1
+        config.guild_id = "123"
+        config.event_type = "message_delete"
+        config.channel_id = "456"
+        config.enabled = True
+
+        result = eventlog_page(
+            [config],
+            guilds_map={"123": "Test Server"},
+            channels_map={"123": [("456", "mod-log"), ("789", "general")]},
+        )
+        assert "Test Server" in result
+        assert "mod-log" in result
+
+    def test_defaults_none_maps(self) -> None:
+        from src.web.templates import eventlog_page
+
+        result = eventlog_page([], guilds_map=None, channels_map=None)
+        assert "No event log configs" in result

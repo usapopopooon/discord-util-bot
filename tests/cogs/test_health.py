@@ -1482,3 +1482,44 @@ class TestHealthDisableCommand:
         interaction.response.send_message.assert_awaited_once()
         call_kwargs = interaction.response.send_message.call_args[1]
         assert call_kwargs["ephemeral"] is True
+
+
+class TestHealthDeferFailure:
+    """defer 失敗時の早期リターンテスト。"""
+
+    async def test_setup_defer_http_exception(self) -> None:
+        """setup で defer が HTTPException を返すと早期リターン。"""
+        cog = _make_cog()
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock()
+        interaction.guild.id = 111
+        interaction.channel_id = 222
+        interaction.response = MagicMock()
+        interaction.response.defer = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "fail")
+        )
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        await cog.health_setup.callback(cog, interaction)
+
+        interaction.followup.send.assert_not_awaited()
+
+    async def test_disable_defer_http_exception(self) -> None:
+        """disable で defer が HTTPException を返すと早期リターン。"""
+        cog = _make_cog()
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock()
+        interaction.guild.id = 111
+        interaction.response = MagicMock()
+        interaction.response.defer = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "fail")
+        )
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        await cog.health_disable.callback(cog, interaction)
+
+        interaction.followup.send.assert_not_awaited()

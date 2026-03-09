@@ -1168,6 +1168,7 @@ class TestSendLogEmbed:
         [
             ("banned", "[AutoMod] User Banned", 0xFF0000),
             ("kicked", "[AutoMod] User Kicked", 0xFFA500),
+            ("timed_out", "[AutoMod] User Timed_out", 0xFFFF00),
         ],
     )
     async def test_embed_title_and_color(
@@ -2348,3 +2349,125 @@ class TestMsgWithoutIntro:
             await cog.on_message(msg)
             mock_record.assert_called_once()
             mock_exec.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Timeout アクション関連テスト
+# ---------------------------------------------------------------------------
+
+
+class TestAutomodAddTimeout:
+    """automod_add timeout バリデーションのテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_timeout_without_duration(self) -> None:
+        """timeout アクションで duration なしはエラー。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+        await cog.automod_add.callback(
+            cog,
+            interaction,
+            rule_type="username_match",
+            pattern="bad",
+            action="timeout",
+            timeout_duration_minutes=None,
+        )
+        call_args = interaction.response.send_message.call_args
+        assert "timeout" in call_args.args[0].lower()
+
+    @pytest.mark.asyncio
+    async def test_timeout_duration_zero(self) -> None:
+        """timeout アクションで duration=0 はエラー。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+        await cog.automod_add.callback(
+            cog,
+            interaction,
+            rule_type="username_match",
+            pattern="bad",
+            action="timeout",
+            timeout_duration_minutes=0,
+        )
+        call_args = interaction.response.send_message.call_args
+        assert "timeout" in call_args.args[0].lower()
+
+    @pytest.mark.asyncio
+    async def test_timeout_duration_exceeds_max(self) -> None:
+        """timeout アクションで max 超えはエラー。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+        await cog.automod_add.callback(
+            cog,
+            interaction,
+            rule_type="username_match",
+            pattern="bad",
+            action="timeout",
+            timeout_duration_minutes=99999,
+        )
+        call_args = interaction.response.send_message.call_args
+        assert "40320" in call_args.args[0] or "28" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_timeout_successful_add(self) -> None:
+        """timeout アクションで有効な duration で成功。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+        mock_rule = _make_rule(rule_id=99, action="timeout")
+        with patch(
+            "src.cogs.automod.create_automod_rule",
+            new_callable=AsyncMock,
+            return_value=mock_rule,
+        ):
+            await cog.automod_add.callback(
+                cog,
+                interaction,
+                rule_type="username_match",
+                pattern="bad",
+                action="timeout",
+                timeout_duration_minutes=60,
+            )
+            call_args = interaction.response.send_message.call_args
+            assert "#99" in call_args.args[0]
+            assert "Timeout Duration" in call_args.args[0]
+
+
+class TestAutomodListTimingRuleDisplay:
+    """automod_list でタイミング系ルールの表示テスト。"""
+
+    @pytest.mark.asyncio
+    async def test_shows_timing_rule_threshold(self) -> None:
+        """role_acquired/vc_join/message_post ルールのしきい値表示。"""
+        cog = _make_cog()
+        interaction = _make_interaction()
+        rules = [
+            _make_rule(
+                rule_id=10,
+                rule_type="role_acquired",
+                threshold_seconds=300,
+                pattern=None,
+            ),
+            _make_rule(
+                rule_id=11,
+                rule_type="vc_join",
+                threshold_seconds=600,
+                pattern=None,
+            ),
+            _make_rule(
+                rule_id=12,
+                rule_type="message_post",
+                threshold_seconds=120,
+                pattern=None,
+            ),
+        ]
+        with patch(
+            "src.cogs.automod.get_automod_rules_by_guild",
+            new_callable=AsyncMock,
+            return_value=rules,
+        ):
+            await cog.automod_list.callback(cog, interaction)
+            call_kwargs = interaction.response.send_message.call_args.kwargs
+            embed = call_kwargs["embed"]
+            # タイミング系ルールのしきい値が表示される
+            field_values = [f.value for f in embed.fields]
+            assert any("300s after join" in v for v in field_values)
+            assert any("600s after join" in v for v in field_values)

@@ -4144,3 +4144,216 @@ class TestDeduplicationClaimSucceeds:
             assert result is True
             mock_claim.assert_awaited_once()
             member.move_to.assert_awaited_once_with(None)
+
+
+# ===========================================================================
+# 追加エッジケーステスト
+# ===========================================================================
+
+
+class TestEnforceRestrictionsMoveFail:
+    """move_to が HTTPException を返すケースのテスト。"""
+
+    async def test_move_to_http_exception_on_kick(self) -> None:
+        """キック時に move_to が失敗しても例外を上げない。"""
+        cog = _make_cog()
+        member = _make_member(2)
+        member.guild_permissions = MagicMock()
+        member.guild_permissions.administrator = False
+        member.move_to = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "fail")
+        )
+        member.send = AsyncMock()
+        channel = _make_channel(100)
+        channel.name = "Test Channel"
+        channel.send = AsyncMock()
+        overwrites = MagicMock()
+        overwrites.connect = None
+        channel.overwrites_for = MagicMock(return_value=overwrites)
+
+        voice_session = _make_voice_session(
+            channel_id="100", owner_id="1", is_locked=True
+        )
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.cogs.voice.async_session", mock_factory),
+            patch(
+                "src.cogs.voice.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+        ):
+            result = await cog._enforce_channel_restrictions(member, channel)
+
+        assert result is True
+        member.move_to.assert_awaited_once_with(None)
+
+
+class TestHandleLobbyJoinCacheFilter:
+    """_handle_lobby_join のキャッシュフィルタリングテスト。"""
+
+    async def test_cache_filter_skips_non_lobby(self) -> None:
+        """キャッシュ初期化済みで非ロビーチャンネルはスキップ。"""
+        cog = _make_cog()
+        cog._lobby_channel_ids = {"200"}  # 100 はロビーではない
+        member = _make_member(1)
+        channel = _make_channel(100)
+
+        # DB は呼ばれないはず
+        with patch(
+            "src.cogs.voice.async_session",
+            side_effect=AssertionError("should not be called"),
+        ):
+            await cog._handle_lobby_join(member, channel)
+
+
+class TestHandleChannelLeaveDeleteFail:
+    """チャンネル削除失敗時のテスト。"""
+
+    @patch("src.cogs.voice.async_session")
+    @patch("src.cogs.voice.get_voice_session")
+    @patch("src.cogs.voice.delete_voice_session")
+    async def test_channel_delete_http_exception(
+        self,
+        mock_delete_session: AsyncMock,
+        mock_get_session: AsyncMock,
+        mock_session_factory: MagicMock,
+    ) -> None:
+        """チャンネル削除が HTTPException でも例外を上げない。"""
+        mock_session = AsyncMock()
+        mock_session_factory.return_value.__aenter__ = AsyncMock(
+            return_value=mock_session
+        )
+        mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        voice_session = _make_voice_session(channel_id="100", owner_id="1")
+        mock_get_session.return_value = voice_session
+
+        cog = _make_cog()
+        channel = _make_channel(100, members=[])
+        channel.delete = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "fail")
+        )
+
+        member = _make_member(1)
+
+        with patch.object(cog, "_cleanup_channel_cache"):
+            await cog._handle_channel_leave(member, channel)
+
+        channel.delete.assert_awaited_once()
+        mock_delete_session.assert_awaited_once()
+
+
+class TestOnGuildChannelDeleteCacheDiscard:
+    """ロビー削除時のキャッシュ更新テスト。"""
+
+    async def test_lobby_cache_discarded(self) -> None:
+        """ロビーチャンネル削除時にキャッシュからも削除される。"""
+        cog = _make_cog()
+        cog._lobby_channel_ids = {"100", "200"}
+        channel = _make_channel(100)
+
+        lobby = MagicMock()
+        lobby.id = 42
+        lobby.lobby_channel_id = "100"
+
+        mock_factory, mock_session = _mock_async_session()
+        with (
+            patch("src.cogs.voice.delete_voice_session", new_callable=AsyncMock),
+            patch("src.cogs.voice.async_session", mock_factory),
+            patch(
+                "src.cogs.voice.get_lobby_by_channel_id",
+                new_callable=AsyncMock,
+                return_value=lobby,
+            ),
+            patch("src.cogs.voice.delete_lobby", new_callable=AsyncMock),
+        ):
+            await cog.on_guild_channel_delete(channel)
+
+        assert "100" not in cog._lobby_channel_ids
+        assert "200" in cog._lobby_channel_ids
+
+
+class TestVcLobbyOrphanCleanup:
+    """vc_lobby コマンドの孤立レコードクリーンアップテスト。"""
+
+    async def test_orphan_lobby_cleaned_up(self) -> None:
+        """Discord チャンネルが消えた孤立ロビーを掃除して新規作成する。"""
+        cog = _make_cog()
+        cog._lobby_channel_ids = {"999"}
+        interaction = _make_interaction(1)
+
+        # 既存ロビー (チャンネルは削除済み)
+        existing_lobby = MagicMock()
+        existing_lobby.id = 1
+        existing_lobby.lobby_channel_id = "999"
+
+        # get_channel が None → チャンネルは削除済み
+        interaction.guild.get_channel = MagicMock(return_value=None)
+        new_channel = MagicMock()
+        new_channel.id = 500
+        new_channel.mention = "<#500>"
+        interaction.guild.create_voice_channel = AsyncMock(return_value=new_channel)
+
+        mock_factory, mock_session = _mock_async_session()
+        with (
+            patch("src.cogs.voice.async_session", mock_factory),
+            patch(
+                "src.cogs.voice.get_lobbies_by_guild",
+                new_callable=AsyncMock,
+                return_value=[existing_lobby],
+            ),
+            patch(
+                "src.cogs.voice.delete_lobby",
+                new_callable=AsyncMock,
+            ) as mock_delete,
+            patch(
+                "src.cogs.voice.create_lobby",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await cog.vc_lobby.callback(cog, interaction)
+
+        # 孤立レコードが削除される
+        mock_delete.assert_awaited_once_with(mock_session, 1)
+        # キャッシュからも削除される
+        assert "999" not in cog._lobby_channel_ids
+        # 新しいロビーが作成される
+        interaction.guild.create_voice_channel.assert_awaited_once()
+
+
+class TestCooldownMoveToFail:
+    """クールダウン中の move_to 失敗テスト。"""
+
+    @patch("src.cogs.voice.async_session")
+    @patch("src.cogs.voice.get_lobby_by_channel_id")
+    async def test_cooldown_move_to_http_exception(
+        self,
+        mock_get_lobby: AsyncMock,
+        mock_session_factory: MagicMock,
+    ) -> None:
+        """クールダウン中の move_to 失敗でも例外を上げない。"""
+        mock_session = AsyncMock()
+        mock_session_factory.return_value.__aenter__ = AsyncMock(
+            return_value=mock_session
+        )
+        mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        mock_lobby = MagicMock()
+        mock_lobby.id = 1
+        mock_get_lobby.return_value = mock_lobby
+
+        cog = _make_cog()
+        member = _make_member(12345)
+        member.send = AsyncMock()
+        member.move_to = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "fail")
+        )
+        channel = _make_channel(100)
+        member.voice.channel = channel
+
+        record_vc_create_cooldown(member.id)
+
+        await cog._handle_lobby_join(member, channel)
+        member.move_to.assert_awaited_once_with(None)

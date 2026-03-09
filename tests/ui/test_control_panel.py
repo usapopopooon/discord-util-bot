@@ -3932,3 +3932,194 @@ class TestControlPanelCleanupTriggerViaPublicAPI:
         is_control_panel_on_cooldown(99999, 88888)
 
         assert cp_module._last_cleanup_time > 0
+
+
+class TestRefreshPanelEmbedHTTPException:
+
+    async def test_edit_http_exception(self) -> None:
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.id = 100
+        channel.nsfw = False
+        channel.guild = MagicMock(spec=discord.Guild)
+
+        owner = MagicMock(spec=discord.Member)
+        owner.mention = "<@1>"
+        channel.guild.get_member = MagicMock(return_value=owner)
+
+        panel_msg = MagicMock()
+        panel_msg.author = channel.guild.me
+        panel_msg.embeds = [MagicMock(title="ボイスチャンネル設定")]
+        panel_msg.edit = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "error")
+        )
+        channel.pins = AsyncMock(return_value=[panel_msg])
+
+        voice_session = _make_voice_session(owner_id="1")
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+        ):
+            await refresh_panel_embed(channel)
+
+        panel_msg.edit.assert_awaited_once()
+
+
+class TestRepostPanelHTTPException:
+
+    async def test_old_panel_delete_http_exception(self) -> None:
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.id = 100
+        channel.nsfw = False
+        channel.guild = MagicMock(spec=discord.Guild)
+
+        owner = MagicMock(spec=discord.Member)
+        owner.mention = "<@1>"
+        channel.guild.get_member = MagicMock(return_value=owner)
+
+        old_msg = MagicMock()
+        old_msg.author = channel.guild.me
+        old_msg.embeds = [MagicMock(title="ボイスチャンネル設定")]
+        old_msg.delete = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "error")
+        )
+        channel.pins = AsyncMock(return_value=[old_msg])
+        channel.send = AsyncMock()
+
+        voice_session = _make_voice_session(owner_id="1")
+        bot = MagicMock(spec=discord.ext.commands.Bot)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+        ):
+            await repost_panel(channel, bot)
+
+        channel.send.assert_awaited_once()
+
+    async def test_new_panel_send_http_exception(self) -> None:
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.id = 100
+        channel.nsfw = False
+        channel.guild = MagicMock(spec=discord.Guild)
+
+        owner = MagicMock(spec=discord.Member)
+        owner.mention = "<@1>"
+        channel.guild.get_member = MagicMock(return_value=owner)
+
+        channel.pins = AsyncMock(return_value=[])
+        channel.history = MagicMock(return_value=_AsyncIter([]))
+        channel.send = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "error")
+        )
+
+        voice_session = _make_voice_session(owner_id="1")
+        bot = MagicMock(spec=discord.ext.commands.Bot)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+        ):
+            await repost_panel(channel, bot)
+
+        channel.send.assert_awaited_once()
+
+
+class TestHideButtonOwnerNotFound:
+
+    async def test_owner_not_found_embed_none(self) -> None:
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        voice_session = _make_voice_session(owner_id="999", is_hidden=False)
+
+        interaction.guild.get_member = MagicMock(return_value=None)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.hide_button.callback(interaction)
+
+        interaction.edit_original_response.assert_awaited_once()
+        call_kwargs = interaction.edit_original_response.call_args[1]
+        assert "embed" not in call_kwargs
+        assert "view" in call_kwargs
+
+
+class TestNsfwButtonOwnerNotFound:
+
+    async def test_owner_not_found_embed_none(self) -> None:
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+        voice_session = _make_voice_session(owner_id="999")
+
+        interaction.guild.get_member = MagicMock(return_value=None)
+        interaction.channel.nsfw = False
+        interaction.channel.edit = AsyncMock()
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.ui.control_panel.update_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.nsfw_button.callback(interaction)
+
+        interaction.edit_original_response.assert_awaited_once()
+        call_kwargs = interaction.edit_original_response.call_args[1]
+        assert "embed" not in call_kwargs
+
+    async def test_no_session_embed_none(self) -> None:
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+
+        interaction.channel.nsfw = False
+        interaction.channel.edit = AsyncMock()
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.get_voice_session",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            await view.nsfw_button.callback(interaction)
+
+        interaction.edit_original_response.assert_awaited_once()
+        call_kwargs = interaction.edit_original_response.call_args[1]
+        assert "embed" not in call_kwargs
+
+

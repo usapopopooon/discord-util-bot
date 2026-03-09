@@ -1113,6 +1113,92 @@ class TestAuditLogFallback:
         embed = ch.send.call_args.kwargs["embed"]
         assert embed.title == "Member Left"
 
+    @pytest.mark.asyncio
+    async def test_unban_audit_forbidden(self) -> None:
+        """unban audit log Forbidden でもログは送信される。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        user = MagicMock(spec=discord.User)
+        user.id = 12345
+        user.bot = False
+        user.display_avatar = MagicMock()
+        user.display_avatar.url = "https://cdn.example.com/avatar.png"
+
+        async def _forbidden_audit(*_a: object, **_kw: object):  # type: ignore[no-untyped-def]
+            raise discord.Forbidden(MagicMock(), "")
+            yield  # noqa: RET504
+
+        guild.audit_logs = _forbidden_audit
+
+        cog._cache[("789", "member_unban")] = ["100"]
+
+        await cog.on_member_unban(guild, user)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert embed.title == "Member Unbanned"
+        field_names = [f.name for f in embed.fields]
+        assert "Unbanned By" not in field_names
+
+    @pytest.mark.asyncio
+    async def test_timeout_audit_forbidden(self) -> None:
+        """timeout audit log Forbidden でもログは送信される。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+
+        before = _make_member()
+        before.guild = guild
+        before.timed_out_until = None
+
+        after = _make_member()
+        after.guild = guild
+        after.timed_out_until = datetime(2026, 3, 10, tzinfo=UTC)
+        after.roles = before.roles
+        after.nick = before.nick
+
+        async def _forbidden_audit(*_a: object, **_kw: object):  # type: ignore[no-untyped-def]
+            raise discord.Forbidden(MagicMock(), "")
+            yield  # noqa: RET504
+
+        guild.audit_logs = _forbidden_audit
+
+        cog._cache[("789", "member_timeout")] = ["100"]
+
+        await cog.on_member_update(before, after)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert embed.title == "Member Timed Out"
+        field_names = [f.name for f in embed.fields]
+        assert "Timed Out By" not in field_names
+
+    @pytest.mark.asyncio
+    async def test_fetch_ban_not_found(self) -> None:
+        """fetch_ban で NotFound でもログは送信される。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        user = MagicMock(spec=discord.User)
+        user.id = 12345
+        user.bot = False
+        user.display_avatar = MagicMock()
+        user.display_avatar.url = "https://cdn.example.com/avatar.png"
+
+        async def _empty_audit(*_a: object, **_kw: object):  # type: ignore[no-untyped-def]
+            return
+            yield  # noqa: RET504
+
+        guild.audit_logs = _empty_audit
+        guild.fetch_ban = AsyncMock(
+            side_effect=discord.NotFound(MagicMock(), "")
+        )
+
+        cog._cache[("789", "member_ban")] = ["100"]
+
+        await cog.on_member_ban(guild, user)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert embed.title == "Member Banned"
+        reason_field = next(f for f in embed.fields if f.name == "Reason")
+        assert reason_field.value == "No reason provided"
+
 
 # ---------------------------------------------------------------------------
 # TestNoConfigSkips
@@ -1226,3 +1312,571 @@ class TestNoConfigSkips:
 
         await cog.on_voice_state_update(member, before, after)
         ch.send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestCogLifecycle
+# ---------------------------------------------------------------------------
+
+
+class TestCogLifecycle:
+    """cog_load / cog_unload / on_ready のテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_cog_load_starts_task(self) -> None:
+        cog = _make_cog()
+        cog._sync_cache_task = MagicMock()
+        await cog.cog_load()
+        cog._sync_cache_task.start.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cog_unload_cancels_task(self) -> None:
+        cog = _make_cog()
+        cog._sync_cache_task = MagicMock()
+        await cog.cog_unload()
+        cog._sync_cache_task.cancel.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_on_ready_refreshes_invite_cache(self) -> None:
+        cog = _make_cog()
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+        guild.invites = AsyncMock(return_value=[])
+        cog.bot.guilds = [guild]
+        await cog.on_ready()
+        guild.invites.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_sync_cache_task_handles_exception(self) -> None:
+        """_sync_cache_task は例外を握りつぶす。"""
+        cog = _make_cog()
+        with patch.object(
+            cog, "_refresh_cache", side_effect=RuntimeError("DB error")
+        ):
+            # Should not raise
+            await cog._sync_cache_task()
+
+    @pytest.mark.asyncio
+    async def test_setup_function(self) -> None:
+        """setup 関数が Bot に cog を追加する。"""
+        from src.cogs.eventlog import setup
+
+        bot = MagicMock(spec=commands.Bot)
+        bot.add_cog = AsyncMock()
+        await setup(bot)
+        bot.add_cog.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestSendLogHTTPException
+# ---------------------------------------------------------------------------
+
+
+class TestSendLogHTTPException:
+    """_send_log の HTTPException ハンドリング。"""
+
+    @pytest.mark.asyncio
+    async def test_handles_http_exception(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        ch.send = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "Server error")
+        )
+
+        cog._cache[("789", "message_delete")] = ["100"]
+        embed = discord.Embed(title="Test")
+        await cog._send_log(guild, "message_delete", embed)
+        # No exception raised
+
+
+# ---------------------------------------------------------------------------
+# TestMessageEditEdgeCases
+# ---------------------------------------------------------------------------
+
+
+class TestMessageEditEdgeCases:
+    """on_message_edit のエッジケース。"""
+
+    @pytest.mark.asyncio
+    async def test_empty_content(self) -> None:
+        """空コンテンツは (empty) で表示される。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        before = _make_message(content="")
+        after = _make_message(content="New content")
+        before.content = ""
+        after.content = "New content"
+        before.guild = guild
+        after.guild = guild
+
+        cog._cache[("789", "message_edit")] = ["100"]
+
+        await cog.on_message_edit(before, after)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert embed.fields[2].value == "(empty)"
+
+    @pytest.mark.asyncio
+    async def test_long_content_truncated(self) -> None:
+        """長い編集内容は切り詰められる。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        before = _make_message(content="x" * 2000)
+        after = _make_message(content="y" * 2000)
+        before.guild = guild
+        after.guild = guild
+
+        cog._cache[("789", "message_edit")] = ["100"]
+
+        await cog.on_message_edit(before, after)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert len(embed.fields[2].value) <= 1024
+        assert len(embed.fields[3].value) <= 1024
+
+    @pytest.mark.asyncio
+    async def test_no_jump_url(self) -> None:
+        """jump_url がない場合は Jump フィールドなし。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        before = _make_message(content="Old")
+        after = _make_message(content="New")
+        after.jump_url = ""
+        before.guild = guild
+        after.guild = guild
+
+        cog._cache[("789", "message_edit")] = ["100"]
+
+        await cog.on_message_edit(before, after)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        field_names = [f.name for f in embed.fields]
+        assert "Jump" not in field_names
+
+    @pytest.mark.asyncio
+    async def test_no_display_avatar(self) -> None:
+        """display_avatar がない場合もエラーなし。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        before = _make_message(content="Old")
+        after = _make_message(content="New")
+        after.author.display_avatar = None
+        before.guild = guild
+        after.guild = guild
+
+        cog._cache[("789", "message_edit")] = ["100"]
+
+        await cog.on_message_edit(before, after)
+        ch.send.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestLeaveLogEdgeCases
+# ---------------------------------------------------------------------------
+
+
+class TestLeaveLogEdgeCases:
+    """leave ログのエッジケース。"""
+
+    @pytest.mark.asyncio
+    async def test_no_joined_at(self) -> None:
+        """joined_at がない場合は Joined At フィールドなし。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+
+        async def _empty_audit(*_a: object, **_kw: object):  # type: ignore[no-untyped-def]
+            return
+            yield  # noqa: RET504
+
+        guild.audit_logs = _empty_audit
+        member = _make_member()
+        member.guild = guild
+        member.joined_at = None
+
+        cog._cache[("789", "member_leave")] = ["100"]
+
+        await cog.on_member_remove(member)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        field_names = [f.name for f in embed.fields]
+        assert "Joined At" not in field_names
+
+    @pytest.mark.asyncio
+    async def test_long_roles_truncated(self) -> None:
+        """大量のロールは切り詰められる。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+
+        async def _empty_audit(*_a: object, **_kw: object):  # type: ignore[no-untyped-def]
+            return
+            yield  # noqa: RET504
+
+        guild.audit_logs = _empty_audit
+        member = _make_member()
+        member.guild = guild
+        # 大量のロールを追加
+        roles = []
+        for i in range(200):
+            role = MagicMock(spec=discord.Role)
+            role.name = f"VeryLongRoleName{i:03d}"
+            roles.append(role)
+        member.roles = roles
+
+        cog._cache[("789", "member_leave")] = ["100"]
+
+        await cog.on_member_remove(member)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        roles_field = next(f for f in embed.fields if f.name == "Roles")
+        assert len(roles_field.value) <= 1024
+
+    @pytest.mark.asyncio
+    async def test_no_display_avatar(self) -> None:
+        """display_avatar がない場合もエラーなし。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+
+        async def _empty_audit(*_a: object, **_kw: object):  # type: ignore[no-untyped-def]
+            return
+            yield  # noqa: RET504
+
+        guild.audit_logs = _empty_audit
+        member = _make_member()
+        member.guild = guild
+        member.display_avatar = None
+
+        cog._cache[("789", "member_leave")] = ["100"]
+
+        await cog.on_member_remove(member)
+        ch.send.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestChannelWithCategory
+# ---------------------------------------------------------------------------
+
+
+class TestChannelWithCategory:
+    """チャンネルにカテゴリがある場合のテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_channel_create_with_category(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.guild = guild
+        channel.name = "new-channel"
+        channel.type = discord.ChannelType.text
+        channel.category = MagicMock()
+        channel.category.name = "General"
+
+        cog._cache[("789", "channel_create")] = ["100"]
+
+        await cog.on_guild_channel_create(channel)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert embed.title == "Channel Created"
+        field_names = [f.name for f in embed.fields]
+        assert "Category" in field_names
+        cat_field = next(f for f in embed.fields if f.name == "Category")
+        assert cat_field.value == "General"
+
+    @pytest.mark.asyncio
+    async def test_channel_delete_with_category(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.guild = guild
+        channel.name = "deleted-channel"
+        channel.type = discord.ChannelType.text
+        channel.category = MagicMock()
+        channel.category.name = "Archive"
+
+        cog._cache[("789", "channel_delete")] = ["100"]
+
+        await cog.on_guild_channel_delete(channel)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert embed.title == "Channel Deleted"
+        field_names = [f.name for f in embed.fields]
+        assert "Category" in field_names
+
+    @pytest.mark.asyncio
+    async def test_channel_delete_no_config(self) -> None:
+        """設定なしでスキップ。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.guild = guild
+
+        await cog.on_guild_channel_delete(channel)
+        ch.send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestDisplayAvatarBranches
+# ---------------------------------------------------------------------------
+
+
+class TestDisplayAvatarBranches:
+    """display_avatar が None の場合のブランチテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_member_join_no_avatar(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        guild.invites = AsyncMock(return_value=[])
+        guild.vanity_invite = AsyncMock(return_value=None)
+        member = _make_member()
+        member.guild = guild
+        member.display_avatar = None
+
+        cog._cache[("789", "member_join")] = ["100"]
+        await cog.on_member_join(member)
+        ch.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_kick_no_avatar(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+
+        entry = MagicMock()
+        entry.target = MagicMock()
+        entry.target.id = 12345
+        entry.user = MagicMock()
+        entry.user.id = 99999
+        entry.reason = None
+        entry.created_at = datetime.now(UTC)
+
+        async def _kick_audit(*_a: object, **_kw: object):  # type: ignore[no-untyped-def]
+            yield entry
+
+        guild.audit_logs = _kick_audit
+        member = _make_member()
+        member.guild = guild
+        member.display_avatar = None
+
+        cog._cache[("789", "member_kick")] = ["100"]
+        await cog.on_member_remove(member)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert embed.title == "Member Kicked"
+
+    @pytest.mark.asyncio
+    async def test_ban_no_avatar(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        user = MagicMock(spec=discord.User)
+        user.id = 12345
+        user.bot = False
+        user.display_avatar = None
+
+        async def _empty_audit(*_a: object, **_kw: object):  # type: ignore[no-untyped-def]
+            return
+            yield  # noqa: RET504
+
+        guild.audit_logs = _empty_audit
+        guild.fetch_ban = AsyncMock(
+            side_effect=discord.NotFound(MagicMock(), "")
+        )
+
+        cog._cache[("789", "member_ban")] = ["100"]
+        await cog.on_member_ban(guild, user)
+        ch.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_unban_no_avatar(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        user = MagicMock(spec=discord.User)
+        user.id = 12345
+        user.bot = False
+        user.display_avatar = None
+
+        async def _empty_audit(*_a: object, **_kw: object):  # type: ignore[no-untyped-def]
+            return
+            yield  # noqa: RET504
+
+        guild.audit_logs = _empty_audit
+
+        cog._cache[("789", "member_unban")] = ["100"]
+        await cog.on_member_unban(guild, user)
+        ch.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_timeout_no_avatar(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+
+        before = _make_member()
+        before.guild = guild
+        before.timed_out_until = None
+
+        after = _make_member()
+        after.guild = guild
+        after.timed_out_until = datetime(2026, 3, 10, tzinfo=UTC)
+        after.roles = before.roles
+        after.nick = before.nick
+        after.display_avatar = None
+
+        async def _empty_audit(*_a: object, **_kw: object):  # type: ignore[no-untyped-def]
+            return
+            yield  # noqa: RET504
+
+        guild.audit_logs = _empty_audit
+
+        cog._cache[("789", "member_timeout")] = ["100"]
+        await cog.on_member_update(before, after)
+        ch.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_role_change_no_avatar(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+
+        role_a = MagicMock(spec=discord.Role)
+        role_a.name = "RoleA"
+        role_b = MagicMock(spec=discord.Role)
+        role_b.name = "RoleB"
+
+        before = _make_member()
+        before.guild = guild
+        before.roles = [role_a]
+
+        after = _make_member()
+        after.guild = guild
+        after.roles = [role_a, role_b]
+        after.nick = before.nick
+        after.display_avatar = None
+
+        cog._cache[("789", "role_change")] = ["100"]
+        await cog.on_member_update(before, after)
+        ch.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_nickname_change_no_avatar(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+
+        before = _make_member()
+        before.guild = guild
+        before.nick = "Old"
+
+        after = _make_member()
+        after.guild = guild
+        after.nick = "New"
+        after.roles = before.roles
+        after.display_avatar = None
+
+        cog._cache[("789", "nickname_change")] = ["100"]
+        await cog.on_member_update(before, after)
+        ch.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_voice_state_no_avatar(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        member = _make_member()
+        member.guild = guild
+        member.display_avatar = None
+
+        before = MagicMock(spec=discord.VoiceState)
+        before.channel = None
+        after = MagicMock(spec=discord.VoiceState)
+        after.channel = MagicMock()
+        after.channel.id = 200
+
+        cog._cache[("789", "voice_state")] = ["100"]
+        await cog.on_voice_state_update(member, before, after)
+        ch.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_message_delete_no_avatar(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        msg = _make_message()
+        msg.guild = guild
+        msg.author.display_avatar = None
+
+        async def _empty_audit(*_a: object, **_kw: object):  # type: ignore[no-untyped-def]
+            return
+            yield  # noqa: RET504
+
+        guild.audit_logs = _empty_audit
+
+        cog._cache[("789", "message_delete")] = ["100"]
+        await cog.on_message_delete(msg)
+        ch.send.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestVanityURLForbidden
+# ---------------------------------------------------------------------------
+
+
+class TestMessageEditNoConfig:
+    """message_edit 設定なしでスキップ。"""
+
+    @pytest.mark.asyncio
+    async def test_skips_no_config(self) -> None:
+        cog = _make_cog()
+        before = _make_message(content="Old")
+        after = _make_message(content="New")
+        await cog.on_message_edit(before, after)
+
+class TestMemberJoinNoConfig:
+    """member_join 設定なしでスキップ。"""
+
+    @pytest.mark.asyncio
+    async def test_skips_no_config(self) -> None:
+        cog = _make_cog()
+        member = _make_member()
+        await cog.on_member_join(member)
+
+
+class TestRoleChangeRemovedRole:
+    """ロール削除の検出テスト。"""
+
+    @pytest.mark.asyncio
+    async def test_removed_role(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+
+        role_a = MagicMock(spec=discord.Role)
+        role_a.name = "RoleA"
+        role_b = MagicMock(spec=discord.Role)
+        role_b.name = "RoleB"
+
+        before = _make_member()
+        before.guild = guild
+        before.roles = [role_a, role_b]
+
+        after = _make_member()
+        after.guild = guild
+        after.roles = [role_a]
+        after.nick = before.nick
+
+        cog._cache[("789", "role_change")] = ["100"]
+
+        await cog.on_member_update(before, after)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert "- RoleB" in embed.fields[1].value
+
+
+class TestVanityURLForbidden:
+    """vanity URL Forbidden のテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_vanity_invite_forbidden(self) -> None:
+        """vanity_invite が Forbidden でも None を返す。"""
+        cog = _make_cog()
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+        guild.invites = AsyncMock(return_value=[])
+        guild.vanity_invite = AsyncMock(
+            side_effect=discord.Forbidden(MagicMock(), "")
+        )
+
+        result = await cog._detect_used_invite(guild)
+        assert result is None

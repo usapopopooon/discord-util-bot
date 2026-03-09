@@ -2533,6 +2533,234 @@ class TestOnMessageDebounce:
         # クリーンアップ
         task3.cancel()
 
+
+# ---------------------------------------------------------------------------
+# キャッシュ連携テスト
+# ---------------------------------------------------------------------------
+
+
+class TestStickyCacheIntegration:
+    """_sticky_channels キャッシュが非 None の場合のブランチテスト。"""
+
+    async def test_text_modal_adds_to_cache(self) -> None:
+        """テキスト modal 完了時にキャッシュに追加される。"""
+        cog = _make_cog()
+        cog._sticky_channels = set()
+
+        interaction = _make_interaction()
+        modal = StickyTextModal(cog)
+        modal.content._value = "Test content"
+        modal.delay._value = ""
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        sent_msg = MagicMock()
+        sent_msg.id = 123456
+        interaction.channel.send = AsyncMock(return_value=sent_msg)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.create_sticky_message",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.cogs.sticky.update_sticky_message_id",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await modal.on_submit(interaction)
+
+        assert "456" in cog._sticky_channels
+
+    async def test_remove_discards_from_cache(self) -> None:
+        """sticky_remove でキャッシュからも削除される。"""
+        cog = _make_cog()
+        cog._sticky_channels = {"123", "456"}
+
+        sticky = _make_sticky(message_id="999")
+
+        interaction = _make_interaction()
+        msg = MagicMock()
+        msg.delete = AsyncMock()
+        interaction.channel.fetch_message = AsyncMock(return_value=msg)
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.delete_sticky_message",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await cog.sticky_remove.callback(cog, interaction)
+
+        assert "456" not in cog._sticky_channels
+        assert "123" in cog._sticky_channels
+
+    async def test_repost_not_found_discards_from_cache(self) -> None:
+        """再投稿で NotFound 時にキャッシュからも削除される。"""
+        cog = _make_cog()
+        cog._sticky_channels = {"456"}
+
+        channel = MagicMock()
+        channel.send = AsyncMock()
+        channel.fetch_message = AsyncMock(
+            side_effect=discord.NotFound(MagicMock(), "")
+        )
+
+        sticky = _make_sticky(message_id="999")
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.delete_sticky_message",
+                new_callable=AsyncMock,
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        assert "456" not in cog._sticky_channels
+
+    async def test_repost_http_exception_discards_from_cache(self) -> None:
+        """再投稿で HTTPException 時にキャッシュからも削除される。"""
+        cog = _make_cog()
+        cog._sticky_channels = {"456"}
+
+        channel = MagicMock()
+        channel.send = AsyncMock()
+        channel.fetch_message = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "error")
+        )
+
+        sticky = _make_sticky(message_id="999")
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.delete_sticky_message",
+                new_callable=AsyncMock,
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        assert "456" not in cog._sticky_channels
+
+    async def test_repost_no_message_id_discards_from_cache(self) -> None:
+        """message_id なしの場合にキャッシュからも削除される。"""
+        cog = _make_cog()
+        cog._sticky_channels = {"456"}
+
+        channel = MagicMock()
+
+        sticky = _make_sticky(message_id=None)
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.delete_sticky_message",
+                new_callable=AsyncMock,
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        assert "456" not in cog._sticky_channels
+
+
+class TestClaimStickyRepostFalse:
+    """claim_sticky_repost が False を返す場合のテスト。"""
+
+    async def test_repost_skipped_when_claimed_by_other(self) -> None:
+        """別インスタンスが先にクレームした場合は再投稿しない。"""
+        cog = _make_cog()
+        channel = MagicMock()
+        channel.send = AsyncMock()
+
+        sticky = _make_sticky()
+
+        mock_session = MagicMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("src.cogs.sticky.async_session", return_value=mock_session),
+            patch(
+                "src.cogs.sticky.get_sticky_message",
+                new_callable=AsyncMock,
+                return_value=sticky,
+            ),
+            patch(
+                "src.cogs.sticky.claim_sticky_repost",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await cog._delayed_repost(channel, "456", 5)
+
+        # 再投稿されない
+        channel.send.assert_not_called()
+
+
+class TestSetupExceptionHandler:
+    """setup 関数の例外ハンドラテスト。"""
+
+    async def test_setup_handles_db_exception(self) -> None:
+        """DB 例外でも setup は完了する。"""
+        from src.cogs.sticky import setup
+
+        bot = MagicMock(spec=commands.Bot)
+        bot.add_cog = AsyncMock()
+
+        with patch(
+            "src.cogs.sticky.get_all_sticky_messages",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("DB connection failed"),
+        ):
+            await setup(bot)
+
+        bot.add_cog.assert_called_once()
+
     async def test_http_exception_on_fetch_removes_sticky(self) -> None:
         """fetch_message で HTTPException が発生した場合、DB から sticky を削除する。"""
         cog = _make_cog()
