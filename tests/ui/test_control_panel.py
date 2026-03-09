@@ -3935,7 +3935,6 @@ class TestControlPanelCleanupTriggerViaPublicAPI:
 
 
 class TestRefreshPanelEmbedHTTPException:
-
     async def test_edit_http_exception(self) -> None:
         channel = MagicMock(spec=discord.VoiceChannel)
         channel.id = 100
@@ -3971,7 +3970,6 @@ class TestRefreshPanelEmbedHTTPException:
 
 
 class TestRepostPanelHTTPException:
-
     async def test_old_panel_delete_http_exception(self) -> None:
         channel = MagicMock(spec=discord.VoiceChannel)
         channel.id = 100
@@ -4041,7 +4039,6 @@ class TestRepostPanelHTTPException:
 
 
 class TestHideButtonOwnerNotFound:
-
     async def test_owner_not_found_embed_none(self) -> None:
         view = ControlPanelView(session_id=1)
         interaction = _make_interaction(user_id=1)
@@ -4071,7 +4068,6 @@ class TestHideButtonOwnerNotFound:
 
 
 class TestNsfwButtonOwnerNotFound:
-
     async def test_owner_not_found_embed_none(self) -> None:
         view = ControlPanelView(session_id=1)
         interaction = _make_interaction(user_id=1)
@@ -4121,5 +4117,3 @@ class TestNsfwButtonOwnerNotFound:
         interaction.edit_original_response.assert_awaited_once()
         call_kwargs = interaction.edit_original_response.call_args[1]
         assert "embed" not in call_kwargs
-
-

@@ -1186,9 +1186,7 @@ class TestAuditLogFallback:
             yield  # noqa: RET504
 
         guild.audit_logs = _empty_audit
-        guild.fetch_ban = AsyncMock(
-            side_effect=discord.NotFound(MagicMock(), "")
-        )
+        guild.fetch_ban = AsyncMock(side_effect=discord.NotFound(MagicMock(), ""))
 
         cog._cache[("789", "member_ban")] = ["100"]
 
@@ -1350,9 +1348,7 @@ class TestCogLifecycle:
     async def test_sync_cache_task_handles_exception(self) -> None:
         """_sync_cache_task は例外を握りつぶす。"""
         cog = _make_cog()
-        with patch.object(
-            cog, "_refresh_cache", side_effect=RuntimeError("DB error")
-        ):
+        with patch.object(cog, "_refresh_cache", side_effect=RuntimeError("DB error")):
             # Should not raise
             await cog._sync_cache_task()
 
@@ -1676,9 +1672,7 @@ class TestDisplayAvatarBranches:
             yield  # noqa: RET504
 
         guild.audit_logs = _empty_audit
-        guild.fetch_ban = AsyncMock(
-            side_effect=discord.NotFound(MagicMock(), "")
-        )
+        guild.fetch_ban = AsyncMock(side_effect=discord.NotFound(MagicMock(), ""))
 
         cog._cache[("789", "member_ban")] = ["100"]
         await cog.on_member_ban(guild, user)
@@ -1824,6 +1818,7 @@ class TestMessageEditNoConfig:
         after = _make_message(content="New")
         await cog.on_message_edit(before, after)
 
+
 class TestMemberJoinNoConfig:
     """member_join 設定なしでスキップ。"""
 
@@ -1874,9 +1869,7 @@ class TestVanityURLForbidden:
         guild = MagicMock(spec=discord.Guild)
         guild.id = 789
         guild.invites = AsyncMock(return_value=[])
-        guild.vanity_invite = AsyncMock(
-            side_effect=discord.Forbidden(MagicMock(), "")
-        )
+        guild.vanity_invite = AsyncMock(side_effect=discord.Forbidden(MagicMock(), ""))
 
         result = await cog._detect_used_invite(guild)
         assert result is None

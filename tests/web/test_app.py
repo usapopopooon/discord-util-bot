@@ -14285,9 +14285,7 @@ class TestEventLogRoutes:
         result = await db_session.execute(select(EventLogConfig))
         assert len(list(result.scalars().all())) == 0
 
-    async def test_eventlog_create_requires_auth(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_eventlog_create_requires_auth(self, client: AsyncClient) -> None:
         response = await client.post(
             "/eventlog/new",
             data={
@@ -14333,9 +14331,7 @@ class TestEventLogRoutes:
         result = await db_session.execute(select(EventLogConfig))
         assert len(list(result.scalars().all())) == 0
 
-    async def test_eventlog_delete_requires_auth(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_eventlog_delete_requires_auth(self, client: AsyncClient) -> None:
         response = await client.post(
             "/eventlog/999/delete",
             follow_redirects=False,
@@ -14373,9 +14369,7 @@ class TestEventLogRoutes:
         )
         assert response.status_code == 302
 
-    async def test_eventlog_toggle_requires_auth(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_eventlog_toggle_requires_auth(self, client: AsyncClient) -> None:
         response = await client.post(
             "/eventlog/999/toggle",
             follow_redirects=False,
@@ -14415,7 +14409,6 @@ class TestEventLogRoutes:
 
 
 class TestHealthSettingsCSRFAndCooldown:
-
     async def test_health_settings_delete_csrf_failure(
         self, authenticated_client: AsyncClient
     ) -> None:
@@ -14451,7 +14444,6 @@ class TestHealthSettingsCSRFAndCooldown:
 
 
 class TestActivityCSRF:
-
     async def test_activity_post_csrf_failure(
         self, authenticated_client: AsyncClient
     ) -> None:
@@ -14466,7 +14458,6 @@ class TestActivityCSRF:
 
 
 class TestAutomodTimeoutValidation:
-
     async def test_automod_create_timeout_invalid_duration(
         self, authenticated_client: AsyncClient, db_session: AsyncSession
     ) -> None:

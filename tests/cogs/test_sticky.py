@@ -2615,9 +2615,7 @@ class TestStickyCacheIntegration:
 
         channel = MagicMock()
         channel.send = AsyncMock()
-        channel.fetch_message = AsyncMock(
-            side_effect=discord.NotFound(MagicMock(), "")
-        )
+        channel.fetch_message = AsyncMock(side_effect=discord.NotFound(MagicMock(), ""))
 
         sticky = _make_sticky(message_id="999")
 

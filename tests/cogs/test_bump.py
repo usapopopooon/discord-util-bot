@@ -4036,7 +4036,7 @@ class TestBumpCacheIntegration:
 
         assert "789" not in cog._bump_guild_ids
 
-    async def test_on_message_skips_unconfigured_guild(self) -> None:
+    async def test_on_message_skips_not_configured_guild(self) -> None:
         """キャッシュに含まれないギルドのメッセージはスキップ。"""
         cog = _make_cog()
         cog._bump_guild_ids = {"999"}  # 789 は含まない

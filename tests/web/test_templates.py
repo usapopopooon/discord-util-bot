@@ -3725,7 +3725,6 @@ class TestHealthSettingsPage:
 
 
 class TestAutomodListPageTimeoutDisplay:
-
     def test_timeout_action_with_duration(self) -> None:
         from unittest.mock import MagicMock
 
@@ -3764,7 +3763,6 @@ class TestAutomodListPageTimeoutDisplay:
 
 
 class TestEventlogPage:
-
     def test_empty_configs(self) -> None:
         from src.web.templates import eventlog_page
 
