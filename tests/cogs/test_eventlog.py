@@ -327,6 +327,7 @@ class TestOnMemberJoinLog:
         invite_field = next(f for f in embed.fields if f.name == "Invited By")
         assert "<@99999>" in invite_field.value
         assert "abc123" in invite_field.value
+        assert "Total: 2" in invite_field.value
 
 
 # ---------------------------------------------------------------------------
@@ -993,6 +994,7 @@ class TestDetectUsedInvite:
         assert result is not None
         assert "<@22222>" in result
         assert "expired" in result
+        assert "Total: 4" in result
 
     @pytest.mark.asyncio
     async def test_invites_forbidden(self) -> None:
@@ -1029,6 +1031,40 @@ class TestDetectUsedInvite:
         assert result is not None
         assert "inv003" in result
         assert "<@" not in result
+
+    @pytest.mark.asyncio
+    async def test_total_uses_sums_all_invites(self) -> None:
+        """同じ招待者の複数招待の合計使用回数が表示される。"""
+        from src.cogs.eventlog import _InviteData
+
+        cog = _make_cog()
+        cog._invite_cache[789] = {
+            "inv_a": _InviteData("inv_a", 5, 11111, "User"),
+            "inv_b": _InviteData("inv_b", 3, 11111, "User"),
+        }
+
+        inv_a = MagicMock()
+        inv_a.code = "inv_a"
+        inv_a.uses = 6
+        inv_a.inviter = MagicMock()
+        inv_a.inviter.id = 11111
+        inv_a.inviter.name = "User"
+
+        inv_b = MagicMock()
+        inv_b.code = "inv_b"
+        inv_b.uses = 3
+        inv_b.inviter = MagicMock()
+        inv_b.inviter.id = 11111
+        inv_b.inviter.name = "User"
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+        guild.invites = AsyncMock(return_value=[inv_a, inv_b])
+
+        result = await cog._detect_used_invite(guild)
+        assert result is not None
+        assert "<@11111>" in result
+        assert "Total: 9" in result
 
 
 # ---------------------------------------------------------------------------

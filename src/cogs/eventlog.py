@@ -395,7 +395,19 @@ class EventLogCog(commands.Cog):
             return None
 
         if used_invite.inviter_id:
-            return f"<@{used_invite.inviter_id}> (Invite: `{used_invite.code}`)"
+            # 同じ招待者の全招待の使用回数を合計
+            total_uses = sum(
+                d.uses
+                for d in new_cache.values()
+                if d.inviter_id == used_invite.inviter_id
+            )
+            # 期限切れ招待 (new_cache に含まれない) の uses も加算
+            if used_invite.code not in new_cache:
+                total_uses += used_invite.uses
+            return (
+                f"<@{used_invite.inviter_id}>"
+                f" (Invite: `{used_invite.code}` / Total: {total_uses})"
+            )
         return f"Invite: `{used_invite.code}`"
 
     @commands.Cog.listener()
