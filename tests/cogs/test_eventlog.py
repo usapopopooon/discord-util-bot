@@ -579,8 +579,10 @@ class TestOnMemberUpdate:
 
         role_a = MagicMock(spec=discord.Role)
         role_a.name = "RoleA"
+        role_a.mention = "<@&111>"
         role_b = MagicMock(spec=discord.Role)
         role_b.name = "RoleB"
+        role_b.mention = "<@&222>"
 
         before = _make_member()
         before.guild = guild
@@ -597,7 +599,7 @@ class TestOnMemberUpdate:
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
         assert embed.title == "Member Roles Updated"
-        assert "+ RoleB" in embed.fields[1].value
+        assert "+ <@&222>" in embed.fields[1].value
 
     @pytest.mark.asyncio
     async def test_nickname_change(self) -> None:
@@ -1551,6 +1553,7 @@ class TestLeaveLogEdgeCases:
         for i in range(200):
             role = MagicMock(spec=discord.Role)
             role.name = f"VeryLongRoleName{i:03d}"
+            role.mention = f"<@&{i}>"
             roles.append(role)
         member.roles = roles
 
@@ -1766,8 +1769,10 @@ class TestDisplayAvatarBranches:
 
         role_a = MagicMock(spec=discord.Role)
         role_a.name = "RoleA"
+        role_a.mention = "<@&111>"
         role_b = MagicMock(spec=discord.Role)
         role_b.name = "RoleB"
+        role_b.mention = "<@&222>"
 
         before = _make_member()
         before.guild = guild
@@ -1875,8 +1880,10 @@ class TestRoleChangeRemovedRole:
 
         role_a = MagicMock(spec=discord.Role)
         role_a.name = "RoleA"
+        role_a.mention = "<@&111>"
         role_b = MagicMock(spec=discord.Role)
         role_b.name = "RoleB"
+        role_b.mention = "<@&222>"
 
         before = _make_member()
         before.guild = guild
@@ -1892,7 +1899,7 @@ class TestRoleChangeRemovedRole:
         await cog.on_member_update(before, after)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert "- RoleB" in embed.fields[1].value
+        assert "× <@&222>" in embed.fields[1].value
 
 
 class TestVanityURLForbidden:

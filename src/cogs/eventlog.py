@@ -487,7 +487,7 @@ class EventLogCog(commands.Cog):
 
     async def _send_leave_log(self, member: discord.Member) -> None:
         """Leave ログ Embed を送信する。"""
-        roles = [r.name for r in member.roles if r.name != "@everyone"]
+        roles = [r.mention for r in member.roles if r.name != "@everyone"]
         roles_str = ", ".join(roles) if roles else "None"
         if len(roles_str) > 1024:
             roles_str = roles_str[:1021] + "..."
@@ -710,9 +710,9 @@ class EventLogCog(commands.Cog):
 
         changes: list[str] = []
         for role in added:
-            changes.append(f"+ {role.name}")
+            changes.append(f"+ {role.mention}")
         for role in removed:
-            changes.append(f"- {role.name}")
+            changes.append(f"× {role.mention}")
 
         if not changes:
             return
