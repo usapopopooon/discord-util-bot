@@ -56,19 +56,19 @@ class _InviteData:
 
 # イベントタイプごとの Embed カラー
 _COLORS: dict[str, int] = {
-    "message_delete": 0xF4A6A6,
-    "message_edit": 0xFFD6A5,
-    "member_join": 0xA6E3A1,
-    "member_leave": 0xF4A6A6,
-    "member_kick": 0xFFD6A5,
-    "member_ban": 0xF4A6A6,
-    "member_unban": 0xA6E3A1,
-    "member_timeout": 0xFFF3A5,
-    "role_change": 0xFFD6A5,
-    "nickname_change": 0xA5C8F2,
-    "channel_create": 0xA6E3A1,
-    "channel_delete": 0xF4A6A6,
-    "voice_state": 0xA5C8F2,
+    "message_delete": 0xE74C3C,
+    "message_edit": 0xE67E22,
+    "member_join": 0x2ECC71,
+    "member_leave": 0xE74C3C,
+    "member_kick": 0xE67E22,
+    "member_ban": 0xE74C3C,
+    "member_unban": 0x2ECC71,
+    "member_timeout": 0xF1C40F,
+    "role_change": 0xE67E22,
+    "nickname_change": 0x3498DB,
+    "channel_create": 0x2ECC71,
+    "channel_delete": 0xE74C3C,
+    "voice_state": 0x3498DB,
 }
 
 
