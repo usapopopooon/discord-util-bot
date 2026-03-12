@@ -470,11 +470,11 @@ class AutoModCog(commands.Cog):
             return
 
         if action_taken == "banned":
-            color = 0xFF0000
+            color = 0xF4A6A6
         elif action_taken == "timed_out":
-            color = 0xFFFF00
+            color = 0xFFF3A5
         else:
-            color = 0xFFA500
+            color = 0xFFD6A5
         title = f"[AutoMod] User {action_taken.capitalize()}"
 
         embed = discord.Embed(

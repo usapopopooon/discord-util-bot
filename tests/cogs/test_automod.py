@@ -1166,9 +1166,9 @@ class TestSendLogEmbed:
     @pytest.mark.parametrize(
         ("action", "expected_title", "expected_color"),
         [
-            ("banned", "[AutoMod] User Banned", 0xFF0000),
-            ("kicked", "[AutoMod] User Kicked", 0xFFA500),
-            ("timed_out", "[AutoMod] User Timed_out", 0xFFFF00),
+            ("banned", "[AutoMod] User Banned", 0xF4A6A6),
+            ("kicked", "[AutoMod] User Kicked", 0xFFD6A5),
+            ("timed_out", "[AutoMod] User Timed_out", 0xFFF3A5),
         ],
     )
     async def test_embed_title_and_color(
