@@ -30,6 +30,13 @@ from datetime import UTC, datetime
 import discord
 from discord.ext import commands, tasks
 
+from src.cogs._eventlog_helpers import (
+    add_user_field,
+    create_event_embed,
+    find_audit_entry,
+    set_user_thumbnail,
+    truncate_content,
+)
 from src.database.engine import async_session
 from src.services.db_service import get_enabled_event_log_configs
 from src.utils import format_datetime
@@ -53,24 +60,6 @@ class _InviteData:
         self.uses = uses
         self.inviter_id = inviter_id
         self.inviter_name = inviter_name
-
-
-# イベントタイプごとの Embed カラー
-_COLORS: dict[str, int] = {
-    "message_delete": 0xE74C3C,
-    "message_edit": 0xE67E22,
-    "member_join": 0x2ECC71,
-    "member_leave": 0xE74C3C,
-    "member_kick": 0xE67E22,
-    "member_ban": 0xE74C3C,
-    "member_unban": 0x2ECC71,
-    "member_timeout": 0xF1C40F,
-    "role_change": 0xE67E22,
-    "nickname_change": 0x3498DB,
-    "channel_create": 0x2ECC71,
-    "channel_delete": 0xE74C3C,
-    "voice_state": 0x3498DB,
-}
 
 
 class EventLogCog(commands.Cog):
@@ -199,12 +188,11 @@ class EventLogCog(commands.Cog):
         if not self._get_channels(message.guild, "message_delete"):
             return
 
-        content = message.content or "(empty)"
-        if len(content) > 1024:
-            content = content[:1021] + "..."
+        content = truncate_content(message.content or "(empty)")
 
         # Audit log から削除した人を取得
         # 自分で削除した場合は audit log にエントリが作られないため None になる
+        # message_delete は extra.channel のチェックが必要なため汎用ヘルパー不可
         deleted_by_id: int | None = None
         try:
             async for entry in message.guild.audit_logs(
@@ -224,16 +212,8 @@ class EventLogCog(commands.Cog):
         except (discord.Forbidden, discord.HTTPException):
             pass
 
-        embed = discord.Embed(
-            title="Message Deleted",
-            color=_COLORS["message_delete"],
-            timestamp=datetime.now(UTC),
-        )
-        embed.add_field(
-            name="Author",
-            value=f"<@{message.author.id}> ({message.author.name})",
-            inline=True,
-        )
+        embed = create_event_embed("Message Deleted", "message_delete")
+        add_user_field(embed, message.author, label="Author")
         embed.add_field(
             name="Channel",
             value=f"<#{message.channel.id}>",
@@ -246,8 +226,7 @@ class EventLogCog(commands.Cog):
                 inline=True,
             )
         embed.add_field(name="Content", value=content, inline=False)
-        if message.author.display_avatar:
-            embed.set_thumbnail(url=message.author.display_avatar.url)
+        set_user_thumbnail(embed, message.author)
 
         await self._send_log(message.guild, "message_delete", embed)
 
@@ -263,23 +242,11 @@ class EventLogCog(commands.Cog):
         if not self._get_channels(after.guild, "message_edit"):
             return
 
-        before_content = before.content or "(empty)"
-        after_content = after.content or "(empty)"
-        if len(before_content) > 1024:
-            before_content = before_content[:1021] + "..."
-        if len(after_content) > 1024:
-            after_content = after_content[:1021] + "..."
+        before_content = truncate_content(before.content or "(empty)")
+        after_content = truncate_content(after.content or "(empty)")
 
-        embed = discord.Embed(
-            title="Message Edited",
-            color=_COLORS["message_edit"],
-            timestamp=datetime.now(UTC),
-        )
-        embed.add_field(
-            name="Author",
-            value=f"<@{after.author.id}> ({after.author.name})",
-            inline=True,
-        )
+        embed = create_event_embed("Message Edited", "message_edit")
+        add_user_field(embed, after.author, label="Author")
         embed.add_field(
             name="Channel",
             value=f"<#{after.channel.id}>",
@@ -293,8 +260,7 @@ class EventLogCog(commands.Cog):
                 value=f"[Go to message]({after.jump_url})",
                 inline=False,
             )
-        if after.author.display_avatar:
-            embed.set_thumbnail(url=after.author.display_avatar.url)
+        set_user_thumbnail(embed, after.author)
 
         await self._send_log(after.guild, "message_edit", embed)
 
@@ -313,16 +279,8 @@ class EventLogCog(commands.Cog):
         account_age = datetime.now(UTC) - member.created_at
         days = account_age.days
 
-        embed = discord.Embed(
-            title="Member Joined",
-            color=_COLORS["member_join"],
-            timestamp=datetime.now(UTC),
-        )
-        embed.add_field(
-            name="User",
-            value=f"<@{member.id}> ({member.name})",
-            inline=True,
-        )
+        embed = create_event_embed("Member Joined", "member_join")
+        add_user_field(embed, member)
         embed.add_field(
             name="Account Age",
             value=f"{days} days",
@@ -343,8 +301,7 @@ class EventLogCog(commands.Cog):
                 inline=False,
             )
 
-        if member.display_avatar:
-            embed.set_thumbnail(url=member.display_avatar.url)
+        set_user_thumbnail(embed, member)
 
         await self._send_log(member.guild, "member_join", embed)
 
@@ -436,20 +393,11 @@ class EventLogCog(commands.Cog):
         self, guild: discord.Guild, member: discord.Member
     ) -> tuple[int | None, str | None] | None:
         """Audit log から kick を検出する。(moderator_id, reason) or None."""
-        try:
-            async for entry in guild.audit_logs(
-                limit=5, action=discord.AuditLogAction.kick
-            ):
-                if (
-                    entry.target
-                    and entry.target.id == member.id
-                    and entry.created_at
-                    and (datetime.now(UTC) - entry.created_at).total_seconds() < 5
-                ):
-                    mod_id = entry.user.id if entry.user else None
-                    return (mod_id, entry.reason)
-        except (discord.Forbidden, discord.HTTPException):
-            pass
+        mod_id, reason = await find_audit_entry(
+            guild, discord.AuditLogAction.kick, member.id
+        )
+        if mod_id is not None or reason is not None:
+            return (mod_id, reason)
         return None
 
     async def _send_kick_log(
@@ -460,16 +408,8 @@ class EventLogCog(commands.Cog):
         """Kick ログ Embed を送信する。"""
         mod_id, reason = kick_info
 
-        embed = discord.Embed(
-            title="Member Kicked",
-            color=_COLORS["member_kick"],
-            timestamp=datetime.now(UTC),
-        )
-        embed.add_field(
-            name="User",
-            value=f"<@{member.id}> ({member.name})",
-            inline=True,
-        )
+        embed = create_event_embed("Member Kicked", "member_kick")
+        add_user_field(embed, member)
         if mod_id:
             embed.add_field(
                 name="Kicked By",
@@ -481,8 +421,7 @@ class EventLogCog(commands.Cog):
             value=reason or "No reason provided",
             inline=False,
         )
-        if member.display_avatar:
-            embed.set_thumbnail(url=member.display_avatar.url)
+        set_user_thumbnail(embed, member)
 
         await self._send_log(member.guild, "member_kick", embed)
 
@@ -490,19 +429,10 @@ class EventLogCog(commands.Cog):
         """Leave ログ Embed を送信する。"""
         roles = [r.mention for r in member.roles if r.name != "@everyone"]
         roles_str = ", ".join(roles) if roles else "None"
-        if len(roles_str) > 1024:
-            roles_str = roles_str[:1021] + "..."
+        roles_str = truncate_content(roles_str)
 
-        embed = discord.Embed(
-            title="Member Left",
-            color=_COLORS["member_leave"],
-            timestamp=datetime.now(UTC),
-        )
-        embed.add_field(
-            name="User",
-            value=f"<@{member.id}> ({member.name})",
-            inline=True,
-        )
+        embed = create_event_embed("Member Left", "member_leave")
+        add_user_field(embed, member)
         if member.joined_at:
             embed.add_field(
                 name="Joined At",
@@ -510,8 +440,7 @@ class EventLogCog(commands.Cog):
                 inline=True,
             )
         embed.add_field(name="Roles", value=roles_str, inline=False)
-        if member.display_avatar:
-            embed.set_thumbnail(url=member.display_avatar.url)
+        set_user_thumbnail(embed, member)
 
         await self._send_log(member.guild, "member_leave", embed)
 
@@ -523,25 +452,10 @@ class EventLogCog(commands.Cog):
         if not self._get_channels(guild, "member_ban"):
             return
 
-        reason: str | None = None
-        mod_id: int | None = None
-
         # Audit log から BAN 実行者と理由を取得
-        try:
-            async for entry in guild.audit_logs(
-                limit=5, action=discord.AuditLogAction.ban
-            ):
-                if (
-                    entry.target
-                    and entry.target.id == user.id
-                    and entry.created_at
-                    and (datetime.now(UTC) - entry.created_at).total_seconds() < 5
-                ):
-                    mod_id = entry.user.id if entry.user else None
-                    reason = entry.reason
-                    break
-        except (discord.Forbidden, discord.HTTPException):
-            pass
+        mod_id, reason = await find_audit_entry(
+            guild, discord.AuditLogAction.ban, user.id
+        )
 
         # Audit log で取得できなかった場合、fetch_ban から理由だけ取得
         if reason is None:
@@ -551,16 +465,8 @@ class EventLogCog(commands.Cog):
             except (discord.NotFound, discord.HTTPException):
                 pass
 
-        embed = discord.Embed(
-            title="Member Banned",
-            color=_COLORS["member_ban"],
-            timestamp=datetime.now(UTC),
-        )
-        embed.add_field(
-            name="User",
-            value=f"<@{user.id}> ({user.name})",
-            inline=True,
-        )
+        embed = create_event_embed("Member Banned", "member_ban")
+        add_user_field(embed, user)
         if mod_id:
             embed.add_field(
                 name="Banned By",
@@ -570,8 +476,7 @@ class EventLogCog(commands.Cog):
         embed.add_field(
             name="Reason", value=reason or "No reason provided", inline=False
         )
-        if user.display_avatar:
-            embed.set_thumbnail(url=user.display_avatar.url)
+        set_user_thumbnail(embed, user)
 
         await self._send_log(guild, "member_ban", embed)
 
@@ -584,40 +489,17 @@ class EventLogCog(commands.Cog):
             return
 
         # Audit log から解除した人を取得
-        mod_id: int | None = None
-        try:
-            async for entry in guild.audit_logs(
-                limit=5, action=discord.AuditLogAction.unban
-            ):
-                if (
-                    entry.target
-                    and entry.target.id == user.id
-                    and entry.created_at
-                    and (datetime.now(UTC) - entry.created_at).total_seconds() < 5
-                ):
-                    mod_id = entry.user.id if entry.user else None
-                    break
-        except (discord.Forbidden, discord.HTTPException):
-            pass
+        mod_id, _ = await find_audit_entry(guild, discord.AuditLogAction.unban, user.id)
 
-        embed = discord.Embed(
-            title="Member Unbanned",
-            color=_COLORS["member_unban"],
-            timestamp=datetime.now(UTC),
-        )
-        embed.add_field(
-            name="User",
-            value=f"<@{user.id}> ({user.name})",
-            inline=True,
-        )
+        embed = create_event_embed("Member Unbanned", "member_unban")
+        add_user_field(embed, user)
         if mod_id:
             embed.add_field(
                 name="Unbanned By",
                 value=f"<@{mod_id}>",
                 inline=True,
             )
-        if user.display_avatar:
-            embed.set_thumbnail(url=user.display_avatar.url)
+        set_user_thumbnail(embed, user)
 
         await self._send_log(guild, "member_unban", embed)
 
@@ -654,34 +536,12 @@ class EventLogCog(commands.Cog):
         until_str = format_datetime(until, fallback="Unknown")
 
         # Audit log からモデレーターと理由を取得
-        mod_id: int | None = None
-        reason: str | None = None
-        try:
-            async for entry in member.guild.audit_logs(
-                limit=5, action=discord.AuditLogAction.member_update
-            ):
-                if (
-                    entry.target
-                    and entry.target.id == member.id
-                    and entry.created_at
-                    and (datetime.now(UTC) - entry.created_at).total_seconds() < 5
-                ):
-                    mod_id = entry.user.id if entry.user else None
-                    reason = entry.reason
-                    break
-        except (discord.Forbidden, discord.HTTPException):
-            pass
+        mod_id, reason = await find_audit_entry(
+            member.guild, discord.AuditLogAction.member_update, member.id
+        )
 
-        embed = discord.Embed(
-            title="Member Timed Out",
-            color=_COLORS["member_timeout"],
-            timestamp=datetime.now(UTC),
-        )
-        embed.add_field(
-            name="User",
-            value=f"<@{member.id}> ({member.name})",
-            inline=True,
-        )
+        embed = create_event_embed("Member Timed Out", "member_timeout")
+        add_user_field(embed, member)
         if mod_id:
             embed.add_field(
                 name="Timed Out By",
@@ -694,8 +554,7 @@ class EventLogCog(commands.Cog):
             value=reason or "No reason provided",
             inline=False,
         )
-        if member.display_avatar:
-            embed.set_thumbnail(url=member.display_avatar.url)
+        set_user_thumbnail(embed, member)
 
         await self._send_log(member.guild, "member_timeout", embed)
 
@@ -718,23 +577,14 @@ class EventLogCog(commands.Cog):
         if not changes:
             return
 
-        embed = discord.Embed(
-            title="Member Roles Updated",
-            color=_COLORS["role_change"],
-            timestamp=datetime.now(UTC),
-        )
-        embed.add_field(
-            name="User",
-            value=f"<@{after.id}> ({after.name})",
-            inline=True,
-        )
+        embed = create_event_embed("Member Roles Updated", "role_change")
+        add_user_field(embed, after)
         embed.add_field(
             name="Changes",
             value="\n".join(changes),
             inline=False,
         )
-        if after.display_avatar:
-            embed.set_thumbnail(url=after.display_avatar.url)
+        set_user_thumbnail(embed, after)
 
         await self._send_log(after.guild, "role_change", embed)
 
@@ -745,16 +595,8 @@ class EventLogCog(commands.Cog):
         if not self._get_channels(after.guild, "nickname_change"):
             return
 
-        embed = discord.Embed(
-            title="Nickname Changed",
-            color=_COLORS["nickname_change"],
-            timestamp=datetime.now(UTC),
-        )
-        embed.add_field(
-            name="User",
-            value=f"<@{after.id}> ({after.name})",
-            inline=True,
-        )
+        embed = create_event_embed("Nickname Changed", "nickname_change")
+        add_user_field(embed, after)
         embed.add_field(
             name="Before",
             value=before.nick or "(none)",
@@ -765,8 +607,7 @@ class EventLogCog(commands.Cog):
             value=after.nick or "(none)",
             inline=True,
         )
-        if after.display_avatar:
-            embed.set_thumbnail(url=after.display_avatar.url)
+        set_user_thumbnail(embed, after)
 
         await self._send_log(after.guild, "nickname_change", embed)
 
@@ -780,11 +621,7 @@ class EventLogCog(commands.Cog):
         if not self._get_channels(channel.guild, "channel_create"):
             return
 
-        embed = discord.Embed(
-            title="Channel Created",
-            color=_COLORS["channel_create"],
-            timestamp=datetime.now(UTC),
-        )
+        embed = create_event_embed("Channel Created", "channel_create")
         embed.add_field(name="Name", value=channel.name, inline=True)
         embed.add_field(
             name="Type",
@@ -802,11 +639,7 @@ class EventLogCog(commands.Cog):
         if not self._get_channels(channel.guild, "channel_delete"):
             return
 
-        embed = discord.Embed(
-            title="Channel Deleted",
-            color=_COLORS["channel_delete"],
-            timestamp=datetime.now(UTC),
-        )
+        embed = create_event_embed("Channel Deleted", "channel_delete")
         embed.add_field(name="Name", value=channel.name, inline=True)
         embed.add_field(
             name="Type",
@@ -855,19 +688,10 @@ class EventLogCog(commands.Cog):
             # mute/deaf 等の状態変更はスキップ
             return
 
-        embed = discord.Embed(
-            title=action,
-            color=_COLORS["voice_state"],
-            timestamp=datetime.now(UTC),
-        )
-        embed.add_field(
-            name="User",
-            value=f"<@{member.id}> ({member.name})",
-            inline=True,
-        )
+        embed = create_event_embed(action, "voice_state")
+        add_user_field(embed, member)
         embed.add_field(name="Channel", value=detail, inline=True)
-        if member.display_avatar:
-            embed.set_thumbnail(url=member.display_avatar.url)
+        set_user_thumbnail(embed, member)
 
         await self._send_log(member.guild, "voice_state", embed)
 

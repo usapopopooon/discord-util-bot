@@ -62,7 +62,8 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 "src/web/app.py" = ["B008"]  # FastAPI Depends() is standard pattern
-"src/web/templates.py" = ["E501"]  # HTML templates have long lines
+"src/web/routes/*.py" = ["B008"]  # FastAPI Depends() is standard pattern
+"src/web/templates/*.py" = ["E501"]  # HTML templates have long lines
 "tests/**/conftest.py" = ["ARG001", "E402"]  # pytest fixtures; xdist env setup before imports
 "tests/**/test_*.py" = ["ARG002"]  # pytest fixtures used for side effects
 
