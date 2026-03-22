@@ -28,7 +28,11 @@ import discord
 from discord.ext import commands
 
 from src.database.engine import async_session
-from src.services.db_service import get_all_voice_sessions, get_bot_activity
+from src.services.db_service import (
+    get_all_voice_sessions,
+    get_bot_activity,
+    get_site_settings,
+)
 from src.ui.control_panel import ControlPanelView
 
 logger = logging.getLogger(__name__)
@@ -215,6 +219,14 @@ class EphemeralVCBot(commands.Bot):
         #    DB に保存されているセッション情報から View を再登録することで、
         #    再起動後もボタンが押せるようにする。
         async with async_session() as session:
+            # タイムゾーン設定を読み込み
+            site = await get_site_settings(session)
+            if site:
+                from src.utils import set_timezone_offset
+
+                set_timezone_offset(site.timezone_offset)
+                logger.info("Timezone offset loaded: UTC%+d", site.timezone_offset)
+
             sessions = await get_all_voice_sessions(session)
             logger.info("Restoring %d persistent views from database", len(sessions))
             for voice_session in sessions:

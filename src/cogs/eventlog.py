@@ -32,6 +32,7 @@ from discord.ext import commands, tasks
 
 from src.database.engine import async_session
 from src.services.db_service import get_enabled_event_log_configs
+from src.utils import format_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +231,7 @@ class EventLogCog(commands.Cog):
         )
         embed.add_field(
             name="Author",
-            value=f"<@{message.author.id}> ({message.author.id})",
+            value=f"<@{message.author.id}> ({message.author.name})",
             inline=True,
         )
         embed.add_field(
@@ -276,7 +277,7 @@ class EventLogCog(commands.Cog):
         )
         embed.add_field(
             name="Author",
-            value=f"<@{after.author.id}> ({after.author.id})",
+            value=f"<@{after.author.id}> ({after.author.name})",
             inline=True,
         )
         embed.add_field(
@@ -319,7 +320,7 @@ class EventLogCog(commands.Cog):
         )
         embed.add_field(
             name="User",
-            value=f"<@{member.id}> ({member.id})",
+            value=f"<@{member.id}> ({member.name})",
             inline=True,
         )
         embed.add_field(
@@ -329,7 +330,7 @@ class EventLogCog(commands.Cog):
         )
         embed.add_field(
             name="Account Created",
-            value=member.created_at.strftime("%Y-%m-%d %H:%M UTC"),
+            value=format_datetime(member.created_at),
             inline=True,
         )
 
@@ -466,7 +467,7 @@ class EventLogCog(commands.Cog):
         )
         embed.add_field(
             name="User",
-            value=f"<@{member.id}> ({member.id})",
+            value=f"<@{member.id}> ({member.name})",
             inline=True,
         )
         if mod_id:
@@ -499,13 +500,13 @@ class EventLogCog(commands.Cog):
         )
         embed.add_field(
             name="User",
-            value=f"<@{member.id}> ({member.id})",
+            value=f"<@{member.id}> ({member.name})",
             inline=True,
         )
         if member.joined_at:
             embed.add_field(
                 name="Joined At",
-                value=member.joined_at.strftime("%Y-%m-%d %H:%M UTC"),
+                value=format_datetime(member.joined_at),
                 inline=True,
             )
         embed.add_field(name="Roles", value=roles_str, inline=False)
@@ -557,7 +558,7 @@ class EventLogCog(commands.Cog):
         )
         embed.add_field(
             name="User",
-            value=f"<@{user.id}> ({user.id})",
+            value=f"<@{user.id}> ({user.name})",
             inline=True,
         )
         if mod_id:
@@ -606,7 +607,7 @@ class EventLogCog(commands.Cog):
         )
         embed.add_field(
             name="User",
-            value=f"<@{user.id}> ({user.id})",
+            value=f"<@{user.id}> ({user.name})",
             inline=True,
         )
         if mod_id:
@@ -650,7 +651,7 @@ class EventLogCog(commands.Cog):
             return
 
         until = member.timed_out_until
-        until_str = until.strftime("%Y-%m-%d %H:%M UTC") if until else "Unknown"
+        until_str = format_datetime(until, fallback="Unknown")
 
         # Audit log からモデレーターと理由を取得
         mod_id: int | None = None
@@ -678,7 +679,7 @@ class EventLogCog(commands.Cog):
         )
         embed.add_field(
             name="User",
-            value=f"<@{member.id}> ({member.id})",
+            value=f"<@{member.id}> ({member.name})",
             inline=True,
         )
         if mod_id:
@@ -724,7 +725,7 @@ class EventLogCog(commands.Cog):
         )
         embed.add_field(
             name="User",
-            value=f"<@{after.id}> ({after.id})",
+            value=f"<@{after.id}> ({after.name})",
             inline=True,
         )
         embed.add_field(
@@ -751,7 +752,7 @@ class EventLogCog(commands.Cog):
         )
         embed.add_field(
             name="User",
-            value=f"<@{after.id}> ({after.id})",
+            value=f"<@{after.id}> ({after.name})",
             inline=True,
         )
         embed.add_field(
@@ -861,7 +862,7 @@ class EventLogCog(commands.Cog):
         )
         embed.add_field(
             name="User",
-            value=f"<@{member.id}> ({member.id})",
+            value=f"<@{member.id}> ({member.name})",
             inline=True,
         )
         embed.add_field(name="Channel", value=detail, inline=True)

@@ -458,6 +458,8 @@ def dashboard_page(email: str = "Admin") -> str:
 def settings_page(
     current_email: str,
     pending_email: str | None = None,
+    timezone_offset: int = 9,
+    csrf_token: str = "",
 ) -> str:
     """Settings hub page template with links to email/password change."""
     pending_email_html = ""
@@ -469,12 +471,33 @@ def settings_page(
         </div>
         """
 
+    sign = "+" if timezone_offset >= 0 else ""
+
     content = f"""
     <div class="p-6">
         {_nav("Settings", show_dashboard_link=True)}
         <div class="max-w-md">
             {pending_email_html}
             <div class="space-y-4">
+                <div class="bg-gray-800 p-6 rounded-lg">
+                    <h2 class="text-lg font-semibold mb-4">Timezone</h2>
+                    <form method="post" action="/settings/timezone">
+                        <input type="hidden" name="csrf_token" value="{csrf_token}">
+                        <div class="flex items-center gap-3">
+                            <label class="text-gray-400 text-sm whitespace-nowrap">UTC offset (hours)</label>
+                            <input type="number" name="timezone_offset"
+                                   value="{timezone_offset}" min="-12" max="14"
+                                   class="bg-gray-700 text-white px-3 py-2 rounded w-24
+                                          border border-gray-600 focus:border-blue-500 focus:outline-none">
+                            <span class="text-gray-400 text-sm">UTC{sign}{timezone_offset}</span>
+                            <button type="submit"
+                                    class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded
+                                           transition-colors text-sm">
+                                Save
+                            </button>
+                        </div>
+                    </form>
+                </div>
                 <a href="/settings/email"
                    class="block bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
                     <h2 class="text-lg font-semibold mb-2">Change Email</h2>

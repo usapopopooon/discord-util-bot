@@ -344,7 +344,9 @@ class AutoModCog(commands.Cog):
             )
 
         if not posted:
-            return True, (f"No post in required channel ({rule.required_channel_id})")
+            ch = member.guild.get_channel(int(rule.required_channel_id))
+            ch_name = f"#{ch.name}" if ch else rule.required_channel_id
+            return True, (f"No post in required channel ({ch_name})")
         return False, ""
 
     # ==========================================================================
@@ -772,7 +774,7 @@ class AutoModCog(commands.Cog):
         embed = discord.Embed(title="AutoMod Logs (Last 10)", color=DEFAULT_EMBED_COLOR)
         for log_entry in logs:
             embed.add_field(
-                name=f"<@{log_entry.user_id}> ({log_entry.user_id})",
+                name=f"<@{log_entry.user_id}> ({log_entry.username})",
                 value=(
                     f"Action: {log_entry.action_taken}\n"
                     f"Reason: {log_entry.reason}\n"

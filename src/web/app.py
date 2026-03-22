@@ -54,6 +54,7 @@ from src.database.models import (
     Lobby,
     RolePanel,
     RolePanelItem,
+    SiteSettings,
     StickyMessage,
     Ticket,
     TicketCategory,
@@ -124,6 +125,18 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         # ただし、機能は制限される
     else:
         logger.info("Database connection successful")
+        # DB からタイムゾーン設定を読み込み
+        try:
+            async with async_session() as session:
+                result = await session.execute(select(SiteSettings).limit(1))
+                site = result.scalar_one_or_none()
+                if site:
+                    from src.utils import set_timezone_offset
+
+                    set_timezone_offset(site.timezone_offset)
+                    logger.info("Timezone offset loaded: UTC%+d", site.timezone_offset)
+        except Exception:
+            logger.warning("Failed to load site settings from DB")
     yield
     # シャットダウン
     logger.info("Shutting down web admin application...")
@@ -1081,12 +1094,62 @@ async def settings_get(
     if not admin.email_verified:
         return RedirectResponse(url="/verify-email", status_code=302)
 
+    result = await db.execute(select(SiteSettings).limit(1))
+    site = result.scalar_one_or_none()
+
     return HTMLResponse(
         content=settings_page(
             current_email=admin.email,
             pending_email=admin.pending_email,
+            timezone_offset=site.timezone_offset if site else 9,
+            csrf_token=generate_csrf_token(),
         )
     )
+
+
+@app.post("/settings/timezone", response_model=None)
+async def settings_timezone_post(
+    request: Request,
+    timezone_offset: Annotated[int, Form()],
+    user: dict[str, Any] | None = Depends(get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Update timezone offset setting."""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/settings", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    if is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/settings", status_code=302)
+
+    if timezone_offset < -12 or timezone_offset > 14:
+        return RedirectResponse(url="/settings", status_code=302)
+
+    async with get_resource_lock("site_settings:update"):
+        result = await db.execute(select(SiteSettings).limit(1))
+        site = result.scalar_one_or_none()
+        if site:
+            site.timezone_offset = timezone_offset
+            site.updated_at = datetime.now(UTC)
+        else:
+            site = SiteSettings(timezone_offset=timezone_offset)
+            db.add(site)
+        await db.commit()
+
+        # ランタイムのタイムゾーンオフセットを更新
+        from src.utils import set_timezone_offset
+
+        set_timezone_offset(timezone_offset)
+
+        record_form_submit(user_email, path)
+
+    return RedirectResponse(url="/settings", status_code=302)
 
 
 @app.get("/settings/email", response_model=None)

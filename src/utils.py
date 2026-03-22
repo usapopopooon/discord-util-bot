@@ -215,9 +215,25 @@ def _make_timezone(offset: int) -> timezone:
     return timezone(timedelta(hours=offset))
 
 
+_timezone_offset_override: int | None = None
+
+
+def set_timezone_offset(offset: int) -> None:
+    """DB から読み込んだタイムゾーンオフセットを設定する."""
+    global _timezone_offset_override  # noqa: PLW0603
+    _timezone_offset_override = offset
+
+
+def get_timezone_offset() -> int:
+    """現在のタイムゾーンオフセットを返す."""
+    if _timezone_offset_override is not None:
+        return _timezone_offset_override
+    return settings.timezone_offset
+
+
 def _get_timezone() -> timezone:
     """設定されたタイムゾーンオフセットから timezone オブジェクトを返す."""
-    return _make_timezone(settings.timezone_offset)
+    return _make_timezone(get_timezone_offset())
 
 
 def format_datetime(

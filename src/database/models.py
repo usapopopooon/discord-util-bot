@@ -1753,3 +1753,31 @@ class BotActivity(Base):
             f"<BotActivity(id={self.id}, type={self.activity_type}, "
             f"text={self.activity_text!r})>"
         )
+
+
+class SiteSettings(Base):
+    """サイト全体の設定。
+
+    シングルレコードとして運用する（id=1 のみ）。
+    レコードが存在しない場合はデフォルト値を使用する。
+
+    Attributes:
+        id: 自動採番の主キー。
+        timezone_offset: UTC からのタイムゾーンオフセット (時間単位)。
+            例: 9 = JST, -5 = EST。デフォルト 9。
+        updated_at: 最終更新日時 (UTC)。
+    """
+
+    __tablename__ = "site_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    timezone_offset: Mapped[int] = mapped_column(Integer, nullable=False, default=9)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return f"<SiteSettings(id={self.id}, timezone_offset={self.timezone_offset})>"

@@ -2137,6 +2137,9 @@ class TestCheckIntroMissing:
             pattern=None,
         )
         member = _make_member(joined_at=datetime.now(UTC))
+        ch_mock = MagicMock()
+        ch_mock.name = "intro-channel"
+        member.guild.get_channel.return_value = ch_mock
         with patch(
             "src.cogs.automod.has_intro_post",
             new_callable=AsyncMock,
@@ -2144,7 +2147,7 @@ class TestCheckIntroMissing:
         ):
             matched, reason = await cog._check_intro_missing(rule, member)
         assert matched is True
-        assert "555" in reason
+        assert "#intro-channel" in reason
 
     @pytest.mark.asyncio
     async def test_posted_returns_false(self) -> None:

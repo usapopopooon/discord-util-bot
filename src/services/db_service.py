@@ -64,6 +64,7 @@ from src.database.models import (
     ProcessedEvent,
     RolePanel,
     RolePanelItem,
+    SiteSettings,
     StickyMessage,
     Ticket,
     TicketCategory,
@@ -2909,6 +2910,32 @@ async def upsert_bot_activity(
             activity_type=activity_type,
             activity_text=activity_text,
         )
+        session.add(existing)
+    await session.commit()
+    return existing
+
+
+# =============================================================================
+# SiteSettings (サイト全体設定) 操作
+# =============================================================================
+
+
+async def get_site_settings(session: AsyncSession) -> SiteSettings | None:
+    """サイト設定を取得する。"""
+    result = await session.execute(select(SiteSettings).limit(1))
+    return result.scalar_one_or_none()
+
+
+async def upsert_site_settings(
+    session: AsyncSession, *, timezone_offset: int
+) -> SiteSettings:
+    """サイト設定を作成または更新する。"""
+    existing = await get_site_settings(session)
+    if existing:
+        existing.timezone_offset = timezone_offset
+        existing.updated_at = datetime.now(UTC)
+    else:
+        existing = SiteSettings(timezone_offset=timezone_offset)
         session.add(existing)
     await session.commit()
     return existing

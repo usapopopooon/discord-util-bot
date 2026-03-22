@@ -73,6 +73,11 @@ class TestSetupHook:
                 new_callable=AsyncMock,
                 return_value=[],
             ),
+            patch(
+                "src.bot.get_site_settings",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
         ):
             await bot.setup_hook()
 
@@ -108,6 +113,11 @@ class TestSetupHook:
                 "src.bot.get_all_voice_sessions",
                 new_callable=AsyncMock,
                 return_value=[],
+            ),
+            patch(
+                "src.bot.get_site_settings",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
         ):
             await bot.setup_hook()
@@ -145,6 +155,11 @@ class TestSetupHook:
                 "src.bot.get_all_voice_sessions",
                 new_callable=AsyncMock,
                 return_value=[vs1, vs2],
+            ),
+            patch(
+                "src.bot.get_site_settings",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
         ):
             await bot.setup_hook()
@@ -185,6 +200,11 @@ class TestSetupHook:
                 new_callable=AsyncMock,
                 return_value=[vs],
             ),
+            patch(
+                "src.bot.get_site_settings",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
             patch("src.bot.ControlPanelView") as mock_view_class,
         ):
             await bot.setup_hook()
@@ -215,6 +235,11 @@ class TestSetupHook:
                 "src.bot.get_all_voice_sessions",
                 new_callable=AsyncMock,
                 return_value=[],
+            ),
+            patch(
+                "src.bot.get_site_settings",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
         ):
             await bot.setup_hook()
@@ -247,6 +272,11 @@ class TestSetupHook:
                 "src.bot.get_all_voice_sessions",
                 new_callable=AsyncMock,
                 return_value=[],
+            ),
+            patch(
+                "src.bot.get_site_settings",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
             pytest.raises(commands.ExtensionError),
         ):
@@ -287,6 +317,11 @@ class TestSetupHook:
                 new_callable=AsyncMock,
                 return_value=[vs],
             ),
+            patch(
+                "src.bot.get_site_settings",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
             patch("src.bot.ControlPanelView") as mock_view_class,
         ):
             await bot.setup_hook()
@@ -320,6 +355,11 @@ class TestSetupHook:
                 "src.bot.get_all_voice_sessions",
                 new_callable=AsyncMock,
                 return_value=[],
+            ),
+            patch(
+                "src.bot.get_site_settings",
+                new_callable=AsyncMock,
+                return_value=None,
             ),
             pytest.raises(discord.HTTPException),
         ):
