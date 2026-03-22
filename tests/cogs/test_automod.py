@@ -324,6 +324,16 @@ class TestCheckJoinTiming:
 class TestOnMemberJoin:
     """on_member_join イベントのテスト。"""
 
+    @pytest.fixture(autouse=True)
+    def _no_ban_list(self) -> Any:
+        """BANリストチェックをスキップする。"""
+        with patch(
+            "src.cogs.automod.is_user_in_ban_list",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            yield
+
     @pytest.mark.asyncio
     async def test_ignores_bots(self) -> None:
         cog = _make_cog()
@@ -851,6 +861,16 @@ class TestUsernameMatchSpecialChars:
 class TestFirstMatchWins:
     """Verify the loop breaks on first match and disabled rules are filtered."""
 
+    @pytest.fixture(autouse=True)
+    def _no_ban_list(self) -> Any:
+        """BANリストチェックをスキップする。"""
+        with patch(
+            "src.cogs.automod.is_user_in_ban_list",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            yield
+
     @pytest.mark.asyncio
     async def test_disabled_rule_not_returned_by_db(self) -> None:
         """DB function returns only enabled rules; disabled rules never reach cog."""
@@ -1011,6 +1031,16 @@ class TestAccountAgeEdgeCases:
 
 class TestOnMemberJoinEdgeCases:
     """on_member_join の追加エッジケーステスト。"""
+
+    @pytest.fixture(autouse=True)
+    def _no_ban_list(self) -> Any:
+        """BANリストチェックをスキップする。"""
+        with patch(
+            "src.cogs.automod.is_user_in_ban_list",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            yield
 
     @pytest.mark.asyncio
     async def test_multiple_non_matching_rules(self) -> None:
@@ -2532,6 +2562,179 @@ class TestAutomodAddTimeout:
             call_args = interaction.response.send_message.call_args
             assert "#99" in call_args.args[0]
             assert "Timeout Duration" in call_args.args[0]
+
+
+class TestBanList:
+    """BANリスト機能のテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_ban_list_match_bans_member(self) -> None:
+        """BANリストにいるユーザーは即BANされる。"""
+        cog = _make_cog()
+        member = _make_member(name="baduser", user_id=11111)
+
+        with (
+            patch(
+                "src.cogs.automod.is_user_in_ban_list",
+                new_callable=AsyncMock,
+                return_value="Spammer",
+            ),
+            patch(
+                "src.cogs.automod.claim_ban_log",
+                new_callable=AsyncMock,
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.cogs.automod.get_automod_config",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            await cog.on_member_join(member)
+            member.guild.ban.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_ban_list_no_match_falls_through(self) -> None:
+        """BANリストにいないユーザーはルールチェックに進む。"""
+        cog = _make_cog()
+        member = _make_member(name="gooduser")
+
+        with (
+            patch(
+                "src.cogs.automod.is_user_in_ban_list",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
+                return_value=[],
+            ),
+        ):
+            await cog.on_member_join(member)
+            member.guild.ban.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ban_list_empty_reason(self) -> None:
+        """reason が空文字列でもBANされる。"""
+        cog = _make_cog()
+        member = _make_member(name="baduser")
+
+        with (
+            patch(
+                "src.cogs.automod.is_user_in_ban_list",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch(
+                "src.cogs.automod.claim_ban_log",
+                new_callable=AsyncMock,
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.cogs.automod.get_automod_config",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            await cog.on_member_join(member)
+            member.guild.ban.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_ban_list_dedup_skips(self) -> None:
+        """claim_ban_log が None → 別インスタンスが処理済み。"""
+        cog = _make_cog()
+        member = _make_member(name="baduser")
+
+        with (
+            patch(
+                "src.cogs.automod.is_user_in_ban_list",
+                new_callable=AsyncMock,
+                return_value="Spammer",
+            ),
+            patch(
+                "src.cogs.automod.claim_ban_log",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            await cog.on_member_join(member)
+            member.guild.ban.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ban_list_forbidden(self) -> None:
+        """権限不足でBAN失敗しても例外を出さない。"""
+        cog = _make_cog()
+        member = _make_member(name="baduser")
+        member.guild.ban = AsyncMock(
+            side_effect=discord.Forbidden(MagicMock(), "Missing")
+        )
+
+        with (
+            patch(
+                "src.cogs.automod.is_user_in_ban_list",
+                new_callable=AsyncMock,
+                return_value="Spammer",
+            ),
+            patch(
+                "src.cogs.automod.claim_ban_log",
+                new_callable=AsyncMock,
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.cogs.automod.get_automod_config",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            await cog.on_member_join(member)  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_ban_list_with_log_channel(self) -> None:
+        """ログチャンネル設定時にEmbed送信される。"""
+        cog = _make_cog()
+        member = _make_member(name="baduser")
+
+        config = MagicMock()
+        config.log_channel_id = "100"
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.send = AsyncMock()
+        member.guild.get_channel.return_value = channel
+
+        with (
+            patch(
+                "src.cogs.automod.is_user_in_ban_list",
+                new_callable=AsyncMock,
+                return_value="Spammer",
+            ),
+            patch(
+                "src.cogs.automod.claim_ban_log",
+                new_callable=AsyncMock,
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.cogs.automod.get_automod_config",
+                new_callable=AsyncMock,
+                return_value=config,
+            ),
+        ):
+            await cog.on_member_join(member)
+            channel.send.assert_called_once()
+            embed = channel.send.call_args.kwargs["embed"]
+            assert "Ban List" in embed.title
+
+    @pytest.mark.asyncio
+    async def test_ban_list_skips_bots(self) -> None:
+        """BotユーザーはBANリストチェック対象外。"""
+        cog = _make_cog()
+        member = _make_member(is_bot=True)
+
+        with patch(
+            "src.cogs.automod.is_user_in_ban_list",
+            new_callable=AsyncMock,
+        ) as mock_check:
+            await cog.on_member_join(member)
+            mock_check.assert_not_called()
 
 
 class TestAutomodListTimingRuleDisplay:

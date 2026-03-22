@@ -105,7 +105,9 @@
     "joinrole",
     "unban",
     "Unban",
-    "eventlog"
+    "eventlog",
+    "banlist",
+    "dedup"
   ],
   "ignorePaths": [
     ".venv",

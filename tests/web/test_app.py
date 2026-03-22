@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.constants import BCRYPT_MAX_PASSWORD_BYTES, LOGIN_MAX_ATTEMPTS
 from src.database.models import (
     AdminUser,
+    AutoModBanList,
     AutoModConfig,
     AutoModLog,
     AutoModRule,
@@ -11587,6 +11588,126 @@ class TestAutomodRoutes:
         response = await authenticated_client.get(f"/automod/{rule.id}/edit")
         assert response.status_code == 200
         assert "VC Join without Intro Post" in response.text
+
+
+# ===========================================================================
+# AutoMod BANリスト
+# ===========================================================================
+
+
+class TestAutomodBanListRoutes:
+    """/automod/banlist ルートのテスト。"""
+
+    async def test_banlist_requires_auth(self, client: AsyncClient) -> None:
+        """認証なしでは /login にリダイレクトされる。"""
+        response = await client.get("/automod/banlist", follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == "/login"
+
+    async def test_banlist_empty(self, authenticated_client: AsyncClient) -> None:
+        """エントリがない場合は空メッセージが表示される。"""
+        response = await authenticated_client.get("/automod/banlist")
+        assert response.status_code == 200
+        assert "No entries in ban list" in response.text
+
+    async def test_banlist_with_data(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """エントリがある場合は一覧が表示される。"""
+        entry = AutoModBanList(
+            guild_id="123456789012345678",
+            user_id="987654321098765432",
+            reason="Spammer",
+        )
+        db_session.add(entry)
+        await db_session.commit()
+
+        response = await authenticated_client.get("/automod/banlist")
+        assert response.status_code == 200
+        assert "987654321098765432" in response.text
+        assert "Spammer" in response.text
+
+    async def test_banlist_add(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """BANリストにユーザーIDを追加できる。"""
+        response = await authenticated_client.post(
+            "/automod/banlist",
+            data={
+                "guild_id": "123456789012345678",
+                "user_id": "987654321098765432",
+                "reason": "Bad user",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(AutoModBanList))
+        entries = list(result.scalars().all())
+        assert len(entries) == 1
+        assert entries[0].user_id == "987654321098765432"
+        assert entries[0].reason == "Bad user"
+
+    async def test_banlist_add_invalid_user_id(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """数値でないユーザーIDは拒否される。"""
+        response = await authenticated_client.post(
+            "/automod/banlist",
+            data={
+                "guild_id": "123456789012345678",
+                "user_id": "not-a-number",
+                "reason": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(AutoModBanList))
+        assert list(result.scalars().all()) == []
+
+    async def test_banlist_delete(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """BANリストからエントリを削除できる。"""
+        entry = AutoModBanList(
+            guild_id="123456789012345678",
+            user_id="987654321098765432",
+            reason="Spammer",
+        )
+        db_session.add(entry)
+        await db_session.commit()
+        await db_session.refresh(entry)
+
+        response = await authenticated_client.post(
+            f"/automod/banlist/{entry.id}/delete",
+            data={},
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(AutoModBanList))
+        assert list(result.scalars().all()) == []
+
+    async def test_banlist_add_empty_reason(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """reason が空の場合は None で保存される。"""
+        response = await authenticated_client.post(
+            "/automod/banlist",
+            data={
+                "guild_id": "123456789012345678",
+                "user_id": "987654321098765432",
+                "reason": "",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        result = await db_session.execute(select(AutoModBanList))
+        entries = list(result.scalars().all())
+        assert len(entries) == 1
+        assert entries[0].reason is None
 
 
 # ===========================================================================

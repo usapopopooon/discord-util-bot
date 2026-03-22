@@ -7,7 +7,12 @@ from src.utils import format_datetime
 from src.web.templates._common import _base, _csrf_field, _nav
 
 if TYPE_CHECKING:
-    from src.database.models import AutoModLog, AutoModRule, BanLog
+    from src.database.models import (
+        AutoModBanList,
+        AutoModLog,
+        AutoModRule,
+        BanLog,
+    )
 
 
 def automod_list_page(
@@ -125,6 +130,10 @@ def automod_list_page(
             <a href="/automod/logs"
                class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition-colors">
                 View Logs
+            </a>
+            <a href="/automod/banlist"
+               class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition-colors">
+                Ban List
             </a>
             <a href="/automod/settings"
                class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition-colors">
@@ -829,3 +838,146 @@ def automod_settings_page(
     </script>
     """
     return _base("AutoMod Settings", content)
+
+
+def automod_banlist_page(
+    entries: list["AutoModBanList"],
+    guilds_map: dict[str, str] | None = None,
+    csrf_token: str = "",
+) -> str:
+    """AutoMod ban list page template."""
+    if guilds_map is None:
+        guilds_map = {}
+
+    # Guild options for dropdown
+    guild_options = ""
+    for gid, gname in guilds_map.items():
+        guild_options += f'<option value="{escape(gid)}">{escape(gname)}</option>\n'
+
+    # Table rows
+    row_parts: list[str] = []
+    for entry in entries:
+        guild_name = guilds_map.get(entry.guild_id)
+        if guild_name:
+            guild_display = f'<span class="font-medium">{escape(guild_name)}</span>'
+        else:
+            guild_display = (
+                f'<span class="text-yellow-400">{escape(entry.guild_id)}</span>'
+            )
+
+        created = format_datetime(entry.created_at)
+        reason_display = (
+            escape(entry.reason)
+            if entry.reason
+            else ('<span class="text-gray-500">-</span>')
+        )
+
+        row_parts.append(f"""
+        <tr class="border-b border-gray-700">
+            <td class="py-3 px-4 align-middle">{guild_display}</td>
+            <td class="py-3 px-4 align-middle font-mono text-sm">
+                {escape(entry.user_id)}
+            </td>
+            <td class="py-3 px-4 align-middle">{reason_display}</td>
+            <td class="py-3 px-4 align-middle text-gray-400 text-sm">
+                {created}
+            </td>
+            <td class="py-3 px-4 align-middle">
+                <form method="POST"
+                      action="/automod/banlist/{entry.id}/delete"
+                      style="display:inline">
+                    {_csrf_field(csrf_token)}
+                    <button type="submit"
+                            class="text-red-400 hover:text-red-300 text-sm"
+                            onclick="return confirm('Delete?')">
+                        Delete
+                    </button>
+                </form>
+            </td>
+        </tr>
+        """)
+
+    rows_html = (
+        "\n".join(row_parts)
+        if row_parts
+        else """
+        <tr>
+            <td colspan="5" class="py-8 text-center text-gray-400">
+                No entries in ban list
+            </td>
+        </tr>
+    """
+    )
+
+    content = f"""
+    {
+        _nav(
+            "AutoMod Ban List",
+            breadcrumbs=[
+                ("AutoMod Rules", "/automod"),
+                ("Ban List", None),
+            ],
+        )
+    }
+    <div class="bg-gray-800 rounded-lg p-6 mb-6">
+        <h3 class="text-lg font-medium mb-4">Add User ID to Ban List</h3>
+        <form method="POST" action="/automod/banlist" class="space-y-4">
+            {_csrf_field(csrf_token)}
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Server
+                    </label>
+                    <select name="guild_id" required
+                            class="w-full bg-gray-700 border border-gray-600
+                                   rounded px-3 py-2 text-gray-100">
+                        <option value="">-- Select --</option>
+                        {guild_options}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        User ID
+                    </label>
+                    <input type="text" name="user_id" required
+                           pattern="[0-9]+"
+                           title="Discord User ID (numbers only)"
+                           placeholder="123456789012345678"
+                           class="w-full bg-gray-700 border border-gray-600
+                                  rounded px-3 py-2 text-gray-100">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Reason (optional)
+                    </label>
+                    <input type="text" name="reason"
+                           placeholder="Reason for ban"
+                           class="w-full bg-gray-700 border border-gray-600
+                                  rounded px-3 py-2 text-gray-100">
+                </div>
+            </div>
+            <button type="submit"
+                    class="bg-red-600 hover:bg-red-700 px-4 py-2
+                           rounded text-sm transition-colors">
+                + Add to Ban List
+            </button>
+        </form>
+    </div>
+    <div class="bg-gray-800 rounded-lg overflow-hidden overflow-x-auto">
+        <table class="w-full">
+            <thead class="bg-gray-700">
+                <tr>
+                    <th class="py-3 px-4 text-left text-sm">Server</th>
+                    <th class="py-3 px-4 text-left text-sm">User ID</th>
+                    <th class="py-3 px-4 text-left text-sm">Reason</th>
+                    <th class="py-3 px-4 text-left text-sm">Created</th>
+                    <th class="py-3 px-4 text-left text-sm">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+        </table>
+    </div>
+    """
+    return _base("AutoMod Ban List", content)

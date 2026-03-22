@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import (
+    AutoModBanList,
     AutoModConfig,
     AutoModIntroPost,
     AutoModLog,
@@ -15,6 +16,7 @@ from src.database.models import (
 )
 
 __all__ = [
+    "add_to_ban_list",
     "claim_automod_log",
     "claim_ban_log",
     "create_automod_log",
@@ -29,10 +31,13 @@ __all__ = [
     "get_automod_logs_by_guild",
     "get_automod_rule",
     "get_automod_rules_by_guild",
+    "get_ban_list_by_guild",
     "get_ban_logs",
     "get_enabled_automod_rules_by_guild",
     "has_intro_post",
+    "is_user_in_ban_list",
     "record_intro_post",
+    "remove_from_ban_list",
     "toggle_automod_rule",
     "update_automod_rule",
     "upsert_automod_config",
@@ -414,3 +419,90 @@ async def get_ban_logs(session: AsyncSession, limit: int = 100) -> list[BanLog]:
         select(BanLog).order_by(BanLog.created_at.desc()).limit(limit)
     )
     return list(result.scalars().all())
+
+
+# =============================================================================
+# AutoModBanList (ユーザーID BANリスト) 操作
+# =============================================================================
+
+
+async def get_ban_list_by_guild(
+    session: AsyncSession, guild_id: str
+) -> list[AutoModBanList]:
+    """ギルドの BANリストを取得する (新しい順)。"""
+    result = await session.execute(
+        select(AutoModBanList)
+        .where(AutoModBanList.guild_id == guild_id)
+        .order_by(AutoModBanList.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def add_to_ban_list(
+    session: AsyncSession,
+    guild_id: str,
+    user_id: str,
+    reason: str | None = None,
+) -> AutoModBanList | None:
+    """BANリストにユーザーIDを追加する。重複時は None を返す。"""
+    entry = AutoModBanList(
+        guild_id=guild_id,
+        user_id=user_id,
+        reason=reason,
+    )
+    session.add(entry)
+    try:
+        await session.commit()
+        await session.refresh(entry)
+        return entry
+    except IntegrityError:
+        await session.rollback()
+        return None
+
+
+async def remove_from_ban_list(session: AsyncSession, entry_id: int) -> bool:
+    """BANリストからエントリを削除する。"""
+    result = await session.execute(
+        select(AutoModBanList).where(AutoModBanList.id == entry_id)
+    )
+    entry = result.scalar_one_or_none()
+    if entry:
+        await session.delete(entry)
+        await session.commit()
+        return True
+    return False
+
+
+async def is_user_in_ban_list(
+    session: AsyncSession, guild_id: str, user_id: str
+) -> str | None:
+    """ユーザーが BANリストに存在するか確認する。
+
+    存在する場合は reason を返す (reason が None なら空文字列)。
+    存在しない場合は None を返す。
+    """
+    result = await session.execute(
+        select(AutoModBanList.reason)
+        .where(
+            AutoModBanList.guild_id == guild_id,
+            AutoModBanList.user_id == user_id,
+        )
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        # scalar_one_or_none returns None when no row found
+        # But also returns None if reason column is None
+        # So we need to check if the row exists
+        exists = await session.execute(
+            select(AutoModBanList.id)
+            .where(
+                AutoModBanList.guild_id == guild_id,
+                AutoModBanList.user_id == user_id,
+            )
+            .limit(1)
+        )
+        if exists.scalar_one_or_none() is not None:
+            return ""
+        return None
+    return row

@@ -43,6 +43,7 @@ from src.services.db_service import (
     get_automod_rules_by_guild,
     get_enabled_automod_rules_by_guild,
     has_intro_post,
+    is_user_in_ban_list,
     record_intro_post,
 )
 
@@ -70,6 +71,13 @@ class AutoModCog(commands.Cog):
             return
 
         guild_id = str(member.guild.id)
+
+        # BANリストチェック (ルールより先に実行)
+        async with async_session() as session:
+            ban_reason = await is_user_in_ban_list(session, guild_id, str(member.id))
+        if ban_reason is not None:
+            await self._execute_ban_list_action(member, ban_reason)
+            return
 
         async with async_session() as session:
             rules = await get_enabled_automod_rules_by_guild(session, guild_id)
@@ -575,6 +583,103 @@ class AutoModCog(commands.Cog):
                 guild.id,
                 e,
             )
+
+    # ==========================================================================
+    # BANリストアクション
+    # ==========================================================================
+
+    async def _execute_ban_list_action(
+        self, member: discord.Member, reason: str
+    ) -> None:
+        """BANリストに登録されたユーザーをBANする。"""
+        guild = member.guild
+        display_reason = reason if reason else "Ban list"
+        full_reason = f"[AutoMod] Ban list: {display_reason}"
+
+        # BAN後はメンバー情報にアクセスできないため事前に保存
+        member_name = member.name
+        member_id = member.id
+        member_avatar_url = member.display_avatar.url if member.display_avatar else None
+        member_created_at = member.created_at
+        member_joined_at = member.joined_at
+
+        # Multi-instance dedup via claim_ban_log
+        async with async_session() as session:
+            log = await claim_ban_log(
+                session,
+                guild_id=str(guild.id),
+                user_id=str(member_id),
+                username=member_name,
+                reason=full_reason,
+                is_automod=True,
+            )
+            if not log:
+                logger.info(
+                    "Ban list already processed by another instance: guild=%s user=%s",
+                    guild.id,
+                    member_id,
+                )
+                return
+
+            config = await get_automod_config(session, str(guild.id))
+
+        try:
+            await guild.ban(member, reason=full_reason)
+            logger.info(
+                "AutoMod ban list: banned user %s (%s) in guild %s: %s",
+                member_name,
+                member_id,
+                guild.id,
+                display_reason,
+            )
+        except (discord.Forbidden, discord.HTTPException) as e:
+            logger.warning(
+                "Failed to ban list user %s (%s) in guild %s: %s",
+                member_name,
+                member_id,
+                guild.id,
+                e,
+            )
+            return
+
+        if not config or not config.log_channel_id:
+            return
+
+        channel = guild.get_channel(int(config.log_channel_id))
+        if not channel or not isinstance(channel, discord.TextChannel):
+            return
+
+        embed = discord.Embed(
+            title="[AutoMod] User Banned (Ban List)",
+            color=0xE74C3C,
+            timestamp=datetime.now(UTC),
+        )
+        if member_avatar_url:
+            embed.set_thumbnail(url=member_avatar_url)
+        embed.add_field(
+            name="User",
+            value=f"<@{member_id}> (`{member_name}`)",
+            inline=True,
+        )
+        embed.add_field(name="User ID", value=str(member_id), inline=True)
+        embed.add_field(name="Action", value="BANNED", inline=True)
+        embed.add_field(name="Reason", value=display_reason, inline=False)
+        created_str = member_created_at.strftime("%Y-%m-%d %H:%M UTC")
+        embed.add_field(name="Account Created", value=created_str, inline=True)
+        if member_joined_at:
+            joined_str = member_joined_at.strftime("%Y-%m-%d %H:%M UTC")
+            elapsed = (datetime.now(UTC) - member_joined_at).total_seconds()
+            embed.add_field(
+                name="Joined Server",
+                value=f"{joined_str} ({elapsed:.0f}s ago)",
+                inline=True,
+            )
+        embed.set_footer(text=f"Server: {guild.name}")
+
+        try:
+            await channel.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException) as e:
+            logger.warning("Failed to send ban list log: %s", e)
 
     # ==========================================================================
     # スラッシュコマンド

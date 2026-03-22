@@ -1321,6 +1321,47 @@ class AutoModIntroPost(Base):
         )
 
 
+class AutoModBanList(Base):
+    """AutoMod ユーザーID BANリスト。
+
+    管理画面から登録されたユーザーIDを持ち、
+    サーバー参加時に即BANする。
+
+    Attributes:
+        id (int): 自動採番の主キー。
+        guild_id (str): Discord サーバーの ID。インデックス付き。
+        user_id (str): BAN 対象のユーザー ID。
+        reason (str | None): BAN 理由 (なしの場合 None)。
+        created_at (datetime): 登録日時 (UTC)。
+
+    Notes:
+        - テーブル名: ``automod_ban_list``
+        - (guild_id, user_id) にユニーク制約
+    """
+
+    __tablename__ = "automod_ban_list"
+    __table_args__ = (
+        UniqueConstraint("guild_id", "user_id", name="uq_automod_ban_list_guild_user"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        """デバッグ用の文字列表現。"""
+        return (
+            f"<AutoModBanList(id={self.id}, guild_id={self.guild_id}, "
+            f"user_id={self.user_id})>"
+        )
+
+
 class BanLog(Base):
     """BAN ログテーブル。
 

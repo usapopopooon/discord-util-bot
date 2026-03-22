@@ -40,6 +40,9 @@ from src.web.templates.auth import (
     reset_password_page as reset_password_page,
 )
 from src.web.templates.automod import (  # noqa: F401
+    automod_banlist_page as automod_banlist_page,
+)
+from src.web.templates.automod import (
     automod_create_page as automod_create_page,
 )
 from src.web.templates.automod import (

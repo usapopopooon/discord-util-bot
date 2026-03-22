@@ -8,9 +8,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import src.web.app as _app
-from src.database.models import AutoModConfig, AutoModLog, AutoModRule, BanLog
+from src.database.models import (
+    AutoModBanList,
+    AutoModConfig,
+    AutoModLog,
+    AutoModRule,
+    BanLog,
+)
 from src.utils import get_resource_lock
 from src.web.templates import (
+    automod_banlist_page,
     automod_create_page,
     automod_edit_page,
     automod_list_page,
@@ -483,3 +490,104 @@ async def automod_settings_post(
         _app.record_form_submit(user_email, path)
 
     return RedirectResponse(url="/automod/settings", status_code=302)
+
+
+@router.get("/automod/banlist", response_model=None)
+async def automod_banlist_get(
+    user: dict[str, Any] | None = Depends(_app.get_current_user),
+    db: AsyncSession = Depends(_app.get_db),
+) -> Response:
+    """AutoMod BANリスト一覧ページ。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    result = await db.execute(
+        select(AutoModBanList).order_by(
+            AutoModBanList.guild_id,
+            AutoModBanList.created_at.desc(),
+        )
+    )
+    entries = list(result.scalars().all())
+    guilds_map, _ = await _app._get_discord_guilds_and_channels(db)
+
+    return HTMLResponse(
+        content=automod_banlist_page(
+            entries,
+            guilds_map=guilds_map,
+            csrf_token=_app.generate_csrf_token(),
+        )
+    )
+
+
+@router.post("/automod/banlist", response_model=None)
+async def automod_banlist_post(
+    request: Request,
+    guild_id: Annotated[str, Form()],
+    user_id: Annotated[str, Form()],
+    reason: Annotated[str, Form()] = "",
+    user: dict[str, Any] | None = Depends(_app.get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(_app.get_db),
+) -> Response:
+    """BANリストにユーザーIDを追加する。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not _app.validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/automod/banlist", status_code=302)
+
+    user_email = user.get("email", "")
+    path = request.url.path
+
+    if _app.is_form_cooldown_active(user_email, path):
+        return RedirectResponse(url="/automod/banlist", status_code=302)
+
+    user_id = user_id.strip()
+    if not user_id or not user_id.isdigit():
+        return RedirectResponse(url="/automod/banlist", status_code=302)
+
+    if not guild_id:
+        return RedirectResponse(url="/automod/banlist", status_code=302)
+
+    reason_value = reason.strip() if reason.strip() else None
+
+    async with get_resource_lock(f"automod:banlist:{guild_id}"):
+        entry = AutoModBanList(
+            guild_id=guild_id,
+            user_id=user_id,
+            reason=reason_value,
+        )
+        db.add(entry)
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+
+        _app.record_form_submit(user_email, path)
+
+    return RedirectResponse(url="/automod/banlist", status_code=302)
+
+
+@router.post("/automod/banlist/{entry_id}/delete", response_model=None)
+async def automod_banlist_delete(
+    entry_id: int,
+    user: dict[str, Any] | None = Depends(_app.get_current_user),
+    csrf_token: Annotated[str, Form()] = "",
+    db: AsyncSession = Depends(_app.get_db),
+) -> Response:
+    """BANリストからエントリを削除する。"""
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if not _app.validate_csrf_token(csrf_token):
+        return RedirectResponse(url="/automod/banlist", status_code=302)
+
+    result = await db.execute(
+        select(AutoModBanList).where(AutoModBanList.id == entry_id)
+    )
+    entry = result.scalar_one_or_none()
+    if entry:
+        await db.delete(entry)
+        await db.commit()
+
+    return RedirectResponse(url="/automod/banlist", status_code=302)
