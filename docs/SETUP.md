@@ -9,7 +9,7 @@ Discord Util Bot の環境構築・開発・デプロイに関するドキュメ
   - [ローカル開発 (Make)](#ローカル開発-make)
   - [ローカル開発 (手動)](#ローカル開発-手動)
   - [Docker Compose](#docker-compose)
-  - [Heroku へのデプロイ](#heroku-へのデプロイ)
+  - [Railway へのデプロイ](#railway-へのデプロイ)
 - [開発](#開発)
   - [Make コマンド](#make-コマンド)
   - [テスト](#テスト)
@@ -32,13 +32,13 @@ Discord Util Bot の環境構築・開発・デプロイに関するドキュメ
 | `DATABASE_URL` | `postgresql+asyncpg://user@localhost/discord_util_bot` | PostgreSQL 接続 URL |
 | `HEALTH_CHANNEL_ID` | `0` | ヘルスチェック Embed を送信するチャンネル ID (0 = 無効) |
 | `BUMP_CHANNEL_ID` | `0` | Bump リマインダー用チャンネル ID (0 = 無効) |
-| `TIMEZONE_OFFSET` | `0` | UTC からのタイムゾーンオフセット (例: `9` = JST, `-5` = EST) |
+| `TIMEZONE_OFFSET` | `9` | UTC からのタイムゾーンオフセット (例: `9` = JST, `-5` = EST)。Web 管理画面からも変更可能 (DB 値優先) |
 
 ### オプション (データベース接続)
 
 | 変数名 | デフォルト | 説明 |
 |--------|-----------|------|
-| `DATABASE_REQUIRE_SSL` | `false` | SSL 接続を有効化 (Heroku Postgres 用) |
+| `DATABASE_REQUIRE_SSL` | `false` | SSL 接続を有効化 (Railway / クラウド Postgres 用) |
 | `DB_POOL_SIZE` | `5` | コネクションプールサイズ |
 | `DB_MAX_OVERFLOW` | `10` | オーバーフロー接続数 |
 
@@ -100,27 +100,22 @@ docker-compose up -d
 
 PostgreSQL と Bot が一緒に起動する。
 
-### Heroku へのデプロイ
+### Railway へのデプロイ
 
 1. 必要な環境変数を設定:
    - `DISCORD_TOKEN`: Bot トークン
-   - `DATABASE_URL`: Heroku Postgres の URL (自動設定される)
-   - `DATABASE_REQUIRE_SSL`: `true`
+   - `DATABASE_URL`: PostgreSQL 接続 URL
+   - `TIMEZONE_OFFSET`: `9` (JST)
 
-2. Procfile で Bot を起動:
-   ```
-   worker: python -m src.main
-   ```
+2. Bot と Web は**別サービス**として動作:
+   - Bot: `python -m src.main`
+   - Web: `uvicorn src.web.app:app --host 0.0.0.0 --port $PORT`
 
-3. Web 管理画面を使用する場合:
-   ```
-   web: uvicorn src.web.app:app --host 0.0.0.0 --port $PORT
-   ```
+3. 各サービスの Custom Start Command に `alembic upgrade head &&` を prefix 推奨 (冪等)
 
-4. デプロイは GitHub Actions から手動トリガーで実行:
-   - **ローカルからの手動デプロイは禁止** (バージョン齟齬・テスト見逃し防止)
-   - `main` ブランチへの push → CI テスト実行
-   - GitHub Actions で手動トリガー → テスト → デプロイ
+4. Dockerfile CMD が Procfile より優先される
+
+5. デプロイは GitHub 経由の CI/CD で実行
 
 ## 開発
 
