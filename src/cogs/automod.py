@@ -343,11 +343,39 @@ class AutoModCog(commands.Cog):
                 rule.required_channel_id,
             )
 
-        if not posted:
+        if posted:
+            return False, ""
+
+        # DB に記録がない場合、チャンネル履歴をフォールバックチェック
+        # (デプロイ中にメッセージを取りこぼした場合の救済)
+        async with async_session() as session:
+            config = await get_automod_config(session, str(member.guild.id))
+        check_limit = config.intro_check_messages if config else 50
+
+        if check_limit > 0:
             ch = member.guild.get_channel(int(rule.required_channel_id))
-            ch_name = f"#{ch.name}" if ch else rule.required_channel_id
-            return True, (f"No post in required channel ({ch_name})")
-        return False, ""
+            if ch and isinstance(ch, discord.TextChannel):
+                try:
+                    async for msg in ch.history(limit=check_limit):
+                        if msg.author.id == member.id:
+                            # 投稿が見つかった → DB に記録して OK
+                            async with async_session() as session:
+                                await record_intro_post(
+                                    session,
+                                    str(member.guild.id),
+                                    str(member.id),
+                                    rule.required_channel_id,
+                                )
+                            return False, ""
+                except discord.Forbidden:
+                    logger.warning(
+                        "Cannot read history of channel %s",
+                        rule.required_channel_id,
+                    )
+
+        ch = member.guild.get_channel(int(rule.required_channel_id))
+        ch_name = f"#{ch.name}" if ch else rule.required_channel_id
+        return True, f"No post in required channel ({ch_name})"
 
     # ==========================================================================
     # アクション実行

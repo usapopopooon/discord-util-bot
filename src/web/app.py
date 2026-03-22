@@ -3441,12 +3441,14 @@ async def automod_settings_get(
     result = await db.execute(select(AutoModConfig))
     configs = list(result.scalars().all())
     configs_map = {c.guild_id: c.log_channel_id for c in configs}
+    intro_check_map = {c.guild_id: c.intro_check_messages for c in configs}
 
     return HTMLResponse(
         content=automod_settings_page(
             guilds_map=guilds_map,
             channels_map=channels_map,
             configs_map=configs_map,
+            intro_check_map=intro_check_map,
             csrf_token=generate_csrf_token(),
         )
     )
@@ -3457,6 +3459,7 @@ async def automod_settings_post(
     request: Request,
     guild_id: Annotated[str, Form()],
     log_channel_id: Annotated[str, Form()] = "",
+    intro_check_messages: Annotated[int, Form()] = 50,
     user: dict[str, Any] | None = Depends(get_current_user),
     csrf_token: Annotated[str, Form()] = "",
     db: AsyncSession = Depends(get_db),
@@ -3477,6 +3480,8 @@ async def automod_settings_post(
     if not guild_id:
         return RedirectResponse(url="/automod/settings", status_code=302)
 
+    intro_check_messages = max(0, min(intro_check_messages, 200))
+
     async with get_resource_lock(f"automod:settings:{guild_id}"):
         existing = await db.execute(
             select(AutoModConfig).where(AutoModConfig.guild_id == guild_id)
@@ -3487,8 +3492,13 @@ async def automod_settings_post(
 
         if config:
             config.log_channel_id = channel_value
+            config.intro_check_messages = intro_check_messages
         else:
-            config = AutoModConfig(guild_id=guild_id, log_channel_id=channel_value)
+            config = AutoModConfig(
+                guild_id=guild_id,
+                log_channel_id=channel_value,
+                intro_check_messages=intro_check_messages,
+            )
             db.add(config)
 
         await db.commit()

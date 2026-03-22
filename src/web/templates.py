@@ -3869,6 +3869,7 @@ def automod_settings_page(
     guilds_map: dict[str, str] | None = None,
     channels_map: dict[str, list[tuple[str, str]]] | None = None,
     configs_map: dict[str, str | None] | None = None,
+    intro_check_map: dict[str, int] | None = None,
     csrf_token: str = "",
 ) -> str:
     """AutoMod settings page template."""
@@ -3880,6 +3881,8 @@ def automod_settings_page(
         channels_map = {}
     if configs_map is None:
         configs_map = {}
+    if intro_check_map is None:
+        intro_check_map = {}
 
     guild_options = ""
     for gid, gname in sorted(guilds_map.items(), key=lambda x: x[1]):
@@ -3895,6 +3898,8 @@ def automod_settings_page(
     configs_json = json_mod.dumps(
         {gid: (ch_id or "") for gid, ch_id in configs_map.items()}
     )
+
+    intro_check_json = json_mod.dumps(intro_check_map)
 
     content = f"""
     <div class="p-6">
@@ -3933,6 +3938,18 @@ def automod_settings_page(
                     </select>
                 </div>
 
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Intro Check Messages
+                        <span class="text-gray-400 font-normal">
+                            (DB に記録がない場合にチャンネル履歴を何件チェックするか。0 で無効)
+                        </span>
+                    </label>
+                    <input type="number" name="intro_check_messages" id="introCheckInput"
+                           value="50" min="0" max="200"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                </div>
+
                 <button type="submit"
                         class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded transition-colors">
                     Save Settings
@@ -3944,9 +3961,11 @@ def automod_settings_page(
     <script>
     const channelsData = {channels_json};
     const configsData = {configs_json};
+    const introCheckData = {intro_check_json};
     function updateLogChannel() {{
         const guildId = document.getElementById('guildSelect').value;
         const logSelect = document.getElementById('logChannelSelect');
+        const introInput = document.getElementById('introCheckInput');
         logSelect.innerHTML = '<option value="">None (disabled)</option>';
         if (channelsData[guildId]) {{
             channelsData[guildId].forEach(ch => {{
@@ -3956,10 +3975,12 @@ def automod_settings_page(
                 logSelect.appendChild(opt);
             }});
         }}
-        // Restore saved value
+        // Restore saved values
         if (configsData[guildId]) {{
             logSelect.value = configsData[guildId];
         }}
+        introInput.value = (introCheckData[guildId] !== undefined)
+            ? introCheckData[guildId] : 50;
     }}
     </script>
     """

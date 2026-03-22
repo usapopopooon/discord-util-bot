@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
@@ -2140,10 +2142,108 @@ class TestCheckIntroMissing:
         ch_mock = MagicMock()
         ch_mock.name = "intro-channel"
         member.guild.get_channel.return_value = ch_mock
-        with patch(
-            "src.cogs.automod.has_intro_post",
-            new_callable=AsyncMock,
-            return_value=False,
+        config_mock = MagicMock()
+        config_mock.intro_check_messages = 0
+        with (
+            patch(
+                "src.cogs.automod.has_intro_post",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "src.cogs.automod.get_automod_config",
+                new_callable=AsyncMock,
+                return_value=config_mock,
+            ),
+        ):
+            matched, reason = await cog._check_intro_missing(rule, member)
+        assert matched is True
+        assert "#intro-channel" in reason
+
+    @pytest.mark.asyncio
+    async def test_history_fallback_finds_post(self) -> None:
+        """DB に記録がなくてもチャンネル履歴に投稿があれば False。"""
+        cog = _make_cog()
+        rule = _make_rule(
+            rule_type="vc_without_intro",
+            required_channel_id="555",
+            created_at=datetime.now(UTC) - timedelta(days=7),
+            pattern=None,
+        )
+        member = _make_member(joined_at=datetime.now(UTC))
+
+        # チャンネル履歴にメンバーの投稿がある
+        msg = MagicMock()
+        msg.author.id = member.id
+        ch_mock = MagicMock(spec=discord.TextChannel)
+        ch_mock.name = "intro-channel"
+
+        async def fake_history(limit: int = 50) -> AsyncIterator[Any]:  # noqa: ARG001
+            yield msg
+
+        ch_mock.history = fake_history
+        member.guild.get_channel.return_value = ch_mock
+
+        config_mock = MagicMock()
+        config_mock.intro_check_messages = 50
+        with (
+            patch(
+                "src.cogs.automod.has_intro_post",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "src.cogs.automod.get_automod_config",
+                new_callable=AsyncMock,
+                return_value=config_mock,
+            ),
+            patch(
+                "src.cogs.automod.record_intro_post",
+                new_callable=AsyncMock,
+            ) as mock_record,
+        ):
+            matched, _ = await cog._check_intro_missing(rule, member)
+        assert matched is False
+        mock_record.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_history_fallback_no_post(self) -> None:
+        """チャンネル履歴にも投稿がなければ True。"""
+        cog = _make_cog()
+        rule = _make_rule(
+            rule_type="vc_without_intro",
+            required_channel_id="555",
+            created_at=datetime.now(UTC) - timedelta(days=7),
+            pattern=None,
+        )
+        member = _make_member(joined_at=datetime.now(UTC))
+
+        # チャンネル履歴に他人の投稿のみ
+        msg = MagicMock()
+        msg.author.id = 99999
+
+        ch_mock = MagicMock(spec=discord.TextChannel)
+        ch_mock.name = "intro-channel"
+
+        async def fake_history(limit: int = 50) -> AsyncIterator[Any]:  # noqa: ARG001
+            yield msg
+
+        ch_mock.history = fake_history
+        member.guild.get_channel.return_value = ch_mock
+
+        config_mock = MagicMock()
+        config_mock.intro_check_messages = 50
+        with (
+            patch(
+                "src.cogs.automod.has_intro_post",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "src.cogs.automod.get_automod_config",
+                new_callable=AsyncMock,
+                return_value=config_mock,
+            ),
         ):
             matched, reason = await cog._check_intro_missing(rule, member)
         assert matched is True

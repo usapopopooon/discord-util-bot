@@ -1181,6 +1181,8 @@ class AutoModConfig(Base):
     Attributes:
         guild_id (str): Discord サーバーの ID (主キー、1ギルド1設定)。
         log_channel_id (str | None): BAN/KICK/Timeout ログ送信先チャンネルの ID。
+        intro_check_messages (int): DB に投稿記録がない場合にチャンネル履歴を
+            何件チェックするか。0 で無効 (DB のみ)。デフォルト 50。
 
     Notes:
         - テーブル名: ``automod_configs``
@@ -1191,12 +1193,16 @@ class AutoModConfig(Base):
 
     guild_id: Mapped[str] = mapped_column(String, primary_key=True)
     log_channel_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    intro_check_messages: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=50
+    )
 
     def __repr__(self) -> str:
         """デバッグ用の文字列表現。"""
         return (
             f"<AutoModConfig(guild_id={self.guild_id}, "
-            f"log_channel_id={self.log_channel_id})>"
+            f"log_channel_id={self.log_channel_id}, "
+            f"intro_check_messages={self.intro_check_messages})>"
         )
 
 
