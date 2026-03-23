@@ -48,7 +48,7 @@ export default async function StickyPage() {
     },
     {
       header: "Actions",
-      accessor: (row) => <DeleteButton endpoint={`/api/proxy/api/v1/sticky/${row.id}`} />,
+      accessor: (row) => <DeleteButton endpoint={`/api/v1/sticky/${row.id}`} />,
     },
   ];
 

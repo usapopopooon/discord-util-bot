@@ -46,7 +46,7 @@ export default function MaintenancePage() {
 
   const fetchStats = useCallback(async () => {
     try {
-      const res = await fetch("/api/proxy/api/v1/maintenance");
+      const res = await fetch("/api/v1/maintenance");
       if (res.ok) {
         const data: MaintenanceStats = await res.json();
         setStats(data);
@@ -65,7 +65,7 @@ export default function MaintenancePage() {
     setCleanupResult(null);
     setDialogOpen(false);
     try {
-      const res = await fetch("/api/proxy/api/v1/maintenance/cleanup", {
+      const res = await fetch("/api/v1/maintenance/cleanup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });

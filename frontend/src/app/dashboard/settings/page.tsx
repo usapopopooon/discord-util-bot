@@ -33,7 +33,7 @@ export default function SettingsPage() {
 
   const fetchSettings = useCallback(async () => {
     try {
-      const res = await fetch("/api/proxy/api/v1/settings");
+      const res = await fetch("/api/v1/settings");
       if (res.ok) {
         const data: SettingsData = await res.json();
         setTimezoneOffset(data.timezone_offset);
@@ -53,7 +53,7 @@ export default function SettingsPage() {
     e.preventDefault();
     setSavingTimezone(true);
     try {
-      const res = await fetch("/api/proxy/api/v1/settings/timezone", {
+      const res = await fetch("/api/v1/settings/timezone", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ timezone_offset: timezoneOffset }),
@@ -82,7 +82,7 @@ export default function SettingsPage() {
     if (!newEmail.trim()) return;
     setSavingEmail(true);
     try {
-      const res = await fetch("/api/proxy/api/v1/settings/email", {
+      const res = await fetch("/api/v1/settings/email", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: newEmail }),
@@ -118,7 +118,7 @@ export default function SettingsPage() {
     }
     setSavingPassword(true);
     try {
-      const res = await fetch("/api/proxy/api/v1/settings/password", {
+      const res = await fetch("/api/v1/settings/password", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: newPassword }),

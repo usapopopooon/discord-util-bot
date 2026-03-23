@@ -43,9 +43,9 @@ export default function HealthPage() {
 
   const fetchData = useCallback(async () => {
     const [configsRes, guildsRes, channelsRes] = await Promise.all([
-      fetch("/api/proxy/api/v1/health/settings").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/channels").then((r) => r.json()),
+      fetch("/api/v1/health/settings").then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
+      fetch("/api/v1/channels").then((r) => r.json()),
     ]);
     setConfigs(configsRes ?? []);
     setGuilds(guildsRes ?? {});
@@ -64,7 +64,7 @@ export default function HealthPage() {
     if (!selectedGuild || !selectedChannel || !intervalSeconds) return;
     setSubmitting(true);
     try {
-      await fetch("/api/proxy/api/v1/health/settings", {
+      await fetch("/api/v1/health/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -112,10 +112,10 @@ export default function HealthPage() {
       accessor: (row) => (
         <div className="flex items-center gap-2">
           <ToggleButton
-            endpoint={`/api/proxy/api/v1/health/settings/${row.id}/toggle`}
+            endpoint={`/api/v1/health/settings/${row.id}/toggle`}
             enabled={row.enabled}
           />
-          <DeleteButton endpoint={`/api/proxy/api/v1/health/settings/${row.id}/delete`} />
+          <DeleteButton endpoint={`/api/v1/health/settings/${row.id}/delete`} />
         </div>
       ),
     },

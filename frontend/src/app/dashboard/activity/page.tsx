@@ -32,7 +32,7 @@ export default function ActivityPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch("/api/proxy/api/v1/activity");
+      const res = await fetch("/api/v1/activity");
       if (res.ok) {
         const data: ActivitySettings = await res.json();
         setActivityType(data.activity_type || "playing");
@@ -52,7 +52,7 @@ export default function ActivityPage() {
     setSaving(true);
     setMessage(null);
     try {
-      const res = await fetch("/api/proxy/api/v1/activity", {
+      const res = await fetch("/api/v1/activity", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

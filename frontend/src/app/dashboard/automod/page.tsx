@@ -66,9 +66,9 @@ export default function AutoModPage() {
 
   const fetchData = useCallback(async () => {
     const [rulesRes, guildsRes, channelsRes] = await Promise.all([
-      fetch("/api/proxy/api/v1/automod/rules").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/channels").then((r) => r.json()),
+      fetch("/api/v1/automod/rules").then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
+      fetch("/api/v1/channels").then((r) => r.json()),
     ]);
     setRules(rulesRes ?? []);
     setGuilds(guildsRes ?? {});
@@ -132,7 +132,7 @@ export default function AutoModPage() {
       accessor: (row) => (
         <div className="flex items-center gap-2">
           <ToggleButton
-            endpoint={`/api/proxy/api/v1/automod/rules/${row.id}/toggle`}
+            endpoint={`/api/v1/automod/rules/${row.id}/toggle`}
             enabled={row.is_enabled}
           />
           <Link href={`/dashboard/automod/${row.id}/edit`}>
@@ -140,7 +140,7 @@ export default function AutoModPage() {
               Edit
             </Button>
           </Link>
-          <DeleteButton endpoint={`/api/proxy/api/v1/automod/rules/${row.id}/delete`} />
+          <DeleteButton endpoint={`/api/v1/automod/rules/${row.id}/delete`} />
         </div>
       ),
     },

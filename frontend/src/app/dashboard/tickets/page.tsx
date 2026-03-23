@@ -23,8 +23,8 @@ export default function TicketsPage() {
 
   const fetchData = useCallback(async () => {
     const [ticketsRes, guildsRes] = await Promise.all([
-      fetch("/api/proxy/api/v1/tickets").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
+      fetch("/api/v1/tickets").then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
     ]);
     setTickets(ticketsRes ?? []);
     setGuilds(guildsRes ?? {});
@@ -82,7 +82,7 @@ export default function TicketsPage() {
               View
             </Button>
           </Link>
-          <DeleteButton endpoint={`/api/proxy/api/v1/tickets/${row.id}/delete`} />
+          <DeleteButton endpoint={`/api/v1/tickets/${row.id}/delete`} />
         </div>
       ),
     },

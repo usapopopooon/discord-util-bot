@@ -63,15 +63,15 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
 
   const fetchData = useCallback(async () => {
     const [panelRes, guildsRes, channelsRes, rolesRes] = await Promise.all([
-      fetch(`/api/proxy/api/v1/tickets/panels/${id}`).then((r) => r.json()),
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/channels").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/roles").then((r) => r.json()),
+      fetch(`/api/v1/tickets/panels/${id}`).then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
+      fetch("/api/v1/channels").then((r) => r.json()),
+      fetch("/api/v1/roles").then((r) => r.json()),
     ]);
     // Try to get discord categories from form-data
     let discCats: ChannelsMap = {};
     try {
-      const formDataRes = await fetch("/api/proxy/api/v1/tickets/panels/form-data").then((r) =>
+      const formDataRes = await fetch("/api/v1/tickets/panels/form-data").then((r) =>
         r.json()
       );
       discCats = formDataRes?.discord_categories ?? {};
@@ -147,7 +147,7 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
         discord_category_id: discordCategoryId || null,
         log_channel_id: logChannelId || null,
       };
-      await fetch(`/api/proxy/api/v1/tickets/panels/${id}`, {
+      await fetch(`/api/v1/tickets/panels/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -161,7 +161,7 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
   async function handlePost() {
     setPosting(true);
     try {
-      await fetch(`/api/proxy/api/v1/tickets/panels/${id}/post`, {
+      await fetch(`/api/v1/tickets/panels/${id}/post`, {
         method: "POST",
       });
       await fetchData();
@@ -178,7 +178,7 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
       [assocId]: { ...prev[assocId], saving: true },
     }));
     try {
-      await fetch(`/api/proxy/api/v1/tickets/panels/${id}/buttons/${assocId}`, {
+      await fetch(`/api/v1/tickets/panels/${id}/buttons/${assocId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -386,7 +386,7 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
               {posting ? "Posting..." : panel.message_id ? "Update in Discord" : "Post to Discord"}
             </Button>
             <DeleteButton
-              endpoint={`/api/proxy/api/v1/tickets/panels/${id}/delete`}
+              endpoint={`/api/v1/tickets/panels/${id}/delete`}
               label="Delete Panel"
               confirmMessage="Are you sure you want to delete this panel? This action cannot be undone."
             />

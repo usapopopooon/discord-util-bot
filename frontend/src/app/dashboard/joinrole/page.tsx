@@ -43,9 +43,9 @@ export default function JoinRolePage() {
 
   const fetchData = useCallback(async () => {
     const [configsRes, guildsRes, rolesRes] = await Promise.all([
-      fetch("/api/proxy/api/v1/joinrole").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/roles").then((r) => r.json()),
+      fetch("/api/v1/joinrole").then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
+      fetch("/api/v1/roles").then((r) => r.json()),
     ]);
     setConfigs(configsRes ?? []);
     setGuilds(guildsRes ?? {});
@@ -64,7 +64,7 @@ export default function JoinRolePage() {
     if (!selectedGuild || !selectedRole || !durationHours) return;
     setSubmitting(true);
     try {
-      await fetch("/api/proxy/api/v1/joinrole", {
+      await fetch("/api/v1/joinrole", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -112,10 +112,10 @@ export default function JoinRolePage() {
       accessor: (row) => (
         <div className="flex items-center gap-2">
           <ToggleButton
-            endpoint={`/api/proxy/api/v1/joinrole/${row.id}/toggle`}
+            endpoint={`/api/v1/joinrole/${row.id}/toggle`}
             enabled={row.enabled}
           />
-          <DeleteButton endpoint={`/api/proxy/api/v1/joinrole/${row.id}/delete`} />
+          <DeleteButton endpoint={`/api/v1/joinrole/${row.id}/delete`} />
         </div>
       ),
     },

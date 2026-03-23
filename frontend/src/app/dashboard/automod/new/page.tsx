@@ -51,8 +51,8 @@ export default function AutoModNewPage() {
 
   const fetchData = useCallback(async () => {
     const [guildsRes, channelsRes] = await Promise.all([
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/channels").then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
+      fetch("/api/v1/channels").then((r) => r.json()),
     ]);
     setGuilds(guildsRes ?? {});
     setChannels(channelsRes ?? {});
@@ -98,7 +98,7 @@ export default function AutoModNewPage() {
         required_channel_id: showRequiredChannel ? requiredChannelId || null : null,
       };
 
-      await fetch("/api/proxy/api/v1/automod/rules", {
+      await fetch("/api/v1/automod/rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

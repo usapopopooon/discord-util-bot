@@ -30,8 +30,8 @@ export default function AutoModSettingsPage() {
 
   const fetchData = useCallback(async () => {
     const [guildsRes, channelsRes] = await Promise.all([
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/channels").then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
+      fetch("/api/v1/channels").then((r) => r.json()),
     ]);
     setGuilds(guildsRes ?? {});
     setChannels(channelsRes ?? {});
@@ -46,7 +46,7 @@ export default function AutoModSettingsPage() {
     if (!guildId) return;
     setConfigLoading(true);
     try {
-      const res = await fetch(`/api/proxy/api/v1/automod/settings?guild_id=${guildId}`);
+      const res = await fetch(`/api/v1/automod/settings?guild_id=${guildId}`);
       if (res.ok) {
         const config: AutoModConfig = await res.json();
         setLogChannelId(config.log_channel_id ?? "");
@@ -74,7 +74,7 @@ export default function AutoModSettingsPage() {
     setSubmitting(true);
     setSaved(false);
     try {
-      await fetch("/api/proxy/api/v1/automod/settings", {
+      await fetch("/api/v1/automod/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

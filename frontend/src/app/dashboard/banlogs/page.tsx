@@ -17,8 +17,8 @@ export default function BanLogsPage() {
 
   const fetchData = useCallback(async () => {
     const [logsRes, guildsRes] = await Promise.all([
-      fetch("/api/proxy/api/v1/banlogs").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
+      fetch("/api/v1/banlogs").then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
     ]);
     setLogs(logsRes ?? []);
     setGuilds(guildsRes ?? {});

@@ -20,8 +20,8 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
 
   const fetchData = useCallback(async () => {
     const [ticketRes, guildsRes] = await Promise.all([
-      fetch(`/api/proxy/api/v1/tickets/${id}`).then((r) => r.json()),
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
+      fetch(`/api/v1/tickets/${id}`).then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
     ]);
     setTicket(ticketRes ?? null);
     setGuilds(guildsRes ?? {});
@@ -135,7 +135,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
 
       <div>
         <DeleteButton
-          endpoint={`/api/proxy/api/v1/tickets/${id}/delete`}
+          endpoint={`/api/v1/tickets/${id}/delete`}
           label="Delete Ticket"
           confirmMessage="Are you sure you want to delete this ticket? This action cannot be undone."
         />

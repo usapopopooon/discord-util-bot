@@ -35,8 +35,8 @@ export default function AutoModBanListPage() {
 
   const fetchData = useCallback(async () => {
     const [entriesRes, guildsRes] = await Promise.all([
-      fetch("/api/proxy/api/v1/automod/banlist").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
+      fetch("/api/v1/automod/banlist").then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
     ]);
     setEntries(entriesRes ?? []);
     setGuilds(guildsRes ?? {});
@@ -52,7 +52,7 @@ export default function AutoModBanListPage() {
     if (!selectedGuild || !userId) return;
     setSubmitting(true);
     try {
-      await fetch("/api/proxy/api/v1/automod/banlist", {
+      await fetch("/api/v1/automod/banlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -93,7 +93,7 @@ export default function AutoModBanListPage() {
     {
       header: "Actions",
       accessor: (row) => (
-        <DeleteButton endpoint={`/api/proxy/api/v1/automod/banlist/${row.id}/delete`} />
+        <DeleteButton endpoint={`/api/v1/automod/banlist/${row.id}/delete`} />
       ),
     },
   ];

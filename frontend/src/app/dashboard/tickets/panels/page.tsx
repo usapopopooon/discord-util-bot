@@ -27,9 +27,9 @@ export default function TicketPanelsPage() {
 
   const fetchData = useCallback(async () => {
     const [panelsRes, guildsRes, channelsRes] = await Promise.all([
-      fetch("/api/proxy/api/v1/tickets/panels").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/channels").then((r) => r.json()),
+      fetch("/api/v1/tickets/panels").then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
+      fetch("/api/v1/channels").then((r) => r.json()),
     ]);
     setPanels(panelsRes ?? []);
     setGuilds(guildsRes ?? {});
@@ -75,7 +75,7 @@ export default function TicketPanelsPage() {
               View
             </Button>
           </Link>
-          <DeleteButton endpoint={`/api/proxy/api/v1/tickets/panels/${row.id}/delete`} />
+          <DeleteButton endpoint={`/api/v1/tickets/panels/${row.id}/delete`} />
         </div>
       ),
     },

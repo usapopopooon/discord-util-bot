@@ -44,7 +44,7 @@ export default async function LobbiesPage() {
     },
     {
       header: "Actions",
-      accessor: (row) => <DeleteButton endpoint={`/api/proxy/api/v1/lobbies/${row.id}`} />,
+      accessor: (row) => <DeleteButton endpoint={`/api/v1/lobbies/${row.id}`} />,
     },
   ];
 

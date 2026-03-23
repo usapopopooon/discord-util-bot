@@ -54,9 +54,9 @@ export default function RolePanelNewPage() {
 
   const fetchData = useCallback(async () => {
     const [guildsRes, channelsRes, rolesRes] = await Promise.all([
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/channels").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/roles").then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
+      fetch("/api/v1/channels").then((r) => r.json()),
+      fetch("/api/v1/roles").then((r) => r.json()),
     ]);
     setGuilds(guildsRes ?? {});
     setChannels(channelsRes ?? {});
@@ -109,7 +109,7 @@ export default function RolePanelNewPage() {
           })),
       };
 
-      const res = await fetch("/api/proxy/api/v1/rolepanels", {
+      const res = await fetch("/api/v1/rolepanels", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

@@ -27,9 +27,9 @@ export default function RolePanelsPage() {
 
   const fetchData = useCallback(async () => {
     const [panelsRes, guildsRes, channelsRes] = await Promise.all([
-      fetch("/api/proxy/api/v1/rolepanels").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/channels").then((r) => r.json()),
+      fetch("/api/v1/rolepanels").then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
+      fetch("/api/v1/channels").then((r) => r.json()),
     ]);
     setPanels(panelsRes ?? []);
     setGuilds(guildsRes ?? {});
@@ -83,7 +83,7 @@ export default function RolePanelsPage() {
             </Button>
           </Link>
           <DeleteButton
-            endpoint={`/api/proxy/api/v1/rolepanels/${row.id}`}
+            endpoint={`/api/v1/rolepanels/${row.id}`}
             confirmMessage="Are you sure you want to delete this role panel? This action cannot be undone."
           />
         </div>

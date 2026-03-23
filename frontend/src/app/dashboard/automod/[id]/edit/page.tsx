@@ -52,9 +52,9 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
 
   const fetchData = useCallback(async () => {
     const [ruleRes, guildsRes, channelsRes] = await Promise.all([
-      fetch(`/api/proxy/api/v1/automod/rules/${id}`).then((r) => r.json()),
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/channels").then((r) => r.json()),
+      fetch(`/api/v1/automod/rules/${id}`).then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
+      fetch("/api/v1/channels").then((r) => r.json()),
     ]);
     setRule(ruleRes);
     setGuilds(guildsRes ?? {});
@@ -126,7 +126,7 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
         required_channel_id: showRequiredChannel ? requiredChannelId || null : null,
       };
 
-      await fetch(`/api/proxy/api/v1/automod/rules/${id}`, {
+      await fetch(`/api/v1/automod/rules/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

@@ -43,7 +43,7 @@ export default function TicketPanelNewPage() {
   const [selectedCategories, setSelectedCategories] = useState<number[]>([]);
 
   const fetchData = useCallback(async () => {
-    const res = await fetch("/api/proxy/api/v1/tickets/panels/form-data").then((r) => r.json());
+    const res = await fetch("/api/v1/tickets/panels/form-data").then((r) => r.json());
     setFormData(res ?? null);
     setLoading(false);
   }, []);
@@ -93,7 +93,7 @@ export default function TicketPanelNewPage() {
         category_ids: selectedCategories,
       };
 
-      const res = await fetch("/api/proxy/api/v1/tickets/panels", {
+      const res = await fetch("/api/v1/tickets/panels", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

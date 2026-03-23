@@ -87,10 +87,10 @@ export default function RolePanelDetailPage({ params }: { params: Promise<{ id: 
 
   const fetchData = useCallback(async () => {
     const [panelRes, guildsRes, channelsRes, rolesRes] = await Promise.all([
-      fetch(`/api/proxy/api/v1/rolepanels/${id}`).then((r) => r.json()),
-      fetch("/api/proxy/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/channels").then((r) => r.json()),
-      fetch("/api/proxy/api/v1/roles").then((r) => r.json()),
+      fetch(`/api/v1/rolepanels/${id}`).then((r) => r.json()),
+      fetch("/api/v1/guilds").then((r) => r.json()),
+      fetch("/api/v1/channels").then((r) => r.json()),
+      fetch("/api/v1/roles").then((r) => r.json()),
     ]);
     setPanel(panelRes);
     setGuilds(guildsRes ?? {});
@@ -130,7 +130,7 @@ export default function RolePanelDetailPage({ params }: { params: Promise<{ id: 
     if (!title.trim()) return;
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/proxy/api/v1/rolepanels/${id}`, {
+      const res = await fetch(`/api/v1/rolepanels/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -152,7 +152,7 @@ export default function RolePanelDetailPage({ params }: { params: Promise<{ id: 
   }
 
   async function handlePost() {
-    const res = await fetch(`/api/proxy/api/v1/rolepanels/${id}/post`, {
+    const res = await fetch(`/api/v1/rolepanels/${id}/post`, {
       method: "POST",
     });
     if (res.ok) {
@@ -165,7 +165,7 @@ export default function RolePanelDetailPage({ params }: { params: Promise<{ id: 
   }
 
   async function handleCopy() {
-    const res = await fetch(`/api/proxy/api/v1/rolepanels/${id}/copy`, {
+    const res = await fetch(`/api/v1/rolepanels/${id}/copy`, {
       method: "POST",
     });
     if (res.ok) {
@@ -180,7 +180,7 @@ export default function RolePanelDetailPage({ params }: { params: Promise<{ id: 
   async function handleDelete() {
     setDeleteLoading(true);
     try {
-      await fetch(`/api/proxy/api/v1/rolepanels/${id}`, {
+      await fetch(`/api/v1/rolepanels/${id}`, {
         method: "DELETE",
       });
       setDeleteOpen(false);
@@ -191,7 +191,7 @@ export default function RolePanelDetailPage({ params }: { params: Promise<{ id: 
   }
 
   async function handleDeleteItem(itemId: number) {
-    const res = await fetch(`/api/proxy/api/v1/rolepanels/${id}/items/${itemId}`, {
+    const res = await fetch(`/api/v1/rolepanels/${id}/items/${itemId}`, {
       method: "DELETE",
     });
     if (res.ok) {
@@ -203,7 +203,7 @@ export default function RolePanelDetailPage({ params }: { params: Promise<{ id: 
   }
 
   async function handleMoveItem(itemId: number, direction: "up" | "down") {
-    const res = await fetch(`/api/proxy/api/v1/rolepanels/${id}/items/${itemId}/move`, {
+    const res = await fetch(`/api/v1/rolepanels/${id}/items/${itemId}/move`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ direction }),
@@ -218,7 +218,7 @@ export default function RolePanelDetailPage({ params }: { params: Promise<{ id: 
     if (!newRoleId || !panel) return;
     setAddingItem(true);
     try {
-      const res = await fetch(`/api/proxy/api/v1/rolepanels/${id}/items`, {
+      const res = await fetch(`/api/v1/rolepanels/${id}/items`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
