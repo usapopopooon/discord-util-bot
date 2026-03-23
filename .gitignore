@@ -191,6 +191,7 @@ cython_debug/
 # =========================
 
 node_modules/
+.next/
 
 # =========================
 # Docker
@@ -209,10 +210,9 @@ docker-compose.override.yaml
 
 # Claude Code
 .claude/
-
-# Claude settings (uncomment if you want to ignore)
-# CLAUDE.md
-# .clauderc
+CLAUDE.md
+AGENTS.md
+.clauderc
 
 # Cursor
 .cursorignore

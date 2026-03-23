@@ -6,10 +6,12 @@ Route modules access symbols via ``import src.web.app as _app``.
 """
 
 import logging
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
 from src.database.engine import async_session
@@ -63,6 +65,19 @@ from src.web.discord_api import (
 )
 from src.web.email_service import (  # noqa: F401
     send_email_change_verification as send_email_change_verification,
+)
+
+# ---------------------------------------------------------------------------
+# Re-exports: jwt_auth
+# ---------------------------------------------------------------------------
+from src.web.jwt_auth import (  # noqa: F401
+    create_jwt_token as create_jwt_token,
+)
+from src.web.jwt_auth import (
+    get_current_user_jwt as get_current_user_jwt,
+)
+from src.web.jwt_auth import (
+    verify_jwt_token as verify_jwt_token,
 )
 
 # ---------------------------------------------------------------------------
@@ -184,11 +199,30 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="Bot Admin", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.add_middleware(SecurityHeadersMiddleware)
+_cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:3000")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in _cors_origins.split(",") if o.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # =============================================================================
 # Router registration
 # =============================================================================
 
+from src.web.routes.api_auth import router as api_auth_router  # noqa: E402
+from src.web.routes.api_automod import router as api_automod_router  # noqa: E402
+from src.web.routes.api_bump import router as api_bump_router  # noqa: E402
+from src.web.routes.api_eventlog import router as api_eventlog_router  # noqa: E402
+from src.web.routes.api_joinrole import router as api_joinrole_router  # noqa: E402
+from src.web.routes.api_lobbies import router as api_lobbies_router  # noqa: E402
+from src.web.routes.api_misc import router as api_misc_router  # noqa: E402
+from src.web.routes.api_rolepanel import router as api_rolepanel_router  # noqa: E402
+from src.web.routes.api_settings import router as api_settings_router  # noqa: E402
+from src.web.routes.api_sticky import router as api_sticky_router  # noqa: E402
+from src.web.routes.api_ticket import router as api_ticket_router  # noqa: E402
 from src.web.routes.auth import router as auth_router  # noqa: E402
 from src.web.routes.automod import router as automod_router  # noqa: E402
 from src.web.routes.bump import router as bump_router  # noqa: E402
@@ -200,6 +234,17 @@ from src.web.routes.settings import router as settings_router  # noqa: E402
 from src.web.routes.sticky import router as sticky_router  # noqa: E402
 from src.web.routes.ticket import router as ticket_router  # noqa: E402
 
+app.include_router(api_auth_router)
+app.include_router(api_automod_router)
+app.include_router(api_lobbies_router)
+app.include_router(api_sticky_router)
+app.include_router(api_bump_router)
+app.include_router(api_joinrole_router)
+app.include_router(api_eventlog_router)
+app.include_router(api_misc_router)
+app.include_router(api_rolepanel_router)
+app.include_router(api_settings_router)
+app.include_router(api_ticket_router)
 app.include_router(misc_router)
 app.include_router(auth_router)
 app.include_router(settings_router)

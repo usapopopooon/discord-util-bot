@@ -20,6 +20,7 @@ class Check(NamedTuple):
     name: str
     command: list[str]
     is_test: bool = False
+    cwd: str | None = None
 
 
 # CI で実行されるチェック (ci.yml の順序に合わせる)
@@ -32,6 +33,12 @@ CHECKS: list[Check] = [
     Check("Ruff format", ["ruff", "format", "--check", "."]),
     Check("Ruff check", ["ruff", "check", "src", "tests"]),
     Check("mypy", ["mypy", "src"]),
+    Check(
+        "Frontend (vitest)",
+        ["npm", "run", "test:run"],
+        is_test=True,
+        cwd="frontend",
+    ),
     Check("pytest", ["pytest", "--cov", "--cov-report=term-missing"], is_test=True),
 ]
 
@@ -42,7 +49,7 @@ def run_check(check: Check) -> bool:
     print(f"  {check.name}")
     print("=" * 60)
 
-    result = subprocess.run(check.command, capture_output=False)
+    result = subprocess.run(check.command, capture_output=False, cwd=check.cwd)
     success = result.returncode == 0
 
     if success:

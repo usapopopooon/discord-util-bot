@@ -109,7 +109,12 @@
     "banlist",
     "dedup",
     "slowmode",
-    "Slowmode"
+    "Slowmode",
+    "clist",
+    "rlist",
+    "rname",
+    "rcolor",
+    "assocs"
   ],
   "ignorePaths": [
     ".venv",
@@ -119,7 +124,8 @@
     "alembic/versions",
     "*.lock",
     "coverage.xml",
-    "htmlcov"
+    "htmlcov",
+    "frontend"
   ],
   "enableFiletypes": ["python"]
 }

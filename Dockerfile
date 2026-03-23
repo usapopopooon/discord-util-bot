@@ -2,6 +2,9 @@ FROM python:3.12-slim AS base
 
 WORKDIR /app
 
+# Install curl for healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies
 COPY pyproject.toml .
 RUN pip install --no-cache-dir -e .
@@ -14,8 +17,8 @@ COPY alembic.ini .
 # Create data directory
 RUN mkdir -p data
 
-# Run migrations, then start the bot and web server
-CMD ["sh", "-c", "echo '=== Starting alembic ===' && alembic upgrade head && echo '=== Alembic done ===' && (python -m src.main & uvicorn src.web.app:app --host 0.0.0.0 --port ${PORT:-8000} & wait)"]
+# Default: run migrations, then start bot + web
+CMD ["sh", "-c", "alembic upgrade head && (python -m src.main & uvicorn src.web.app:app --host 0.0.0.0 --port ${PORT:-8000} & wait)"]
 
 # Development image with dev dependencies
 FROM base AS dev

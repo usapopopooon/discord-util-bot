@@ -20,6 +20,7 @@ dependencies = [
     "psycopg2-binary~=2.9.0",
     "emoji~=2.14.0",
     "httpx~=0.28.0",
+    "PyJWT~=2.9.0",
 ]
 
 [project.optional-dependencies]
