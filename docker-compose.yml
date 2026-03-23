@@ -70,7 +70,7 @@ services:
   frontend:
     build:
       context: ./frontend
-      target: dev
+      dockerfile: Dockerfile.dev
     restart: unless-stopped
     depends_on:
       web:
@@ -157,7 +157,7 @@ services:
   frontend-test:
     build:
       context: ./frontend
-      target: dev
+      dockerfile: Dockerfile.dev
     command: npm run test:run
     volumes:
       - ./frontend/src:/app/src
