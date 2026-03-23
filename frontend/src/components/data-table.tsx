@@ -5,20 +5,20 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from '@/components/ui/table'
 
 export interface Column<T> {
-  header: string;
-  accessor: (row: T) => React.ReactNode;
+  header: string
+  accessor: (row: T) => React.ReactNode
 }
 
 interface DataTableProps<T> {
-  columns: Column<T>[];
-  data: T[];
-  emptyMessage?: string;
+  columns: Column<T>[]
+  data: T[]
+  emptyMessage?: string
 }
 
-export function DataTable<T>({ columns, data, emptyMessage = "No data found" }: DataTableProps<T>) {
+export function DataTable<T>({ columns, data, emptyMessage = 'No data found' }: DataTableProps<T>) {
   return (
     <Table>
       <TableHeader>
@@ -46,5 +46,5 @@ export function DataTable<T>({ columns, data, emptyMessage = "No data found" }: 
         )}
       </TableBody>
     </Table>
-  );
+  )
 }

@@ -1,94 +1,90 @@
-"use client";
+'use client'
 
-import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import type { GuildsMap, ChannelsMap, RolesMap } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { API_BASE } from '@/lib/constants'
+import type { GuildsMap, ChannelsMap, RolesMap } from '@/lib/types'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { GuildChannelSelector } from "@/components/guild-channel-selector";
-import Link from "next/link";
+} from '@/components/ui/select'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { GuildChannelSelector } from '@/components/guild-channel-selector'
+import Link from 'next/link'
 
 const BUTTON_STYLES = [
-  { value: "primary", label: "Primary (Blue)" },
-  { value: "secondary", label: "Secondary (Grey)" },
-  { value: "success", label: "Success (Green)" },
-  { value: "danger", label: "Danger (Red)" },
-];
+  { value: 'primary', label: 'Primary (Blue)' },
+  { value: 'secondary', label: 'Secondary (Grey)' },
+  { value: 'success', label: 'Success (Green)' },
+  { value: 'danger', label: 'Danger (Red)' },
+]
 
 interface ItemForm {
-  emoji: string;
-  role_id: string;
-  label: string;
-  style: string;
+  emoji: string
+  role_id: string
+  label: string
+  style: string
 }
 
 function emptyItem(): ItemForm {
-  return { emoji: "", role_id: "", label: "", style: "primary" };
+  return { emoji: '', role_id: '', label: '', style: 'primary' }
 }
 
 export default function RolePanelNewPage() {
-  const router = useRouter();
-  const [guilds, setGuilds] = useState<GuildsMap>({});
-  const [channels, setChannels] = useState<ChannelsMap>({});
-  const [roles, setRoles] = useState<RolesMap>({});
-  const [submitting, setSubmitting] = useState(false);
+  const router = useRouter()
+  const [guilds, setGuilds] = useState<GuildsMap>({})
+  const [channels, setChannels] = useState<ChannelsMap>({})
+  const [roles, setRoles] = useState<RolesMap>({})
+  const [submitting, setSubmitting] = useState(false)
 
   // Form state
-  const [selectedGuild, setSelectedGuild] = useState("");
-  const [selectedChannel, setSelectedChannel] = useState("");
-  const [panelType, setPanelType] = useState("button");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [color, setColor] = useState("#5865F2");
-  const [items, setItems] = useState<ItemForm[]>([emptyItem()]);
-
-  const fetchData = useCallback(async () => {
-    const [guildsRes, channelsRes, rolesRes] = await Promise.all([
-      fetch("/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/v1/channels").then((r) => r.json()),
-      fetch("/api/v1/roles").then((r) => r.json()),
-    ]);
-    setGuilds(guildsRes ?? {});
-    setChannels(channelsRes ?? {});
-    setRoles(rolesRes ?? {});
-  }, []);
+  const [selectedGuild, setSelectedGuild] = useState('')
+  const [selectedChannel, setSelectedChannel] = useState('')
+  const [panelType, setPanelType] = useState('button')
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [color, setColor] = useState('#5865F2')
+  const [items, setItems] = useState<ItemForm[]>([emptyItem()])
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    async function fetchData() {
+      const res = await fetch(`${API_BASE}/rolepanels/form-data`).then((r) => r.json())
+      setGuilds(res?.guilds ?? {})
+      setChannels(res?.channels ?? {})
+      setRoles(res?.roles ?? {})
+    }
+    fetchData()
+  }, [])
 
-  const filteredRoles = selectedGuild ? (roles[selectedGuild] ?? []) : [];
+  const filteredRoles = selectedGuild ? (roles[selectedGuild] ?? []) : []
 
   function updateItem(index: number, field: keyof ItemForm, value: string) {
-    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, [field]: value } : item)));
+    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, [field]: value } : item)))
   }
 
   function removeItem(index: number) {
-    setItems((prev) => prev.filter((_, i) => i !== index));
+    setItems((prev) => prev.filter((_, i) => i !== index))
   }
 
   function addItem() {
-    setItems((prev) => [...prev, emptyItem()]);
+    setItems((prev) => [...prev, emptyItem()])
   }
 
   function hexToInt(hex: string): number {
-    return parseInt(hex.replace("#", ""), 16);
+    return parseInt(hex.replace('#', ''), 16)
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!selectedGuild || !selectedChannel || !title.trim()) return;
-    setSubmitting(true);
+  async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!selectedGuild || !selectedChannel || !title.trim()) return
+    setSubmitting(true)
     try {
       const body = {
         guild_id: selectedGuild,
@@ -104,22 +100,22 @@ export default function RolePanelNewPage() {
             emoji: item.emoji || null,
             role_id: item.role_id,
             label: item.label || null,
-            style: panelType === "button" ? item.style : null,
+            style: panelType === 'button' ? item.style : null,
             position: i,
           })),
-      };
+      }
 
-      const res = await fetch("/api/v1/rolepanels", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const res = await fetch(`${API_BASE}/rolepanels`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-      });
+      })
       if (res.ok) {
-        const data = await res.json();
-        router.push(`/dashboard/roles/${data.id}`);
+        const data = await res.json()
+        router.push(`/dashboard/roles/${data.id}`)
       }
     } finally {
-      setSubmitting(false);
+      setSubmitting(false)
     }
   }
 
@@ -146,9 +142,9 @@ export default function RolePanelNewPage() {
               selectedGuild={selectedGuild}
               selectedChannel={selectedChannel}
               onGuildChange={(v) => {
-                setSelectedGuild(v);
-                setSelectedChannel("");
-                setItems([emptyItem()]);
+                setSelectedGuild(v)
+                setSelectedChannel('')
+                setItems([emptyItem()])
               }}
               onChannelChange={setSelectedChannel}
             />
@@ -223,7 +219,7 @@ export default function RolePanelNewPage() {
                       <label className="text-xs text-muted-foreground mb-1 block">Emoji</label>
                       <Input
                         value={item.emoji}
-                        onChange={(e) => updateItem(index, "emoji", e.target.value)}
+                        onChange={(e) => updateItem(index, 'emoji', e.target.value)}
                         placeholder="🎮"
                       />
                     </div>
@@ -231,7 +227,7 @@ export default function RolePanelNewPage() {
                       <label className="text-xs text-muted-foreground mb-1 block">Role</label>
                       <Select
                         value={item.role_id}
-                        onValueChange={(v) => updateItem(index, "role_id", v)}
+                        onValueChange={(v) => updateItem(index, 'role_id', v)}
                         disabled={!selectedGuild}
                       >
                         <SelectTrigger className="w-full">
@@ -246,13 +242,13 @@ export default function RolePanelNewPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    {panelType === "button" && (
+                    {panelType === 'button' && (
                       <>
                         <div className="flex-1">
                           <label className="text-xs text-muted-foreground mb-1 block">Label</label>
                           <Input
                             value={item.label}
-                            onChange={(e) => updateItem(index, "label", e.target.value)}
+                            onChange={(e) => updateItem(index, 'label', e.target.value)}
                             placeholder="Button label"
                           />
                         </div>
@@ -260,7 +256,7 @@ export default function RolePanelNewPage() {
                           <label className="text-xs text-muted-foreground mb-1 block">Style</label>
                           <Select
                             value={item.style}
-                            onValueChange={(v) => updateItem(index, "style", v)}
+                            onValueChange={(v) => updateItem(index, 'style', v)}
                           >
                             <SelectTrigger className="w-full">
                               <SelectValue />
@@ -298,11 +294,11 @@ export default function RolePanelNewPage() {
               type="submit"
               disabled={submitting || !selectedGuild || !selectedChannel || !title.trim()}
             >
-              {submitting ? "Creating..." : "Create Panel"}
+              {submitting ? 'Creating...' : 'Create Panel'}
             </Button>
           </form>
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

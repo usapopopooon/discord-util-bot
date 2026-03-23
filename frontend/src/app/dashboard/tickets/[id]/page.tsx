@@ -1,45 +1,26 @@
-"use client";
-
-import { useEffect, useState, useCallback, use } from "react";
-import Link from "next/link";
-import type { TicketDetail, GuildsMap } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { DeleteButton } from "@/components/delete-button";
+import Link from 'next/link'
+import { apiFetch } from '@/lib/api'
+import { API_BASE } from '@/lib/constants'
+import type { TicketDetail, GuildsMap } from '@/lib/types'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { DeleteButton } from '@/components/delete-button'
 
 function resolveGuildName(guilds: GuildsMap, guildId: string) {
-  return guilds[guildId] ?? guildId;
+  return guilds[guildId] ?? guildId
 }
 
-export default function TicketDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
-  const [ticket, setTicket] = useState<TicketDetail | null>(null);
-  const [guilds, setGuilds] = useState<GuildsMap>({});
-  const [loading, setLoading] = useState(true);
+export default async function TicketDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
 
-  const fetchData = useCallback(async () => {
-    const [ticketRes, guildsRes] = await Promise.all([
-      fetch(`/api/v1/tickets/${id}`).then((r) => r.json()),
-      fetch("/api/v1/guilds").then((r) => r.json()),
-    ]);
-    setTicket(ticketRes ?? null);
-    setGuilds(guildsRes ?? {});
-    setLoading(false);
-  }, [id]);
+  const [ticketRes, guildsRes] = await Promise.all([
+    apiFetch<{ ticket: TicketDetail }>(`${API_BASE}/tickets/${id}`),
+    apiFetch<GuildsMap>(`${API_BASE}/guilds`),
+  ])
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Ticket Detail</h1>
-        <p className="text-muted-foreground">Loading...</p>
-      </div>
-    );
-  }
+  const ticket = ticketRes.data?.ticket ?? null
+  const guilds = guildsRes.data ?? {}
 
   if (!ticket) {
     return (
@@ -49,7 +30,7 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
           <Button variant="outline">Back to Tickets</Button>
         </Link>
       </div>
-    );
+    )
   }
 
   return (
@@ -69,9 +50,9 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
             Ticket Info
             <Badge
               className={
-                ticket.status === "open"
-                  ? "bg-green-600 hover:bg-green-600"
-                  : "bg-gray-500 hover:bg-gray-500"
+                ticket.status === 'open'
+                  ? 'bg-green-600 hover:bg-green-600'
+                  : 'bg-gray-500 hover:bg-gray-500'
               }
             >
               {ticket.status}
@@ -98,11 +79,11 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
             </div>
             <div>
               <dt className="font-medium text-muted-foreground">Claimed By</dt>
-              <dd>{ticket.claimed_by ?? "-"}</dd>
+              <dd>{ticket.claimed_by ?? '-'}</dd>
             </div>
             <div>
               <dt className="font-medium text-muted-foreground">Closed By</dt>
-              <dd>{ticket.closed_by ?? "-"}</dd>
+              <dd>{ticket.closed_by ?? '-'}</dd>
             </div>
             <div>
               <dt className="font-medium text-muted-foreground">Created</dt>
@@ -110,11 +91,11 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
             </div>
             <div>
               <dt className="font-medium text-muted-foreground">Closed At</dt>
-              <dd>{ticket.closed_at ? new Date(ticket.closed_at).toLocaleString() : "-"}</dd>
+              <dd>{ticket.closed_at ? new Date(ticket.closed_at).toLocaleString() : '-'}</dd>
             </div>
             <div>
               <dt className="font-medium text-muted-foreground">Channel ID</dt>
-              <dd className="font-mono text-xs">{ticket.channel_id ?? "Deleted"}</dd>
+              <dd className="font-mono text-xs">{ticket.channel_id ?? 'Deleted'}</dd>
             </div>
           </dl>
         </CardContent>
@@ -135,11 +116,11 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
 
       <div>
         <DeleteButton
-          endpoint={`/api/v1/tickets/${id}/delete`}
+          endpoint={`${API_BASE}/tickets/${id}/delete`}
           label="Delete Ticket"
           confirmMessage="Are you sure you want to delete this ticket? This action cannot be undone."
         />
       </div>
     </div>
-  );
+  )
 }

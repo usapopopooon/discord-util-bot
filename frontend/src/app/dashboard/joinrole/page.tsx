@@ -1,122 +1,119 @@
-"use client";
+'use client'
 
-import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import type { JoinRoleConfig, GuildsMap, RolesMap } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { API_BASE } from '@/lib/constants'
+import type { JoinRoleConfig, GuildsMap, RolesMap } from '@/lib/types'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { DataTable, type Column } from "@/components/data-table";
-import { DeleteButton } from "@/components/delete-button";
-import { ToggleButton } from "@/components/toggle-button";
+} from '@/components/ui/select'
+import { DataTable, type Column } from '@/components/data-table'
+import { DeleteButton } from '@/components/delete-button'
+import { ToggleButton } from '@/components/toggle-button'
 
 function resolveGuildName(guilds: GuildsMap, guildId: string) {
-  return guilds[guildId] ?? guildId;
+  return guilds[guildId] ?? guildId
 }
 
 function resolveRoleName(roles: RolesMap, guildId: string, roleId: string) {
-  const list = roles[guildId] ?? [];
-  const role = list.find((r) => r.id === roleId);
-  return role ? `@${role.name}` : roleId;
+  const list = roles[guildId] ?? []
+  const role = list.find((r) => r.id === roleId)
+  return role ? `@${role.name}` : roleId
 }
 
 export default function JoinRolePage() {
-  const router = useRouter();
-  const [configs, setConfigs] = useState<JoinRoleConfig[]>([]);
-  const [guilds, setGuilds] = useState<GuildsMap>({});
-  const [roles, setRoles] = useState<RolesMap>({});
-  const [loading, setLoading] = useState(true);
+  const router = useRouter()
+  const [configs, setConfigs] = useState<JoinRoleConfig[]>([])
+  const [guilds, setGuilds] = useState<GuildsMap>({})
+  const [roles, setRoles] = useState<RolesMap>({})
+  const [loading, setLoading] = useState(true)
 
   // Form state
-  const [selectedGuild, setSelectedGuild] = useState("");
-  const [selectedRole, setSelectedRole] = useState("");
-  const [durationHours, setDurationHours] = useState("24");
-  const [submitting, setSubmitting] = useState(false);
+  const [selectedGuild, setSelectedGuild] = useState('')
+  const [selectedRole, setSelectedRole] = useState('')
+  const [durationHours, setDurationHours] = useState('24')
+  const [submitting, setSubmitting] = useState(false)
 
-  const fetchData = useCallback(async () => {
-    const [configsRes, guildsRes, rolesRes] = await Promise.all([
-      fetch("/api/v1/joinrole").then((r) => r.json()),
-      fetch("/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/v1/roles").then((r) => r.json()),
-    ]);
-    setConfigs(configsRes ?? []);
-    setGuilds(guildsRes ?? {});
-    setRoles(rolesRes ?? {});
-    setLoading(false);
-  }, []);
+  async function fetchData() {
+    const res = await fetch(`${API_BASE}/joinrole`).then((r) => r.json())
+    setConfigs(res?.configs ?? [])
+    setGuilds(res?.guilds ?? {})
+    setRoles(res?.roles ?? {})
+    setLoading(false)
+  }
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchData()
+  }, [])
 
-  const filteredRoles = selectedGuild ? (roles[selectedGuild] ?? []) : [];
+  const filteredRoles = selectedGuild ? (roles[selectedGuild] ?? []) : []
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!selectedGuild || !selectedRole || !durationHours) return;
-    setSubmitting(true);
+  async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!selectedGuild || !selectedRole || !durationHours) return
+    setSubmitting(true)
     try {
-      await fetch("/api/v1/joinrole", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      await fetch(`${API_BASE}/joinrole`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           guild_id: selectedGuild,
           role_id: selectedRole,
           duration_hours: parseInt(durationHours, 10),
         }),
-      });
-      setSelectedGuild("");
-      setSelectedRole("");
-      setDurationHours("24");
-      fetchData();
-      router.refresh();
+      })
+      setSelectedGuild('')
+      setSelectedRole('')
+      setDurationHours('24')
+      fetchData()
+      router.refresh()
     } finally {
-      setSubmitting(false);
+      setSubmitting(false)
     }
   }
 
   const columns: Column<JoinRoleConfig>[] = [
     {
-      header: "Server",
+      header: 'Server',
       accessor: (row) => resolveGuildName(guilds, row.guild_id),
     },
     {
-      header: "Role",
+      header: 'Role',
       accessor: (row) => resolveRoleName(roles, row.guild_id, row.role_id),
     },
     {
-      header: "Duration (hours)",
+      header: 'Duration (hours)',
       accessor: (row) => row.duration_hours,
     },
     {
-      header: "Status",
+      header: 'Status',
       accessor: (row) => (
         <Badge
-          variant={row.enabled ? "default" : "secondary"}
-          className={row.enabled ? "bg-green-600 hover:bg-green-600" : ""}
+          variant={row.enabled ? 'default' : 'secondary'}
+          className={row.enabled ? 'bg-green-600 hover:bg-green-600' : ''}
         >
-          {row.enabled ? "Enabled" : "Disabled"}
+          {row.enabled ? 'Enabled' : 'Disabled'}
         </Badge>
       ),
     },
     {
-      header: "Actions",
+      header: 'Actions',
       accessor: (row) => (
         <div className="flex items-center gap-2">
-          <ToggleButton endpoint={`/api/v1/joinrole/${row.id}/toggle`} enabled={row.enabled} />
-          <DeleteButton endpoint={`/api/v1/joinrole/${row.id}/delete`} />
+          <ToggleButton endpoint={`${API_BASE}/joinrole/${row.id}/toggle`} enabled={row.enabled} />
+          <DeleteButton endpoint={`${API_BASE}/joinrole/${row.id}/delete`} />
         </div>
       ),
     },
-  ];
+  ]
 
   if (loading) {
     return (
@@ -124,7 +121,7 @@ export default function JoinRolePage() {
         <h1 className="text-2xl font-bold">Join Roles</h1>
         <p className="text-muted-foreground">Loading...</p>
       </div>
-    );
+    )
   }
 
   return (
@@ -142,8 +139,8 @@ export default function JoinRolePage() {
               <Select
                 value={selectedGuild}
                 onValueChange={(v) => {
-                  setSelectedGuild(v);
-                  setSelectedRole("");
+                  setSelectedGuild(v)
+                  setSelectedRole('')
                 }}
               >
                 <SelectTrigger className="w-full">
@@ -188,7 +185,7 @@ export default function JoinRolePage() {
               />
             </div>
             <Button type="submit" disabled={submitting || !selectedGuild || !selectedRole}>
-              {submitting ? "Adding..." : "Add"}
+              {submitting ? 'Adding...' : 'Add'}
             </Button>
           </form>
         </CardContent>
@@ -203,5 +200,5 @@ export default function JoinRolePage() {
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

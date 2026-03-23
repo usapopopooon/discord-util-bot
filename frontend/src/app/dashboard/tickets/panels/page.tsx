@@ -1,73 +1,59 @@
-"use client";
-
-import { useEffect, useState, useCallback } from "react";
-import Link from "next/link";
-import type { TicketPanel, GuildsMap, ChannelsMap } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { DataTable, type Column } from "@/components/data-table";
-import { DeleteButton } from "@/components/delete-button";
+import Link from 'next/link'
+import { apiFetch } from '@/lib/api'
+import { API_BASE } from '@/lib/constants'
+import type { TicketPanel, GuildsMap, ChannelsMap } from '@/lib/types'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { DataTable, type Column } from '@/components/data-table'
+import { DeleteButton } from '@/components/delete-button'
 
 function resolveGuildName(guilds: GuildsMap, guildId: string) {
-  return guilds[guildId] ?? guildId;
+  return guilds[guildId] ?? guildId
 }
 
 function resolveChannelName(channels: ChannelsMap, guildId: string, channelId: string) {
-  const list = channels[guildId] ?? [];
-  const ch = list.find((c) => c.id === channelId);
-  return ch ? `#${ch.name}` : channelId;
+  const list = channels[guildId] ?? []
+  const ch = list.find((c) => c.id === channelId)
+  return ch ? `#${ch.name}` : channelId
 }
 
-export default function TicketPanelsPage() {
-  const [panels, setPanels] = useState<TicketPanel[]>([]);
-  const [guilds, setGuilds] = useState<GuildsMap>({});
-  const [channels, setChannels] = useState<ChannelsMap>({});
-  const [loading, setLoading] = useState(true);
+export default async function TicketPanelsPage() {
+  const res = await apiFetch<{ panels: TicketPanel[]; guilds: GuildsMap; channels: ChannelsMap }>(
+    `${API_BASE}/tickets/panels`
+  )
 
-  const fetchData = useCallback(async () => {
-    const [panelsRes, guildsRes, channelsRes] = await Promise.all([
-      fetch("/api/v1/tickets/panels").then((r) => r.json()),
-      fetch("/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/v1/channels").then((r) => r.json()),
-    ]);
-    setPanels(panelsRes ?? []);
-    setGuilds(guildsRes ?? {});
-    setChannels(channelsRes ?? {});
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  const panels = res.data?.panels ?? []
+  const guilds = res.data?.guilds ?? {}
+  const channels = res.data?.channels ?? {}
 
   const columns: Column<TicketPanel>[] = [
     {
-      header: "Server",
+      header: 'Server',
       accessor: (row) => resolveGuildName(guilds, row.guild_id),
     },
     {
-      header: "Channel",
+      header: 'Channel',
       accessor: (row) => resolveChannelName(channels, row.guild_id, row.channel_id),
     },
     {
-      header: "Title",
+      header: 'Title',
       accessor: (row) => row.title,
     },
     {
-      header: "Posted",
+      header: 'Posted',
       accessor: (row) => (
         <Badge
           className={
-            row.message_id ? "bg-green-600 hover:bg-green-600" : "bg-gray-500 hover:bg-gray-500"
+            row.message_id ? 'bg-green-600 hover:bg-green-600' : 'bg-gray-500 hover:bg-gray-500'
           }
         >
-          {row.message_id ? "Yes" : "No"}
+          {row.message_id ? 'Yes' : 'No'}
         </Badge>
       ),
     },
     {
-      header: "Actions",
+      header: 'Actions',
       accessor: (row) => (
         <div className="flex items-center gap-2">
           <Link href={`/dashboard/tickets/panels/${row.id}`}>
@@ -75,20 +61,11 @@ export default function TicketPanelsPage() {
               View
             </Button>
           </Link>
-          <DeleteButton endpoint={`/api/v1/tickets/panels/${row.id}/delete`} />
+          <DeleteButton endpoint={`${API_BASE}/tickets/panels/${row.id}/delete`} />
         </div>
       ),
     },
-  ];
-
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Ticket Panels</h1>
-        <p className="text-muted-foreground">Loading...</p>
-      </div>
-    );
-  }
+  ]
 
   return (
     <div className="space-y-6">
@@ -115,5 +92,5 @@ export default function TicketPanelsPage() {
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

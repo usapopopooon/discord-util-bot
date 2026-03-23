@@ -1,100 +1,98 @@
-"use client";
+'use client'
 
-import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import type { AutoModBanListEntry, GuildsMap } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { API_BASE } from '@/lib/constants'
+import type { AutoModBanListEntry, GuildsMap } from '@/lib/types'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { DataTable, type Column } from "@/components/data-table";
-import { DeleteButton } from "@/components/delete-button";
-import Link from "next/link";
+} from '@/components/ui/select'
+import { DataTable, type Column } from '@/components/data-table'
+import { DeleteButton } from '@/components/delete-button'
+import Link from 'next/link'
 
 function resolveGuildName(guilds: GuildsMap, guildId: string) {
-  return guilds[guildId] ?? guildId;
+  return guilds[guildId] ?? guildId
 }
 
 export default function AutoModBanListPage() {
-  const router = useRouter();
-  const [entries, setEntries] = useState<AutoModBanListEntry[]>([]);
-  const [guilds, setGuilds] = useState<GuildsMap>({});
-  const [loading, setLoading] = useState(true);
+  const router = useRouter()
+  const [entries, setEntries] = useState<AutoModBanListEntry[]>([])
+  const [guilds, setGuilds] = useState<GuildsMap>({})
+  const [loading, setLoading] = useState(true)
 
   // Form state
-  const [selectedGuild, setSelectedGuild] = useState("");
-  const [userId, setUserId] = useState("");
-  const [reason, setReason] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [selectedGuild, setSelectedGuild] = useState('')
+  const [userId, setUserId] = useState('')
+  const [reason, setReason] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
-  const fetchData = useCallback(async () => {
-    const [entriesRes, guildsRes] = await Promise.all([
-      fetch("/api/v1/automod/banlist").then((r) => r.json()),
-      fetch("/api/v1/guilds").then((r) => r.json()),
-    ]);
-    setEntries(entriesRes ?? []);
-    setGuilds(guildsRes ?? {});
-    setLoading(false);
-  }, []);
+  async function fetchData() {
+    const res = await fetch(`${API_BASE}/automod/banlist`).then((r) => r.json())
+    setEntries(res?.entries ?? [])
+    setGuilds(res?.guilds ?? {})
+    setLoading(false)
+  }
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchData()
+  }, [])
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!selectedGuild || !userId) return;
-    setSubmitting(true);
+  async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!selectedGuild || !userId) return
+    setSubmitting(true)
     try {
-      await fetch("/api/v1/automod/banlist", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      await fetch(`${API_BASE}/automod/banlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           guild_id: selectedGuild,
           user_id: userId,
           reason: reason || null,
         }),
-      });
-      setSelectedGuild("");
-      setUserId("");
-      setReason("");
-      fetchData();
-      router.refresh();
+      })
+      setSelectedGuild('')
+      setUserId('')
+      setReason('')
+      fetchData()
+      router.refresh()
     } finally {
-      setSubmitting(false);
+      setSubmitting(false)
     }
   }
 
   const columns: Column<AutoModBanListEntry>[] = [
     {
-      header: "Server",
+      header: 'Server',
       accessor: (row) => resolveGuildName(guilds, row.guild_id),
     },
     {
-      header: "User ID",
+      header: 'User ID',
       accessor: (row) => (
         <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{row.user_id}</code>
       ),
     },
     {
-      header: "Reason",
-      accessor: (row) => row.reason ?? "-",
+      header: 'Reason',
+      accessor: (row) => row.reason ?? '-',
     },
     {
-      header: "Created",
+      header: 'Created',
       accessor: (row) => new Date(row.created_at).toLocaleString(),
     },
     {
-      header: "Actions",
-      accessor: (row) => <DeleteButton endpoint={`/api/v1/automod/banlist/${row.id}/delete`} />,
+      header: 'Actions',
+      accessor: (row) => <DeleteButton endpoint={`${API_BASE}/automod/banlist/${row.id}/delete`} />,
     },
-  ];
+  ]
 
   if (loading) {
     return (
@@ -102,7 +100,7 @@ export default function AutoModBanListPage() {
         <h1 className="text-2xl font-bold">AutoMod Ban List</h1>
         <p className="text-muted-foreground">Loading...</p>
       </div>
-    );
+    )
   }
 
   return (
@@ -155,7 +153,7 @@ export default function AutoModBanListPage() {
               />
             </div>
             <Button type="submit" disabled={submitting || !selectedGuild || !userId}>
-              {submitting ? "Adding..." : "Add"}
+              {submitting ? 'Adding...' : 'Add'}
             </Button>
           </form>
         </CardContent>
@@ -170,5 +168,5 @@ export default function AutoModBanListPage() {
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

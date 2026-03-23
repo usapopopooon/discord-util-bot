@@ -1,125 +1,122 @@
-"use client";
+'use client'
 
-import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import type { HealthConfig, GuildsMap, ChannelsMap } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { API_BASE } from '@/lib/constants'
+import type { HealthConfig, GuildsMap, ChannelsMap } from '@/lib/types'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { DataTable, type Column } from "@/components/data-table";
-import { DeleteButton } from "@/components/delete-button";
-import { ToggleButton } from "@/components/toggle-button";
+} from '@/components/ui/select'
+import { DataTable, type Column } from '@/components/data-table'
+import { DeleteButton } from '@/components/delete-button'
+import { ToggleButton } from '@/components/toggle-button'
 
 function resolveGuildName(guilds: GuildsMap, guildId: string) {
-  return guilds[guildId] ?? guildId;
+  return guilds[guildId] ?? guildId
 }
 
 function resolveChannelName(channels: ChannelsMap, guildId: string, channelId: string) {
-  const list = channels[guildId] ?? [];
-  const ch = list.find((c) => c.id === channelId);
-  return ch ? `#${ch.name}` : channelId;
+  const list = channels[guildId] ?? []
+  const ch = list.find((c) => c.id === channelId)
+  return ch ? `#${ch.name}` : channelId
 }
 
 export default function HealthPage() {
-  const router = useRouter();
-  const [configs, setConfigs] = useState<HealthConfig[]>([]);
-  const [guilds, setGuilds] = useState<GuildsMap>({});
-  const [channels, setChannels] = useState<ChannelsMap>({});
-  const [loading, setLoading] = useState(true);
+  const router = useRouter()
+  const [configs, setConfigs] = useState<HealthConfig[]>([])
+  const [guilds, setGuilds] = useState<GuildsMap>({})
+  const [channels, setChannels] = useState<ChannelsMap>({})
+  const [loading, setLoading] = useState(true)
 
   // Form state
-  const [selectedGuild, setSelectedGuild] = useState("");
-  const [selectedChannel, setSelectedChannel] = useState("");
-  const [intervalSeconds, setIntervalSeconds] = useState("300");
-  const [submitting, setSubmitting] = useState(false);
+  const [selectedGuild, setSelectedGuild] = useState('')
+  const [selectedChannel, setSelectedChannel] = useState('')
+  const [intervalSeconds, setIntervalSeconds] = useState('300')
+  const [submitting, setSubmitting] = useState(false)
 
-  const fetchData = useCallback(async () => {
-    const [configsRes, guildsRes, channelsRes] = await Promise.all([
-      fetch("/api/v1/health/settings").then((r) => r.json()),
-      fetch("/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/v1/channels").then((r) => r.json()),
-    ]);
-    setConfigs(configsRes ?? []);
-    setGuilds(guildsRes ?? {});
-    setChannels(channelsRes ?? {});
-    setLoading(false);
-  }, []);
+  async function fetchData() {
+    const res = await fetch(`${API_BASE}/health/settings`).then((r) => r.json())
+    setConfigs(res?.configs ?? [])
+    setGuilds(res?.guilds ?? {})
+    setChannels(res?.channels ?? {})
+    setLoading(false)
+  }
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchData()
+  }, [])
 
-  const filteredChannels = selectedGuild ? (channels[selectedGuild] ?? []) : [];
+  const filteredChannels = selectedGuild ? (channels[selectedGuild] ?? []) : []
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!selectedGuild || !selectedChannel || !intervalSeconds) return;
-    setSubmitting(true);
+  async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!selectedGuild || !selectedChannel || !intervalSeconds) return
+    setSubmitting(true)
     try {
-      await fetch("/api/v1/health/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      await fetch(`${API_BASE}/health/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           guild_id: selectedGuild,
           channel_id: selectedChannel,
           interval_seconds: parseInt(intervalSeconds, 10),
         }),
-      });
-      setSelectedGuild("");
-      setSelectedChannel("");
-      setIntervalSeconds("300");
-      fetchData();
-      router.refresh();
+      })
+      setSelectedGuild('')
+      setSelectedChannel('')
+      setIntervalSeconds('300')
+      fetchData()
+      router.refresh()
     } finally {
-      setSubmitting(false);
+      setSubmitting(false)
     }
   }
 
   const columns: Column<HealthConfig>[] = [
     {
-      header: "Server",
+      header: 'Server',
       accessor: (row) => resolveGuildName(guilds, row.guild_id),
     },
     {
-      header: "Channel",
+      header: 'Channel',
       accessor: (row) => resolveChannelName(channels, row.guild_id, row.channel_id),
     },
     {
-      header: "Interval",
+      header: 'Interval',
       accessor: (row) => `${row.interval_seconds}s`,
     },
     {
-      header: "Status",
+      header: 'Status',
       accessor: (row) => (
         <Badge
-          variant={row.enabled ? "default" : "secondary"}
-          className={row.enabled ? "bg-green-600 hover:bg-green-600" : ""}
+          variant={row.enabled ? 'default' : 'secondary'}
+          className={row.enabled ? 'bg-green-600 hover:bg-green-600' : ''}
         >
-          {row.enabled ? "Enabled" : "Disabled"}
+          {row.enabled ? 'Enabled' : 'Disabled'}
         </Badge>
       ),
     },
     {
-      header: "Actions",
+      header: 'Actions',
       accessor: (row) => (
         <div className="flex items-center gap-2">
           <ToggleButton
-            endpoint={`/api/v1/health/settings/${row.id}/toggle`}
+            endpoint={`${API_BASE}/health/settings/${row.id}/toggle`}
             enabled={row.enabled}
           />
-          <DeleteButton endpoint={`/api/v1/health/settings/${row.id}/delete`} />
+          <DeleteButton endpoint={`${API_BASE}/health/settings/${row.id}/delete`} />
         </div>
       ),
     },
-  ];
+  ]
 
   if (loading) {
     return (
@@ -127,7 +124,7 @@ export default function HealthPage() {
         <h1 className="text-2xl font-bold">Health Check</h1>
         <p className="text-muted-foreground">Loading...</p>
       </div>
-    );
+    )
   }
 
   return (
@@ -145,8 +142,8 @@ export default function HealthPage() {
               <Select
                 value={selectedGuild}
                 onValueChange={(v) => {
-                  setSelectedGuild(v);
-                  setSelectedChannel("");
+                  setSelectedGuild(v)
+                  setSelectedChannel('')
                 }}
               >
                 <SelectTrigger className="w-full">
@@ -191,7 +188,7 @@ export default function HealthPage() {
               />
             </div>
             <Button type="submit" disabled={submitting || !selectedGuild || !selectedChannel}>
-              {submitting ? "Adding..." : "Add"}
+              {submitting ? 'Adding...' : 'Add'}
             </Button>
           </form>
         </CardContent>
@@ -206,5 +203,5 @@ export default function HealthPage() {
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

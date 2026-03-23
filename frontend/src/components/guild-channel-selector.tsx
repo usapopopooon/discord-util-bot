@@ -1,4 +1,4 @@
-"use client";
+'use client'
 
 import {
   Select,
@@ -6,18 +6,18 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import type { GuildsMap, ChannelsMap } from "@/lib/types";
+} from '@/components/ui/select'
+import type { GuildsMap, ChannelsMap } from '@/lib/types'
 
 interface GuildChannelSelectorProps {
-  guilds: GuildsMap;
-  channels: ChannelsMap;
-  selectedGuild: string;
-  selectedChannel: string;
-  onGuildChange: (guildId: string) => void;
-  onChannelChange: (channelId: string) => void;
-  guildLabel?: string;
-  channelLabel?: string;
+  guilds: GuildsMap
+  channels: ChannelsMap
+  selectedGuild: string
+  selectedChannel: string
+  onGuildChange: (guildId: string) => void
+  onChannelChange: (channelId: string) => void
+  guildLabel?: string
+  channelLabel?: string
 }
 
 export function GuildChannelSelector({
@@ -27,11 +27,11 @@ export function GuildChannelSelector({
   selectedChannel,
   onGuildChange,
   onChannelChange,
-  guildLabel = "Server",
-  channelLabel = "Channel",
+  guildLabel = 'Server',
+  channelLabel = 'Channel',
 }: GuildChannelSelectorProps) {
-  const guildEntries = Object.entries(guilds);
-  const filteredChannels = selectedGuild ? (channels[selectedGuild] ?? []) : [];
+  const guildEntries = Object.entries(guilds)
+  const filteredChannels = selectedGuild ? (channels[selectedGuild] ?? []) : []
 
   return (
     <div className="flex gap-4">
@@ -40,8 +40,8 @@ export function GuildChannelSelector({
         <Select
           value={selectedGuild}
           onValueChange={(v) => {
-            onGuildChange(v);
-            onChannelChange("");
+            onGuildChange(v)
+            onChannelChange('')
           }}
         >
           <SelectTrigger className="w-full">
@@ -72,5 +72,5 @@ export function GuildChannelSelector({
         </Select>
       </div>
     </div>
-  );
+  )
 }

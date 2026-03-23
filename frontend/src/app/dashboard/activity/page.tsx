@@ -1,74 +1,74 @@
-"use client";
+'use client'
 
-import { useEffect, useState, useCallback } from "react";
-import type { ActivitySettings } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useEffect, useState } from 'react'
+import { API_BASE } from '@/lib/constants'
+import type { ActivitySettings } from '@/lib/types'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from '@/components/ui/select'
 
 const ACTIVITY_TYPES = [
-  { value: "playing", label: "Playing" },
-  { value: "listening", label: "Listening" },
-  { value: "watching", label: "Watching" },
-  { value: "competing", label: "Competing" },
-];
+  { value: 'playing', label: 'Playing' },
+  { value: 'listening', label: 'Listening' },
+  { value: 'watching', label: 'Watching' },
+  { value: 'competing', label: 'Competing' },
+]
 
 export default function ActivityPage() {
-  const [activityType, setActivityType] = useState("playing");
-  const [activityText, setActivityText] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [activityType, setActivityType] = useState('playing')
+  const [activityText, setActivityText] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
-
-  const fetchData = useCallback(async () => {
-    try {
-      const res = await fetch("/api/v1/activity");
-      if (res.ok) {
-        const data: ActivitySettings = await res.json();
-        setActivityType(data.activity_type || "playing");
-        setActivityText(data.activity_text || "");
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    type: 'success' | 'error'
+    text: string
+  } | null>(null)
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    async function fetchData() {
+      try {
+        const res = await fetch(`${API_BASE}/activity`)
+        if (res.ok) {
+          const data: ActivitySettings = await res.json()
+          setActivityType(data.activity_type || 'playing')
+          setActivityText(data.activity_text || '')
+        }
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchData()
+  }, [])
 
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    setMessage(null);
+  async function handleSave(e: React.SyntheticEvent<HTMLFormElement>) {
+    e.preventDefault()
+    setSaving(true)
+    setMessage(null)
     try {
-      const res = await fetch("/api/v1/activity", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+      const res = await fetch(`${API_BASE}/activity`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           activity_type: activityType,
           activity_text: activityText,
         }),
-      });
+      })
       if (res.ok) {
-        setMessage({ type: "success", text: "Activity updated successfully." });
+        setMessage({ type: 'success', text: 'Activity updated successfully.' })
       } else {
-        setMessage({ type: "error", text: "Failed to update activity." });
+        setMessage({ type: 'error', text: 'Failed to update activity.' })
       }
     } catch {
-      setMessage({ type: "error", text: "Failed to update activity." });
+      setMessage({ type: 'error', text: 'Failed to update activity.' })
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
   }
 
@@ -78,7 +78,7 @@ export default function ActivityPage() {
         <h1 className="text-2xl font-bold">Bot Activity</h1>
         <p className="text-muted-foreground">Loading...</p>
       </div>
-    );
+    )
   }
 
   return (
@@ -117,18 +117,18 @@ export default function ActivityPage() {
             {message && (
               <p
                 className={
-                  message.type === "success" ? "text-sm text-green-500" : "text-sm text-destructive"
+                  message.type === 'success' ? 'text-sm text-green-500' : 'text-sm text-destructive'
                 }
               >
                 {message.text}
               </p>
             )}
             <Button type="submit" disabled={saving}>
-              {saving ? "Saving..." : "Save"}
+              {saving ? 'Saving...' : 'Save'}
             </Button>
           </form>
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

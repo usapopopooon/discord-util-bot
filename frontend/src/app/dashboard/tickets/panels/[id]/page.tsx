@@ -1,113 +1,107 @@
-"use client";
+'use client'
 
-import { useEffect, useState, useCallback, use } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import type { TicketPanelDetail, GuildsMap, ChannelsMap, RolesMap } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { useEffect, useState, use } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { API_BASE } from '@/lib/constants'
+import type { TicketPanelDetail, GuildsMap, ChannelsMap, RolesMap } from '@/lib/types'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { DeleteButton } from "@/components/delete-button";
+} from '@/components/ui/select'
+import { DeleteButton } from '@/components/delete-button'
 
 const BUTTON_STYLES = [
-  { value: "primary", label: "Primary (Blue)" },
-  { value: "secondary", label: "Secondary (Gray)" },
-  { value: "success", label: "Success (Green)" },
-  { value: "danger", label: "Danger (Red)" },
-];
+  { value: 'primary', label: 'Primary (Blue)' },
+  { value: 'secondary', label: 'Secondary (Gray)' },
+  { value: 'success', label: 'Success (Green)' },
+  { value: 'danger', label: 'Danger (Red)' },
+]
 
 function resolveGuildName(guilds: GuildsMap, guildId: string) {
-  return guilds[guildId] ?? guildId;
+  return guilds[guildId] ?? guildId
 }
 
 function resolveChannelName(channels: ChannelsMap, guildId: string, channelId: string | null) {
-  if (!channelId) return "-";
-  const list = channels[guildId] ?? [];
-  const ch = list.find((c) => c.id === channelId);
-  return ch ? `#${ch.name}` : channelId;
+  if (!channelId) return '-'
+  const list = channels[guildId] ?? []
+  const ch = list.find((c) => c.id === channelId)
+  return ch ? `#${ch.name}` : channelId
 }
 
 export default function TicketPanelDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
-  const router = useRouter();
-  const [panel, setPanel] = useState<TicketPanelDetail | null>(null);
-  const [guilds, setGuilds] = useState<GuildsMap>({});
-  const [channels, setChannels] = useState<ChannelsMap>({});
-  const [roles, setRoles] = useState<RolesMap>({});
-  const [discordCategories, setDiscordCategories] = useState<ChannelsMap>({});
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [posting, setPosting] = useState(false);
+  const { id } = use(params)
+  const router = useRouter()
+  const [panel, setPanel] = useState<TicketPanelDetail | null>(null)
+  const [guilds, setGuilds] = useState<GuildsMap>({})
+  const [channels, setChannels] = useState<ChannelsMap>({})
+  const [roles, setRoles] = useState<RolesMap>({})
+  const [discordCategories, setDiscordCategories] = useState<ChannelsMap>({})
+  const [loading, setLoading] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
+  const [posting, setPosting] = useState(false)
 
   // Edit form state
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [color, setColor] = useState("");
-  const [staffRoleId, setStaffRoleId] = useState("");
-  const [discordCategoryId, setDiscordCategoryId] = useState("");
-  const [logChannelId, setLogChannelId] = useState("");
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [color, setColor] = useState('')
+  const [staffRoleId, setStaffRoleId] = useState('')
+  const [discordCategoryId, setDiscordCategoryId] = useState('')
+  const [logChannelId, setLogChannelId] = useState('')
 
   // Button edit state per assoc_id
   const [buttonEdits, setButtonEdits] = useState<
     Record<number, { emoji: string; label: string; style: string; saving: boolean }>
-  >({});
+  >({})
 
-  const fetchData = useCallback(async () => {
-    const [panelRes, guildsRes, channelsRes, rolesRes] = await Promise.all([
-      fetch(`/api/v1/tickets/panels/${id}`).then((r) => r.json()),
-      fetch("/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/v1/channels").then((r) => r.json()),
-      fetch("/api/v1/roles").then((r) => r.json()),
-    ]);
-    // Try to get discord categories from form-data
-    let discCats: ChannelsMap = {};
-    try {
-      const formDataRes = await fetch("/api/v1/tickets/panels/form-data").then((r) => r.json());
-      discCats = formDataRes?.discord_categories ?? {};
-    } catch {
-      // ignore
-    }
-    const p = panelRes as TicketPanelDetail | null;
-    setPanel(p);
-    setGuilds(guildsRes ?? {});
-    setChannels(channelsRes ?? {});
-    setRoles(rolesRes ?? {});
-    setDiscordCategories(discCats);
+  async function fetchData() {
+    const [panelRes, formDataRes] = await Promise.all([
+      fetch(`${API_BASE}/tickets/panels/${id}`).then((r) => r.json()),
+      fetch(`${API_BASE}/tickets/panels/form-data`)
+        .then((r) => r.json())
+        .catch(() => null),
+    ])
+    const p = panelRes?.panel as TicketPanelDetail | null
+    setPanel(p)
+    setGuilds(panelRes?.guilds ?? {})
+    setChannels(panelRes?.channels ?? {})
+    setRoles(formDataRes?.roles ?? {})
+    setDiscordCategories(formDataRes?.discord_categories ?? {})
 
     if (p) {
-      setTitle(p.title);
-      setDescription(p.description ?? "");
-      setColor(p.color ? `#${p.color.toString(16).padStart(6, "0")}` : "");
-      setStaffRoleId(p.staff_role_id ?? "");
-      setDiscordCategoryId(p.discord_category_id ?? "");
-      setLogChannelId(p.log_channel_id ?? "");
+      setTitle(p.title)
+      setDescription(p.description ?? '')
+      setColor(p.color ? `#${p.color.toString(16).padStart(6, '0')}` : '')
+      setStaffRoleId(p.staff_role_id ?? '')
+      setDiscordCategoryId(p.discord_category_id ?? '')
+      setLogChannelId(p.log_channel_id ?? '')
 
-      const edits: typeof buttonEdits = {};
+      const edits: typeof buttonEdits = {}
       for (const cat of p.categories) {
         edits[cat.assoc_id] = {
-          emoji: cat.button_emoji ?? "",
-          label: cat.button_label ?? "",
-          style: cat.button_style ?? "primary",
+          emoji: cat.button_emoji ?? '',
+          label: cat.button_label ?? '',
+          style: cat.button_style ?? 'primary',
           saving: false,
-        };
+        }
       }
-      setButtonEdits(edits);
+      setButtonEdits(edits)
     }
-    setLoading(false);
-  }, [id]);
+    setLoading(false)
+  }
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   if (loading) {
     return (
@@ -115,7 +109,7 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
         <h1 className="text-2xl font-bold">Ticket Panel Detail</h1>
         <p className="text-muted-foreground">Loading...</p>
       </div>
-    );
+    )
   }
 
   if (!panel) {
@@ -126,78 +120,78 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
           <Button variant="outline">Back to Panels</Button>
         </Link>
       </div>
-    );
+    )
   }
 
-  const filteredChannels = channels[panel.guild_id] ?? [];
-  const filteredRoles = roles[panel.guild_id] ?? [];
-  const filteredDiscordCategories = discordCategories[panel.guild_id] ?? [];
+  const filteredChannels = channels[panel.guild_id] ?? []
+  const filteredRoles = roles[panel.guild_id] ?? []
+  const filteredDiscordCategories = discordCategories[panel.guild_id] ?? []
 
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
-    setSubmitting(true);
+  async function handleSave(e: React.SyntheticEvent<HTMLFormElement>) {
+    e.preventDefault()
+    setSubmitting(true)
     try {
       const body: Record<string, unknown> = {
         title,
         description: description || null,
-        color: color ? parseInt(color.replace("#", ""), 16) : null,
+        color: color ? parseInt(color.replace('#', ''), 16) : null,
         staff_role_id: staffRoleId || null,
         discord_category_id: discordCategoryId || null,
         log_channel_id: logChannelId || null,
-      };
-      await fetch(`/api/v1/tickets/panels/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+      }
+      await fetch(`${API_BASE}/tickets/panels/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-      });
-      router.refresh();
+      })
+      router.refresh()
     } finally {
-      setSubmitting(false);
+      setSubmitting(false)
     }
   }
 
   async function handlePost() {
-    setPosting(true);
+    setPosting(true)
     try {
-      await fetch(`/api/v1/tickets/panels/${id}/post`, {
-        method: "POST",
-      });
-      await fetchData();
+      await fetch(`${API_BASE}/tickets/panels/${id}/post`, {
+        method: 'POST',
+      })
+      await fetchData()
     } finally {
-      setPosting(false);
+      setPosting(false)
     }
   }
 
   async function handleButtonSave(assocId: number) {
-    const edit = buttonEdits[assocId];
-    if (!edit) return;
+    const edit = buttonEdits[assocId]
+    if (!edit) return
     setButtonEdits((prev) => ({
       ...prev,
       [assocId]: { ...prev[assocId], saving: true },
-    }));
+    }))
     try {
-      await fetch(`/api/v1/tickets/panels/${id}/buttons/${assocId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+      await fetch(`${API_BASE}/tickets/panels/${id}/buttons/${assocId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           button_emoji: edit.emoji || null,
           button_label: edit.label || null,
           button_style: edit.style || null,
         }),
-      });
+      })
     } finally {
       setButtonEdits((prev) => ({
         ...prev,
         [assocId]: { ...prev[assocId], saving: false },
-      }));
+      }))
     }
   }
 
-  function updateButtonEdit(assocId: number, field: "emoji" | "label" | "style", value: string) {
+  function updateButtonEdit(assocId: number, field: 'emoji' | 'label' | 'style', value: string) {
     setButtonEdits((prev) => ({
       ...prev,
       [assocId]: { ...prev[assocId], [field]: value },
-    }));
+    }))
   }
 
   return (
@@ -211,10 +205,10 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
         <h1 className="text-2xl font-bold">Panel: {panel.title}</h1>
         <Badge
           className={
-            panel.message_id ? "bg-green-600 hover:bg-green-600" : "bg-gray-500 hover:bg-gray-500"
+            panel.message_id ? 'bg-green-600 hover:bg-green-600' : 'bg-gray-500 hover:bg-gray-500'
           }
         >
-          {panel.message_id ? "Posted" : "Not Posted"}
+          {panel.message_id ? 'Posted' : 'Not Posted'}
         </Badge>
       </div>
 
@@ -225,7 +219,7 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
         </CardHeader>
         <CardContent>
           <div className="mb-4 text-sm text-muted-foreground">
-            Server: {resolveGuildName(guilds, panel.guild_id)} | Channel:{" "}
+            Server: {resolveGuildName(guilds, panel.guild_id)} | Channel:{' '}
             {resolveChannelName(channels, panel.guild_id, panel.channel_id)}
           </div>
 
@@ -248,7 +242,7 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
               <label className="text-sm font-medium mb-1.5 block">Color (hex)</label>
               <Input
                 type="color"
-                value={color || "#000000"}
+                value={color || '#000000'}
                 onChange={(e) => setColor(e.target.value)}
               />
             </div>
@@ -302,7 +296,7 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
             </div>
 
             <Button type="submit" disabled={submitting || !title}>
-              {submitting ? "Saving..." : "Save Changes"}
+              {submitting ? 'Saving...' : 'Save Changes'}
             </Button>
           </form>
         </CardContent>
@@ -317,8 +311,8 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
           <CardContent>
             <div className="space-y-4">
               {panel.categories.map((cat) => {
-                const edit = buttonEdits[cat.assoc_id];
-                if (!edit) return null;
+                const edit = buttonEdits[cat.assoc_id]
+                if (!edit) return null
                 return (
                   <div key={cat.assoc_id} className="rounded-md border p-4 space-y-3">
                     <div className="font-medium">{cat.category_name}</div>
@@ -327,7 +321,7 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
                         <label className="text-sm font-medium mb-1 block">Emoji</label>
                         <Input
                           value={edit.emoji}
-                          onChange={(e) => updateButtonEdit(cat.assoc_id, "emoji", e.target.value)}
+                          onChange={(e) => updateButtonEdit(cat.assoc_id, 'emoji', e.target.value)}
                           placeholder="e.g. ticket emoji"
                         />
                       </div>
@@ -335,7 +329,7 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
                         <label className="text-sm font-medium mb-1 block">Label</label>
                         <Input
                           value={edit.label}
-                          onChange={(e) => updateButtonEdit(cat.assoc_id, "label", e.target.value)}
+                          onChange={(e) => updateButtonEdit(cat.assoc_id, 'label', e.target.value)}
                           placeholder="Button label"
                         />
                       </div>
@@ -343,7 +337,7 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
                         <label className="text-sm font-medium mb-1 block">Style</label>
                         <Select
                           value={edit.style}
-                          onValueChange={(v) => updateButtonEdit(cat.assoc_id, "style", v)}
+                          onValueChange={(v) => updateButtonEdit(cat.assoc_id, 'style', v)}
                         >
                           <SelectTrigger className="w-full">
                             <SelectValue />
@@ -363,10 +357,10 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
                       onClick={() => handleButtonSave(cat.assoc_id)}
                       disabled={edit.saving}
                     >
-                      {edit.saving ? "Saving..." : "Save Button"}
+                      {edit.saving ? 'Saving...' : 'Save Button'}
                     </Button>
                   </div>
-                );
+                )
               })}
             </div>
           </CardContent>
@@ -381,10 +375,10 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
         <CardContent>
           <div className="flex items-center gap-3">
             <Button onClick={handlePost} disabled={posting}>
-              {posting ? "Posting..." : panel.message_id ? "Update in Discord" : "Post to Discord"}
+              {posting ? 'Posting...' : panel.message_id ? 'Update in Discord' : 'Post to Discord'}
             </Button>
             <DeleteButton
-              endpoint={`/api/v1/tickets/panels/${id}/delete`}
+              endpoint={`${API_BASE}/tickets/panels/${id}/delete`}
               label="Delete Panel"
               confirmMessage="Are you sure you want to delete this panel? This action cannot be undone."
             />
@@ -392,5 +386,5 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

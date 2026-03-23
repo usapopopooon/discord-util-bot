@@ -1,8 +1,9 @@
-"use client";
+'use client'
 
-import { useEffect, useState, useCallback } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { useEffect, useState } from 'react'
+import { API_BASE } from '@/lib/constants'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -12,83 +13,83 @@ import {
   DialogTitle,
   DialogTrigger,
   DialogClose,
-} from "@/components/ui/dialog";
-import { toast } from "sonner";
+} from '@/components/ui/dialog'
+import { toast } from 'sonner'
 
 interface MaintenanceStats {
-  lobbies: number;
-  sessions: number;
-  orphaned_channels: number;
-  sticky_messages: number;
-  bump_configs: number;
-  automod_rules: number;
-  tickets_open: number;
-  tickets_closed: number;
-  role_panels: number;
-  join_role_configs: number;
-  join_role_assignments: number;
-  eventlog_configs: number;
+  lobbies: number
+  sessions: number
+  orphaned_channels: number
+  sticky_messages: number
+  bump_configs: number
+  automod_rules: number
+  tickets_open: number
+  tickets_closed: number
+  role_panels: number
+  join_role_configs: number
+  join_role_assignments: number
+  eventlog_configs: number
 }
 
 interface CleanupResult {
-  orphaned_channels_removed: number;
-  expired_assignments_removed: number;
-  stale_sessions_removed: number;
-  message: string;
+  orphaned_channels_removed: number
+  expired_assignments_removed: number
+  stale_sessions_removed: number
+  message: string
 }
 
 export default function MaintenancePage() {
-  const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState<MaintenanceStats | null>(null);
-  const [cleaning, setCleaning] = useState(false);
-  const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState<MaintenanceStats | null>(null)
+  const [cleaning, setCleaning] = useState(false)
+  const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
 
-  const fetchStats = useCallback(async () => {
+  async function fetchStats() {
     try {
-      const res = await fetch("/api/v1/maintenance");
+      const res = await fetch(`${API_BASE}/maintenance`)
       if (res.ok) {
-        const data: MaintenanceStats = await res.json();
-        setStats(data);
+        const data: MaintenanceStats = await res.json()
+        setStats(data)
       }
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, []);
+  }
 
   useEffect(() => {
-    fetchStats();
-  }, [fetchStats]);
+    fetchStats()
+  }, [])
 
   async function handleCleanup() {
-    setCleaning(true);
-    setCleanupResult(null);
-    setDialogOpen(false);
+    setCleaning(true)
+    setCleanupResult(null)
+    setDialogOpen(false)
     try {
-      const res = await fetch("/api/v1/maintenance/cleanup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
+      const res = await fetch(`${API_BASE}/maintenance/cleanup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
       if (res.ok) {
-        const result: CleanupResult = await res.json();
-        setCleanupResult(result);
-        toast.success("Cleanup completed successfully");
+        const result: CleanupResult = await res.json()
+        setCleanupResult(result)
+        toast.success('Cleanup completed successfully')
         // Refresh stats
-        fetchStats();
+        fetchStats()
       } else {
-        const body = await res.text();
-        let msg: string;
+        const body = await res.text()
+        let msg: string
         try {
-          msg = JSON.parse(body).detail || body;
+          msg = JSON.parse(body).detail || body
         } catch {
-          msg = body;
+          msg = body
         }
-        toast.error(`Cleanup failed: ${msg}`);
+        toast.error(`Cleanup failed: ${msg}`)
       }
     } catch {
-      toast.error("Cleanup failed");
+      toast.error('Cleanup failed')
     } finally {
-      setCleaning(false);
+      setCleaning(false)
     }
   }
 
@@ -98,25 +99,25 @@ export default function MaintenancePage() {
         <h1 className="text-2xl font-bold">Maintenance</h1>
         <p className="text-muted-foreground">Loading...</p>
       </div>
-    );
+    )
   }
 
   const statCards = stats
     ? [
-        { label: "Voice Lobbies", value: stats.lobbies },
-        { label: "Active Sessions", value: stats.sessions },
-        { label: "Orphaned Channels", value: stats.orphaned_channels },
-        { label: "Sticky Messages", value: stats.sticky_messages },
-        { label: "Bump Configs", value: stats.bump_configs },
-        { label: "AutoMod Rules", value: stats.automod_rules },
-        { label: "Open Tickets", value: stats.tickets_open },
-        { label: "Closed Tickets", value: stats.tickets_closed },
-        { label: "Role Panels", value: stats.role_panels },
-        { label: "Join Role Configs", value: stats.join_role_configs },
-        { label: "Join Role Assignments", value: stats.join_role_assignments },
-        { label: "Event Log Configs", value: stats.eventlog_configs },
+        { label: 'Voice Lobbies', value: stats.lobbies },
+        { label: 'Active Sessions', value: stats.sessions },
+        { label: 'Orphaned Channels', value: stats.orphaned_channels },
+        { label: 'Sticky Messages', value: stats.sticky_messages },
+        { label: 'Bump Configs', value: stats.bump_configs },
+        { label: 'AutoMod Rules', value: stats.automod_rules },
+        { label: 'Open Tickets', value: stats.tickets_open },
+        { label: 'Closed Tickets', value: stats.tickets_closed },
+        { label: 'Role Panels', value: stats.role_panels },
+        { label: 'Join Role Configs', value: stats.join_role_configs },
+        { label: 'Join Role Assignments', value: stats.join_role_assignments },
+        { label: 'Event Log Configs', value: stats.eventlog_configs },
       ]
-    : [];
+    : []
 
   return (
     <div className="space-y-6">
@@ -152,7 +153,7 @@ export default function MaintenancePage() {
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button variant="destructive" disabled={cleaning}>
-                {cleaning ? "Running Cleanup..." : "Run Cleanup"}
+                {cleaning ? 'Running Cleanup...' : 'Run Cleanup'}
               </Button>
             </DialogTrigger>
             <DialogContent>
@@ -183,15 +184,15 @@ export default function MaintenancePage() {
               <CardContent>
                 <ul className="space-y-1 text-sm">
                   <li>
-                    Orphaned channels removed:{" "}
+                    Orphaned channels removed:{' '}
                     <span className="font-medium">{cleanupResult.orphaned_channels_removed}</span>
                   </li>
                   <li>
-                    Expired assignments removed:{" "}
+                    Expired assignments removed:{' '}
                     <span className="font-medium">{cleanupResult.expired_assignments_removed}</span>
                   </li>
                   <li>
-                    Stale sessions removed:{" "}
+                    Stale sessions removed:{' '}
                     <span className="font-medium">{cleanupResult.stale_sessions_removed}</span>
                   </li>
                 </ul>
@@ -204,5 +205,5 @@ export default function MaintenancePage() {
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

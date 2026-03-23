@@ -1,90 +1,87 @@
-"use client";
+'use client'
 
-import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import type { GuildsMap, ChannelsMap } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { API_BASE } from '@/lib/constants'
+import type { GuildsMap, ChannelsMap } from '@/lib/types'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import Link from "next/link";
+} from '@/components/ui/select'
+import Link from 'next/link'
 
 const RULE_TYPES = [
-  { value: "username_match", label: "Username Match" },
-  { value: "account_age", label: "Account Age" },
-  { value: "no_avatar", label: "No Avatar" },
-  { value: "role_acquired", label: "Role Acquired" },
-  { value: "vc_join", label: "VC Join" },
-  { value: "message_post", label: "Message Post" },
-  { value: "vc_without_intro", label: "VC Without Intro" },
-  { value: "msg_without_intro", label: "Message Without Intro" },
-];
+  { value: 'username_match', label: 'Username Match' },
+  { value: 'account_age', label: 'Account Age' },
+  { value: 'no_avatar', label: 'No Avatar' },
+  { value: 'role_acquired', label: 'Role Acquired' },
+  { value: 'vc_join', label: 'VC Join' },
+  { value: 'message_post', label: 'Message Post' },
+  { value: 'vc_without_intro', label: 'VC Without Intro' },
+  { value: 'msg_without_intro', label: 'Message Without Intro' },
+]
 
 const ACTIONS = [
-  { value: "ban", label: "Ban" },
-  { value: "kick", label: "Kick" },
-  { value: "timeout", label: "Timeout" },
-];
+  { value: 'ban', label: 'Ban' },
+  { value: 'kick', label: 'Kick' },
+  { value: 'timeout', label: 'Timeout' },
+]
 
 export default function AutoModNewPage() {
-  const router = useRouter();
-  const [guilds, setGuilds] = useState<GuildsMap>({});
-  const [channels, setChannels] = useState<ChannelsMap>({});
-  const [submitting, setSubmitting] = useState(false);
+  const router = useRouter()
+  const [guilds, setGuilds] = useState<GuildsMap>({})
+  const [channels, setChannels] = useState<ChannelsMap>({})
+  const [submitting, setSubmitting] = useState(false)
 
   // Form state
-  const [selectedGuild, setSelectedGuild] = useState("");
-  const [ruleType, setRuleType] = useState("");
-  const [action, setAction] = useState("");
-  const [pattern, setPattern] = useState("");
-  const [useWildcard, setUseWildcard] = useState(false);
-  const [thresholdMinutes, setThresholdMinutes] = useState("");
-  const [timeoutDurationMinutes, setTimeoutDurationMinutes] = useState("");
-  const [requiredChannelId, setRequiredChannelId] = useState("");
-
-  const fetchData = useCallback(async () => {
-    const [guildsRes, channelsRes] = await Promise.all([
-      fetch("/api/v1/guilds").then((r) => r.json()),
-      fetch("/api/v1/channels").then((r) => r.json()),
-    ]);
-    setGuilds(guildsRes ?? {});
-    setChannels(channelsRes ?? {});
-  }, []);
+  const [selectedGuild, setSelectedGuild] = useState('')
+  const [ruleType, setRuleType] = useState('')
+  const [action, setAction] = useState('')
+  const [pattern, setPattern] = useState('')
+  const [useWildcard, setUseWildcard] = useState(false)
+  const [thresholdMinutes, setThresholdMinutes] = useState('')
+  const [timeoutDurationMinutes, setTimeoutDurationMinutes] = useState('')
+  const [requiredChannelId, setRequiredChannelId] = useState('')
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    async function fetchData() {
+      const res = await fetch(`${API_BASE}/automod/form-data`).then((r) => r.json())
+      setGuilds(res?.guilds ?? {})
+      setChannels(res?.channels ?? {})
+    }
+    fetchData()
+  }, [])
 
-  const filteredChannels = selectedGuild ? (channels[selectedGuild] ?? []) : [];
+  const filteredChannels = selectedGuild ? (channels[selectedGuild] ?? []) : []
 
-  const showPattern = ruleType === "username_match";
-  const showAccountAge = ruleType === "account_age";
-  const showThreshold = ["role_acquired", "vc_join", "message_post"].includes(ruleType);
-  const showRequiredChannel = ["vc_without_intro", "msg_without_intro"].includes(ruleType);
-  const showTimeoutDuration = action === "timeout";
+  const showPattern = ruleType === 'username_match'
+  const showAccountAge = ruleType === 'account_age'
+  const showThreshold = ['role_acquired', 'vc_join', 'message_post'].includes(ruleType)
+  const showRequiredChannel = ['vc_without_intro', 'msg_without_intro'].includes(ruleType)
+  const showTimeoutDuration = action === 'timeout'
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!selectedGuild || !ruleType || !action) return;
-    setSubmitting(true);
+  async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!selectedGuild || !ruleType || !action) return
+    setSubmitting(true)
     try {
-      let thresholdSeconds: number | null = null;
+      let thresholdSeconds: number | null = null
       if (showAccountAge && thresholdMinutes) {
-        thresholdSeconds = parseInt(thresholdMinutes, 10) * 60;
+        thresholdSeconds = parseInt(thresholdMinutes, 10) * 60
       } else if (showThreshold && thresholdMinutes) {
-        thresholdSeconds = parseInt(thresholdMinutes, 10);
+        thresholdSeconds = parseInt(thresholdMinutes, 10)
       }
 
-      let timeoutSeconds: number | null = null;
+      let timeoutSeconds: number | null = null
       if (showTimeoutDuration && timeoutDurationMinutes) {
-        timeoutSeconds = parseInt(timeoutDurationMinutes, 10) * 60;
+        timeoutSeconds = parseInt(timeoutDurationMinutes, 10) * 60
       }
 
       const body: Record<string, unknown> = {
@@ -96,16 +93,16 @@ export default function AutoModNewPage() {
         threshold_seconds: thresholdSeconds,
         timeout_duration_seconds: timeoutSeconds,
         required_channel_id: showRequiredChannel ? requiredChannelId || null : null,
-      };
+      }
 
-      await fetch("/api/v1/automod/rules", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      await fetch(`${API_BASE}/automod/rules`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-      });
-      router.push("/dashboard/automod");
+      })
+      router.push('/dashboard/automod')
     } finally {
-      setSubmitting(false);
+      setSubmitting(false)
     }
   }
 
@@ -131,8 +128,8 @@ export default function AutoModNewPage() {
               <Select
                 value={selectedGuild}
                 onValueChange={(v) => {
-                  setSelectedGuild(v);
-                  setRequiredChannelId("");
+                  setSelectedGuild(v)
+                  setRequiredChannelId('')
                 }}
               >
                 <SelectTrigger className="w-full">
@@ -274,11 +271,11 @@ export default function AutoModNewPage() {
             )}
 
             <Button type="submit" disabled={submitting || !selectedGuild || !ruleType || !action}>
-              {submitting ? "Creating..." : "Create Rule"}
+              {submitting ? 'Creating...' : 'Create Rule'}
             </Button>
           </form>
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

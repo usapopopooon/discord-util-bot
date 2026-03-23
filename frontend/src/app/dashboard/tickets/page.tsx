@@ -1,64 +1,61 @@
-"use client";
+'use client'
 
-import { useEffect, useState, useCallback } from "react";
-import Link from "next/link";
-import type { Ticket, GuildsMap } from "@/lib/types";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { DataTable, type Column } from "@/components/data-table";
-import { DeleteButton } from "@/components/delete-button";
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { API_BASE } from '@/lib/constants'
+import type { Ticket, GuildsMap } from '@/lib/types'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { DataTable, type Column } from '@/components/data-table'
+import { DeleteButton } from '@/components/delete-button'
 
-type StatusFilter = "all" | "open" | "closed";
+type StatusFilter = 'all' | 'open' | 'closed'
 
 function resolveGuildName(guilds: GuildsMap, guildId: string) {
-  return guilds[guildId] ?? guildId;
+  return guilds[guildId] ?? guildId
 }
 
 export default function TicketsPage() {
-  const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [guilds, setGuilds] = useState<GuildsMap>({});
-  const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-
-  const fetchData = useCallback(async () => {
-    const [ticketsRes, guildsRes] = await Promise.all([
-      fetch("/api/v1/tickets").then((r) => r.json()),
-      fetch("/api/v1/guilds").then((r) => r.json()),
-    ]);
-    setTickets(ticketsRes ?? []);
-    setGuilds(guildsRes ?? {});
-    setLoading(false);
-  }, []);
+  const [tickets, setTickets] = useState<Ticket[]>([])
+  const [guilds, setGuilds] = useState<GuildsMap>({})
+  const [loading, setLoading] = useState(true)
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    async function fetchData() {
+      const res = await fetch(`${API_BASE}/tickets`).then((r) => r.json())
+      setTickets(res?.tickets ?? [])
+      setGuilds(res?.guilds ?? {})
+      setLoading(false)
+    }
+    fetchData()
+  }, [])
 
   const filteredTickets =
-    statusFilter === "all" ? tickets : tickets.filter((t) => t.status === statusFilter);
+    statusFilter === 'all' ? tickets : tickets.filter((t) => t.status === statusFilter)
 
   const columns: Column<Ticket>[] = [
     {
-      header: "Server",
+      header: 'Server',
       accessor: (row) => resolveGuildName(guilds, row.guild_id),
     },
     {
-      header: "#Number",
+      header: '#Number',
       accessor: (row) => `#${row.ticket_number}`,
     },
     {
-      header: "User",
+      header: 'User',
       accessor: (row) => row.username,
     },
     {
-      header: "Status",
+      header: 'Status',
       accessor: (row) => (
         <Badge
           className={
-            row.status === "open"
-              ? "bg-green-600 hover:bg-green-600"
-              : "bg-gray-500 hover:bg-gray-500"
+            row.status === 'open'
+              ? 'bg-green-600 hover:bg-green-600'
+              : 'bg-gray-500 hover:bg-gray-500'
           }
         >
           {row.status}
@@ -66,15 +63,15 @@ export default function TicketsPage() {
       ),
     },
     {
-      header: "Claimed By",
-      accessor: (row) => row.claimed_by ?? "-",
+      header: 'Claimed By',
+      accessor: (row) => row.claimed_by ?? '-',
     },
     {
-      header: "Created",
+      header: 'Created',
       accessor: (row) => new Date(row.created_at).toLocaleDateString(),
     },
     {
-      header: "Actions",
+      header: 'Actions',
       accessor: (row) => (
         <div className="flex items-center gap-2">
           <Link href={`/dashboard/tickets/${row.id}`}>
@@ -82,11 +79,11 @@ export default function TicketsPage() {
               View
             </Button>
           </Link>
-          <DeleteButton endpoint={`/api/v1/tickets/${row.id}/delete`} />
+          <DeleteButton endpoint={`${API_BASE}/tickets/${row.id}/delete`} />
         </div>
       ),
     },
-  ];
+  ]
 
   if (loading) {
     return (
@@ -94,7 +91,7 @@ export default function TicketsPage() {
         <h1 className="text-2xl font-bold">Tickets</h1>
         <p className="text-muted-foreground">Loading...</p>
       </div>
-    );
+    )
   }
 
   return (
@@ -109,10 +106,10 @@ export default function TicketsPage() {
       </div>
 
       <div className="flex gap-2">
-        {(["all", "open", "closed"] as const).map((status) => (
+        {(['all', 'open', 'closed'] as const).map((status) => (
           <Button
             key={status}
-            variant={statusFilter === status ? "default" : "outline"}
+            variant={statusFilter === status ? 'default' : 'outline'}
             size="sm"
             onClick={() => setStatusFilter(status)}
           >
@@ -130,5 +127,5 @@ export default function TicketsPage() {
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }

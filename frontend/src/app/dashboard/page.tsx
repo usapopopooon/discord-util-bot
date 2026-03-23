@@ -1,67 +1,68 @@
-import { apiFetch } from "@/lib/api";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import Link from "next/link";
+import { apiFetch } from '@/lib/api'
+import { API_BASE } from '@/lib/constants'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import Link from 'next/link'
 
 interface DashboardData {
-  email: string;
+  email: string
 }
 
 const quickLinks = [
   {
-    href: "/dashboard/automod",
-    title: "AutoMod",
-    description: "Manage auto-moderation rules and settings",
+    href: '/dashboard/automod',
+    title: 'AutoMod',
+    description: 'Manage auto-moderation rules and settings',
   },
   {
-    href: "/dashboard/roles",
-    title: "Role Panels",
-    description: "Configure self-assignable role panels",
+    href: '/dashboard/roles',
+    title: 'Role Panels',
+    description: 'Configure self-assignable role panels',
   },
   {
-    href: "/dashboard/tickets",
-    title: "Tickets",
-    description: "Manage support ticket system",
+    href: '/dashboard/tickets',
+    title: 'Tickets',
+    description: 'Manage support ticket system',
   },
   {
-    href: "/dashboard/sticky",
-    title: "Sticky Messages",
-    description: "Configure persistent channel messages",
+    href: '/dashboard/sticky',
+    title: 'Sticky Messages',
+    description: 'Configure persistent channel messages',
   },
   {
-    href: "/dashboard/bump",
-    title: "Bump",
-    description: "Bump reminder configuration",
+    href: '/dashboard/bump',
+    title: 'Bump',
+    description: 'Bump reminder configuration',
   },
   {
-    href: "/dashboard/lobbies",
-    title: "Voice Lobbies",
-    description: "Manage voice channel lobbies",
+    href: '/dashboard/lobbies',
+    title: 'Voice Lobbies',
+    description: 'Manage voice channel lobbies',
   },
   {
-    href: "/dashboard/eventlog",
-    title: "Event Log",
-    description: "Configure event logging channels",
+    href: '/dashboard/eventlog',
+    title: 'Event Log',
+    description: 'Configure event logging channels',
   },
   {
-    href: "/dashboard/joinrole",
-    title: "Join Roles",
-    description: "Auto-assign roles on member join",
+    href: '/dashboard/joinrole',
+    title: 'Join Roles',
+    description: 'Auto-assign roles on member join',
   },
   {
-    href: "/dashboard/settings",
-    title: "Settings",
-    description: "Timezone, email, and password settings",
+    href: '/dashboard/settings',
+    title: 'Settings',
+    description: 'Timezone, email, and password settings',
   },
   {
-    href: "/dashboard/maintenance",
-    title: "Maintenance",
-    description: "Database cleanup and system stats",
+    href: '/dashboard/maintenance',
+    title: 'Maintenance',
+    description: 'Database cleanup and system stats',
   },
-];
+]
 
 export default async function DashboardPage() {
-  const dashboardRes = await apiFetch<DashboardData>("/api/v1/dashboard");
-  const email = dashboardRes.data?.email ?? "Admin";
+  const dashboardRes = await apiFetch<DashboardData>(`${API_BASE}/dashboard`)
+  const email = dashboardRes.data?.email ?? 'Admin'
 
   return (
     <div className="space-y-6">
@@ -95,5 +96,5 @@ export default async function DashboardPage() {
         ))}
       </div>
     </div>
-  );
+  )
 }

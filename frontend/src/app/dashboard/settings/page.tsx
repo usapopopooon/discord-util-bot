@@ -1,146 +1,146 @@
-"use client";
+'use client'
 
-import { useEffect, useState, useCallback } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { toast } from "sonner";
+import { useEffect, useState } from 'react'
+import { API_BASE } from '@/lib/constants'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { toast } from 'sonner'
 
 interface SettingsData {
-  timezone_offset: number;
-  email: string;
-  pending_email: string | null;
+  timezone_offset: number
+  email: string
+  pending_email: string | null
 }
 
 export default function SettingsPage() {
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true)
 
   // Timezone
-  const [timezoneOffset, setTimezoneOffset] = useState(9);
-  const [savingTimezone, setSavingTimezone] = useState(false);
+  const [timezoneOffset, setTimezoneOffset] = useState(9)
+  const [savingTimezone, setSavingTimezone] = useState(false)
 
   // Email
-  const [currentEmail, setCurrentEmail] = useState("");
-  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
-  const [newEmail, setNewEmail] = useState("");
-  const [savingEmail, setSavingEmail] = useState(false);
+  const [currentEmail, setCurrentEmail] = useState('')
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null)
+  const [newEmail, setNewEmail] = useState('')
+  const [savingEmail, setSavingEmail] = useState(false)
 
   // Password
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [savingPassword, setSavingPassword] = useState(false);
-
-  const fetchSettings = useCallback(async () => {
-    try {
-      const res = await fetch("/api/v1/settings");
-      if (res.ok) {
-        const data: SettingsData = await res.json();
-        setTimezoneOffset(data.timezone_offset);
-        setCurrentEmail(data.email);
-        setPendingEmail(data.pending_email ?? null);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [savingPassword, setSavingPassword] = useState(false)
 
   useEffect(() => {
-    fetchSettings();
-  }, [fetchSettings]);
+    async function fetchSettings() {
+      try {
+        const res = await fetch(`${API_BASE}/settings`)
+        if (res.ok) {
+          const data: SettingsData = await res.json()
+          setTimezoneOffset(data.timezone_offset)
+          setCurrentEmail(data.email)
+          setPendingEmail(data.pending_email ?? null)
+        }
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchSettings()
+  }, [])
 
-  async function handleSaveTimezone(e: React.FormEvent) {
-    e.preventDefault();
-    setSavingTimezone(true);
+  async function handleSaveTimezone(e: React.SyntheticEvent<HTMLFormElement>) {
+    e.preventDefault()
+    setSavingTimezone(true)
     try {
-      const res = await fetch("/api/v1/settings/timezone", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+      const res = await fetch(`${API_BASE}/settings/timezone`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ timezone_offset: timezoneOffset }),
-      });
+      })
       if (res.ok) {
-        toast.success("Timezone updated successfully");
+        toast.success('Timezone updated successfully')
       } else {
-        const body = await res.text();
-        let msg: string;
+        const body = await res.text()
+        let msg: string
         try {
-          msg = JSON.parse(body).detail || body;
+          msg = JSON.parse(body).detail || body
         } catch {
-          msg = body;
+          msg = body
         }
-        toast.error(`Failed to update timezone: ${msg}`);
+        toast.error(`Failed to update timezone: ${msg}`)
       }
     } catch {
-      toast.error("Failed to update timezone");
+      toast.error('Failed to update timezone')
     } finally {
-      setSavingTimezone(false);
+      setSavingTimezone(false)
     }
   }
 
-  async function handleSaveEmail(e: React.FormEvent) {
-    e.preventDefault();
-    if (!newEmail.trim()) return;
-    setSavingEmail(true);
+  async function handleSaveEmail(e: React.SyntheticEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!newEmail.trim()) return
+    setSavingEmail(true)
     try {
-      const res = await fetch("/api/v1/settings/email", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+      const res = await fetch(`${API_BASE}/settings/email`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: newEmail }),
-      });
+      })
       if (res.ok) {
-        toast.success("Email updated successfully");
-        setCurrentEmail(newEmail);
-        setNewEmail("");
-        setPendingEmail(null);
+        toast.success('Email updated successfully')
+        setCurrentEmail(newEmail)
+        setNewEmail('')
+        setPendingEmail(null)
       } else {
-        const body = await res.text();
-        let msg: string;
+        const body = await res.text()
+        let msg: string
         try {
-          msg = JSON.parse(body).detail || body;
+          msg = JSON.parse(body).detail || body
         } catch {
-          msg = body;
+          msg = body
         }
-        toast.error(`Failed to update email: ${msg}`);
+        toast.error(`Failed to update email: ${msg}`)
       }
     } catch {
-      toast.error("Failed to update email");
+      toast.error('Failed to update email')
     } finally {
-      setSavingEmail(false);
+      setSavingEmail(false)
     }
   }
 
-  async function handleSavePassword(e: React.FormEvent) {
-    e.preventDefault();
-    if (!newPassword) return;
+  async function handleSavePassword(e: React.SyntheticEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!newPassword) return
     if (newPassword !== confirmPassword) {
-      toast.error("Passwords do not match");
-      return;
+      toast.error('Passwords do not match')
+      return
     }
-    setSavingPassword(true);
+    setSavingPassword(true)
     try {
-      const res = await fetch("/api/v1/settings/password", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+      const res = await fetch(`${API_BASE}/settings/password`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: newPassword }),
-      });
+      })
       if (res.ok) {
-        toast.success("Password updated successfully");
-        setNewPassword("");
-        setConfirmPassword("");
+        toast.success('Password updated successfully')
+        setNewPassword('')
+        setConfirmPassword('')
       } else {
-        const body = await res.text();
-        let msg: string;
+        const body = await res.text()
+        let msg: string
         try {
-          msg = JSON.parse(body).detail || body;
+          msg = JSON.parse(body).detail || body
         } catch {
-          msg = body;
+          msg = body
         }
-        toast.error(`Failed to update password: ${msg}`);
+        toast.error(`Failed to update password: ${msg}`)
       }
     } catch {
-      toast.error("Failed to update password");
+      toast.error('Failed to update password')
     } finally {
-      setSavingPassword(false);
+      setSavingPassword(false)
     }
   }
 
@@ -150,10 +150,10 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-bold">Settings</h1>
         <p className="text-muted-foreground">Loading...</p>
       </div>
-    );
+    )
   }
 
-  const offsetLabel = timezoneOffset >= 0 ? `UTC+${timezoneOffset}` : `UTC${timezoneOffset}`;
+  const offsetLabel = timezoneOffset >= 0 ? `UTC+${timezoneOffset}` : `UTC${timezoneOffset}`
 
   return (
     <div className="space-y-6">
@@ -184,7 +184,7 @@ export default function SettingsPage() {
               />
             </div>
             <Button type="submit" disabled={savingTimezone}>
-              {savingTimezone ? "Saving..." : "Save Timezone"}
+              {savingTimezone ? 'Saving...' : 'Save Timezone'}
             </Button>
           </form>
         </CardContent>
@@ -215,7 +215,7 @@ export default function SettingsPage() {
               />
             </div>
             <Button type="submit" disabled={savingEmail || !newEmail.trim()}>
-              {savingEmail ? "Saving..." : "Update Email"}
+              {savingEmail ? 'Saving...' : 'Update Email'}
             </Button>
           </form>
         </CardContent>
@@ -251,11 +251,11 @@ export default function SettingsPage() {
               />
             </div>
             <Button type="submit" disabled={savingPassword || !newPassword}>
-              {savingPassword ? "Saving..." : "Update Password"}
+              {savingPassword ? 'Saving...' : 'Update Password'}
             </Button>
           </form>
         </CardContent>
       </Card>
     </div>
-  );
+  )
 }
