@@ -17,11 +17,5 @@ COPY alembic.ini .
 # Create data directory
 RUN mkdir -p data
 
-# Default: run migrations, then start bot + web
+# Default: run migrations, then start bot + API server
 CMD ["sh", "-c", "alembic upgrade head && (python -m src.main & uvicorn src.web.app:app --host 0.0.0.0 --port ${PORT:-8000} & wait)"]
-
-# Development image with dev dependencies
-FROM base AS dev
-
-RUN pip install --no-cache-dir -e ".[dev]"
-COPY tests/ tests/

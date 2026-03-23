@@ -33,7 +33,7 @@ services:
       - ./src:/app/src
       - ./data:/app/data
 
-  web:
+  api:
     build: .
     restart: unless-stopped
     init: true
@@ -73,10 +73,10 @@ services:
       dockerfile: Dockerfile.dev
     restart: unless-stopped
     depends_on:
-      web:
+      api:
         condition: service_healthy
     environment:
-      API_URL: http://web:8000
+      API_URL: http://api:8000
     ports:
       - "3000:3000"
     volumes:
@@ -115,7 +115,7 @@ services:
   test:
     build:
       context: .
-      target: dev
+      dockerfile: Dockerfile.dev
     init: true
     depends_on:
       test-db:
@@ -135,7 +135,7 @@ services:
   lint:
     build:
       context: .
-      target: dev
+      dockerfile: Dockerfile.dev
     command: sh -c "ruff check src tests && ruff format --check src tests && mypy src"
     volumes:
       - ./src:/app/src
@@ -146,7 +146,7 @@ services:
   format:
     build:
       context: .
-      target: dev
+      dockerfile: Dockerfile.dev
     command: sh -c "ruff check --fix src tests && ruff format src tests"
     volumes:
       - ./src:/app/src
