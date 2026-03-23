@@ -71,9 +71,7 @@ export default function TicketPanelDetailPage({ params }: { params: Promise<{ id
     // Try to get discord categories from form-data
     let discCats: ChannelsMap = {};
     try {
-      const formDataRes = await fetch("/api/v1/tickets/panels/form-data").then((r) =>
-        r.json()
-      );
+      const formDataRes = await fetch("/api/v1/tickets/panels/form-data").then((r) => r.json());
       discCats = formDataRes?.discord_categories ?? {};
     } catch {
       // ignore

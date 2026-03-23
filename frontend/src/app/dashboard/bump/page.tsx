@@ -48,9 +48,7 @@ export default async function BumpPage() {
     },
     {
       header: "Actions",
-      accessor: (row) => (
-        <DeleteButton endpoint={`/api/v1/bump/config/${row.guild_id}/delete`} />
-      ),
+      accessor: (row) => <DeleteButton endpoint={`/api/v1/bump/config/${row.guild_id}/delete`} />,
     },
   ];
 
@@ -82,10 +80,7 @@ export default async function BumpPage() {
       header: "Actions",
       accessor: (row) => (
         <div className="flex items-center gap-2">
-          <ToggleButton
-            endpoint={`/api/v1/bump/reminder/${row.id}/toggle`}
-            enabled={row.enabled}
-          />
+          <ToggleButton endpoint={`/api/v1/bump/reminder/${row.id}/toggle`} enabled={row.enabled} />
           <DeleteButton endpoint={`/api/v1/bump/reminder/${row.id}/delete`} />
         </div>
       ),

@@ -92,9 +92,7 @@ export default function AutoModBanListPage() {
     },
     {
       header: "Actions",
-      accessor: (row) => (
-        <DeleteButton endpoint={`/api/v1/automod/banlist/${row.id}/delete`} />
-      ),
+      accessor: (row) => <DeleteButton endpoint={`/api/v1/automod/banlist/${row.id}/delete`} />,
     },
   ];
 

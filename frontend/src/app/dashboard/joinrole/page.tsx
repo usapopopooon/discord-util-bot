@@ -111,10 +111,7 @@ export default function JoinRolePage() {
       header: "Actions",
       accessor: (row) => (
         <div className="flex items-center gap-2">
-          <ToggleButton
-            endpoint={`/api/v1/joinrole/${row.id}/toggle`}
-            enabled={row.enabled}
-          />
+          <ToggleButton endpoint={`/api/v1/joinrole/${row.id}/toggle`} enabled={row.enabled} />
           <DeleteButton endpoint={`/api/v1/joinrole/${row.id}/delete`} />
         </div>
       ),

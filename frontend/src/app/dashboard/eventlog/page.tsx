@@ -140,10 +140,7 @@ export default function EventLogPage() {
       header: "Actions",
       accessor: (row) => (
         <div className="flex items-center gap-2">
-          <ToggleButton
-            endpoint={`/api/v1/eventlog/${row.id}/toggle`}
-            enabled={row.enabled}
-          />
+          <ToggleButton endpoint={`/api/v1/eventlog/${row.id}/toggle`} enabled={row.enabled} />
           <DeleteButton endpoint={`/api/v1/eventlog/${row.id}/delete`} />
         </div>
       ),
