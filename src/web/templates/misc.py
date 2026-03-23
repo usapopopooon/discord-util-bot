@@ -227,6 +227,7 @@ def eventlog_page(
     event_type_labels = {
         "message_delete": "Message Delete",
         "message_edit": "Message Edit",
+        "message_purge": "Message Purge",
         "member_join": "Member Join",
         "member_leave": "Member Leave",
         "member_kick": "Member Kick",
@@ -237,7 +238,18 @@ def eventlog_page(
         "nickname_change": "Nickname Change",
         "channel_create": "Channel Create",
         "channel_delete": "Channel Delete",
+        "channel_update": "Channel Update",
+        "role_create": "Role Create",
+        "role_delete": "Role Delete",
+        "role_update": "Role Update",
         "voice_state": "Voice State",
+        "invite_create": "Invite Create",
+        "invite_delete": "Invite Delete",
+        "thread_create": "Thread Create",
+        "thread_delete": "Thread Delete",
+        "thread_update": "Thread Update",
+        "server_update": "Server Update",
+        "emoji_update": "Emoji Update",
     }
 
     # チャンネル名マップ (全ギルドのチャンネルをフラット化)

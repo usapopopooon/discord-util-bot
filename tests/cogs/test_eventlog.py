@@ -1916,3 +1916,441 @@ class TestVanityURLForbidden:
 
         result = await cog._detect_used_invite(guild)
         assert result is None
+
+
+# ===========================================================================
+# Message Purge
+# ===========================================================================
+
+
+class TestOnBulkMessageDelete:
+    """on_bulk_message_delete のテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_logs_purge(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "message_purge")] = ["100"]
+
+        msg1 = MagicMock(spec=discord.Message)
+        msg1.guild = guild
+        msg1.channel = MagicMock()
+        msg1.channel.id = 555
+        msg1.author = MagicMock()
+        msg1.author.bot = False
+        msg1.author.name = "user1"
+
+        msg2 = MagicMock(spec=discord.Message)
+        msg2.guild = guild
+        msg2.channel = msg1.channel
+        msg2.author = MagicMock()
+        msg2.author.bot = False
+        msg2.author.name = "user2"
+
+        await cog.on_bulk_message_delete([msg1, msg2])
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert "Purged" in embed.title
+
+    @pytest.mark.asyncio
+    async def test_skips_empty(self) -> None:
+        cog = _make_cog()
+        await cog.on_bulk_message_delete([])
+
+    @pytest.mark.asyncio
+    async def test_skips_no_config(self) -> None:
+        cog = _make_cog()
+        msg = MagicMock(spec=discord.Message)
+        msg.guild = MagicMock()
+        msg.guild.id = 789
+        msg.channel = MagicMock()
+        msg.author = MagicMock()
+        msg.author.bot = False
+        await cog.on_bulk_message_delete([msg])
+
+
+# ===========================================================================
+# Channel Update
+# ===========================================================================
+
+
+class TestOnGuildChannelUpdate:
+    """on_guild_channel_update のテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_logs_name_change(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "channel_update")] = ["100"]
+
+        before = MagicMock(spec=discord.TextChannel)
+        before.name = "old-name"
+        before.guild = guild
+
+        after = MagicMock(spec=discord.TextChannel)
+        after.name = "new-name"
+        after.guild = guild
+        after.id = 555
+
+        await cog.on_guild_channel_update(before, after)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert "Updated" in embed.title
+
+    @pytest.mark.asyncio
+    async def test_skips_no_changes(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "channel_update")] = ["100"]
+
+        before = MagicMock(spec=discord.TextChannel)
+        before.name = "same"
+        before.topic = "topic"
+        before.slowmode_delay = 0
+        before.nsfw = False
+        before.guild = guild
+        after = MagicMock(spec=discord.TextChannel)
+        after.name = "same"
+        after.topic = "topic"
+        after.slowmode_delay = 0
+        after.nsfw = False
+        after.guild = guild
+
+        await cog.on_guild_channel_update(before, after)
+        ch.send.assert_not_called()
+
+
+# ===========================================================================
+# Role Create / Delete / Update
+# ===========================================================================
+
+
+class TestOnGuildRoleCreate:
+    @pytest.mark.asyncio
+    async def test_logs_role_create(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "role_create")] = ["100"]
+
+        role = MagicMock(spec=discord.Role)
+        role.guild = guild
+        role.name = "NewRole"
+        role.mention = "@NewRole"
+        role.color = MagicMock()
+        role.color.value = 0xFF0000
+
+        await cog.on_guild_role_create(role)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert "Created" in embed.title
+
+
+class TestOnGuildRoleDelete:
+    @pytest.mark.asyncio
+    async def test_logs_role_delete(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "role_delete")] = ["100"]
+
+        role = MagicMock(spec=discord.Role)
+        role.guild = guild
+        role.name = "OldRole"
+        role.color = MagicMock()
+        role.color.value = 0
+        role.members = []
+
+        await cog.on_guild_role_delete(role)
+        ch.send.assert_called_once()
+
+
+class TestOnGuildRoleUpdate:
+    @pytest.mark.asyncio
+    async def test_logs_name_change(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "role_update")] = ["100"]
+
+        before = MagicMock(spec=discord.Role)
+        before.name = "OldName"
+        before.color = MagicMock()
+        before.color.value = 0
+        before.hoist = False
+        before.mentionable = False
+        before.permissions = MagicMock()
+        before.guild = guild
+
+        after = MagicMock(spec=discord.Role)
+        after.name = "NewName"
+        after.color = before.color
+        after.hoist = False
+        after.mentionable = False
+        after.permissions = before.permissions
+        after.guild = guild
+        after.mention = "@NewName"
+
+        await cog.on_guild_role_update(before, after)
+        ch.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_no_changes(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "role_update")] = ["100"]
+
+        role = MagicMock(spec=discord.Role)
+        role.name = "Same"
+        role.color = MagicMock()
+        role.color.value = 0
+        role.hoist = False
+        role.mentionable = False
+        role.permissions = MagicMock()
+        role.guild = guild
+        role.mention = "@Same"
+
+        await cog.on_guild_role_update(role, role)
+        ch.send.assert_not_called()
+
+
+# ===========================================================================
+# Invite Create / Delete (with logging)
+# ===========================================================================
+
+
+class TestInviteCreateLog:
+    @pytest.mark.asyncio
+    async def test_logs_invite_create(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "invite_create")] = ["100"]
+        cog.bot.get_guild = MagicMock(return_value=guild)
+
+        invite = MagicMock(spec=discord.Invite)
+        invite.guild = MagicMock()
+        invite.guild.id = 789
+        invite.code = "abc123"
+        invite.uses = 0
+        invite.inviter = MagicMock()
+        invite.inviter.id = 11111
+        invite.inviter.name = "inviter"
+        invite.channel = MagicMock()
+        invite.channel.id = 222
+        invite.max_age = 3600
+        invite.max_uses = 10
+
+        await cog.on_invite_create(invite)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert "Created" in embed.title
+
+
+class TestInviteDeleteLog:
+    @pytest.mark.asyncio
+    async def test_logs_invite_delete(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "invite_delete")] = ["100"]
+        cog.bot.get_guild = MagicMock(return_value=guild)
+
+        invite = MagicMock(spec=discord.Invite)
+        invite.guild = MagicMock()
+        invite.guild.id = 789
+        invite.code = "abc123"
+        invite.channel = MagicMock()
+        invite.channel.id = 222
+
+        await cog.on_invite_delete(invite)
+        ch.send.assert_called_once()
+
+
+# ===========================================================================
+# Thread Create / Delete / Update
+# ===========================================================================
+
+
+class TestOnThreadCreate:
+    @pytest.mark.asyncio
+    async def test_logs_thread_create(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "thread_create")] = ["100"]
+
+        thread = MagicMock(spec=discord.Thread)
+        thread.guild = guild
+        thread.name = "new-thread"
+        thread.parent = MagicMock()
+        thread.parent.id = 555
+        thread.owner = MagicMock()
+        thread.owner.id = 11111
+        thread.owner.name = "creator"
+
+        await cog.on_thread_create(thread)
+        ch.send.assert_called_once()
+
+
+class TestOnThreadDelete:
+    @pytest.mark.asyncio
+    async def test_logs_thread_delete(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "thread_delete")] = ["100"]
+
+        thread = MagicMock(spec=discord.Thread)
+        thread.guild = guild
+        thread.name = "old-thread"
+        thread.parent = MagicMock()
+        thread.parent.id = 555
+
+        await cog.on_thread_delete(thread)
+        ch.send.assert_called_once()
+
+
+class TestOnThreadUpdate:
+    @pytest.mark.asyncio
+    async def test_logs_name_change(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "thread_update")] = ["100"]
+
+        before = MagicMock(spec=discord.Thread)
+        before.name = "old"
+        before.archived = False
+        before.locked = False
+        before.slowmode_delay = 0
+        before.guild = guild
+
+        after = MagicMock(spec=discord.Thread)
+        after.name = "new"
+        after.archived = False
+        after.locked = False
+        after.slowmode_delay = 0
+        after.guild = guild
+        after.id = 666
+
+        await cog.on_thread_update(before, after)
+        ch.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_no_changes(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "thread_update")] = ["100"]
+
+        thread = MagicMock(spec=discord.Thread)
+        thread.name = "same"
+        thread.archived = False
+        thread.locked = False
+        thread.slowmode_delay = 0
+        thread.guild = guild
+
+        await cog.on_thread_update(thread, thread)
+        ch.send.assert_not_called()
+
+
+# ===========================================================================
+# Server Update
+# ===========================================================================
+
+
+class TestOnGuildUpdate:
+    @pytest.mark.asyncio
+    async def test_logs_name_change(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "server_update")] = ["100"]
+
+        before = MagicMock(spec=discord.Guild)
+        before.id = 789
+        before.name = "Old Server"
+        before.icon = None
+        before.banner = None
+        before.description = None
+        before.verification_level = MagicMock()
+        before.verification_level.name = "low"
+        before.default_notifications = MagicMock()
+        before.default_notifications.name = "all"
+        before.afk_channel = None
+        before.system_channel = None
+
+        after = MagicMock(spec=discord.Guild)
+        after.id = 789
+        after.name = "New Server"
+        after.icon = None
+        after.banner = None
+        after.description = None
+        after.verification_level = before.verification_level
+        after.default_notifications = before.default_notifications
+        after.afk_channel = None
+        after.system_channel = None
+        after.get_channel = guild.get_channel
+
+        await cog.on_guild_update(before, after)
+        ch.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_no_changes(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "server_update")] = ["100"]
+
+        g = MagicMock(spec=discord.Guild)
+        g.id = 789
+        g.name = "Same"
+        g.icon = None
+        g.banner = None
+        g.description = None
+        g.verification_level = MagicMock()
+        g.default_notifications = MagicMock()
+        g.afk_channel = None
+        g.system_channel = None
+        g.get_channel = guild.get_channel
+
+        await cog.on_guild_update(g, g)
+        ch.send.assert_not_called()
+
+
+# ===========================================================================
+# Emoji Update
+# ===========================================================================
+
+
+class TestOnGuildEmojisUpdate:
+    @pytest.mark.asyncio
+    async def test_logs_emoji_added(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "emoji_update")] = ["100"]
+
+        emoji = MagicMock(spec=discord.Emoji)
+        emoji.id = 1
+        emoji.name = "pepe"
+
+        await cog.on_guild_emojis_update(guild, (), (emoji,))
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert "Updated" in embed.title
+
+    @pytest.mark.asyncio
+    async def test_logs_emoji_removed(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "emoji_update")] = ["100"]
+
+        emoji = MagicMock(spec=discord.Emoji)
+        emoji.id = 1
+        emoji.name = "pepe"
+
+        await cog.on_guild_emojis_update(guild, (emoji,), ())
+        ch.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_no_changes(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "emoji_update")] = ["100"]
+
+        emoji = MagicMock(spec=discord.Emoji)
+        emoji.id = 1
+        emoji.name = "same"
+
+        await cog.on_guild_emojis_update(guild, (emoji,), (emoji,))
+        ch.send.assert_not_called()

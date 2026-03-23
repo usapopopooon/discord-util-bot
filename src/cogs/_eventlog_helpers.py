@@ -10,6 +10,7 @@ import discord
 _COLORS: dict[str, int] = {
     "message_delete": 0xE74C3C,
     "message_edit": 0xE67E22,
+    "message_purge": 0xE74C3C,
     "member_join": 0x2ECC71,
     "member_leave": 0xE74C3C,
     "member_kick": 0xE67E22,
@@ -20,7 +21,18 @@ _COLORS: dict[str, int] = {
     "nickname_change": 0x3498DB,
     "channel_create": 0x2ECC71,
     "channel_delete": 0xE74C3C,
+    "channel_update": 0xE67E22,
+    "role_create": 0x2ECC71,
+    "role_delete": 0xE74C3C,
+    "role_update": 0xE67E22,
     "voice_state": 0x3498DB,
+    "invite_create": 0x2ECC71,
+    "invite_delete": 0xE74C3C,
+    "thread_create": 0x2ECC71,
+    "thread_delete": 0xE74C3C,
+    "thread_update": 0xE67E22,
+    "server_update": 0xE67E22,
+    "emoji_update": 0xE67E22,
 }
 
 

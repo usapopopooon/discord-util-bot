@@ -1705,6 +1705,7 @@ class EventLogConfig(Base):
     VALID_EVENT_TYPES = (
         "message_delete",
         "message_edit",
+        "message_purge",
         "member_join",
         "member_leave",
         "member_kick",
@@ -1715,7 +1716,18 @@ class EventLogConfig(Base):
         "nickname_change",
         "channel_create",
         "channel_delete",
+        "channel_update",
+        "role_create",
+        "role_delete",
+        "role_update",
         "voice_state",
+        "invite_create",
+        "invite_delete",
+        "thread_create",
+        "thread_delete",
+        "thread_update",
+        "server_update",
+        "emoji_update",
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

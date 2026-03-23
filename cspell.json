@@ -107,7 +107,9 @@
     "Unban",
     "eventlog",
     "banlist",
-    "dedup"
+    "dedup",
+    "slowmode",
+    "Slowmode"
   ],
   "ignorePaths": [
     ".venv",

@@ -5,6 +5,7 @@
 対応イベント:
   - message_delete: メッセージ削除
   - message_edit: メッセージ編集
+  - message_purge: メッセージ一括削除
   - member_join: メンバー参加
   - member_leave: メンバー脱退
   - member_kick: メンバー KICK
@@ -15,7 +16,18 @@
   - nickname_change: ニックネーム変更
   - channel_create: チャンネル作成
   - channel_delete: チャンネル削除
+  - channel_update: チャンネル更新
+  - role_create: ロール作成
+  - role_delete: ロール削除
+  - role_update: ロール更新
   - voice_state: ボイスチャンネル参加/退出/移動
+  - invite_create: 招待作成
+  - invite_delete: 招待削除
+  - thread_create: スレッド作成
+  - thread_delete: スレッド削除
+  - thread_update: スレッド更新
+  - server_update: サーバー設定変更
+  - emoji_update: 絵文字追加/削除/変更
 
 仕組み:
   - 60 秒ごとに DB から有効な設定をキャッシュ
@@ -108,27 +120,6 @@ class EventLogCog(commands.Cog):
                 "Cannot fetch invites for guild %s (missing permissions)",
                 guild.id,
             )
-
-    @commands.Cog.listener()
-    async def on_invite_create(self, invite: discord.Invite) -> None:
-        """招待作成時にキャッシュを更新する。"""
-        if invite.guild:
-            guild_id = invite.guild.id
-            if guild_id not in self._invite_cache:
-                self._invite_cache[guild_id] = {}
-            self._invite_cache[guild_id][invite.code] = _InviteData(
-                code=invite.code,
-                uses=invite.uses or 0,
-                inviter_id=invite.inviter.id if invite.inviter else None,
-                inviter_name=invite.inviter.name if invite.inviter else None,
-            )
-
-    @commands.Cog.listener()
-    async def on_invite_delete(self, invite: discord.Invite) -> None:
-        """招待削除時にキャッシュを更新する。"""
-        if invite.guild:
-            guild_id = invite.guild.id
-            self._invite_cache.get(guild_id, {}).pop(invite.code, None)
 
     @tasks.loop(seconds=60)
     async def _sync_cache_task(self) -> None:
@@ -263,6 +254,32 @@ class EventLogCog(commands.Cog):
         set_user_thumbnail(embed, after.author)
 
         await self._send_log(after.guild, "message_edit", embed)
+
+    @commands.Cog.listener()
+    async def on_bulk_message_delete(self, messages: list[discord.Message]) -> None:
+        """メッセージ一括削除イベント。"""
+        if not messages:
+            return
+        guild = messages[0].guild
+        if not guild:
+            return
+        if not self._get_channels(guild, "message_purge"):
+            return
+
+        channel = messages[0].channel
+        count = len(messages)
+        authors = {m.author.name for m in messages if not m.author.bot}
+        authors_str = ", ".join(sorted(authors)[:10])
+        if len(authors) > 10:
+            authors_str += f" (+{len(authors) - 10} more)"
+
+        embed = create_event_embed("Messages Purged", "message_purge")
+        embed.add_field(name="Channel", value=f"<#{channel.id}>", inline=True)
+        embed.add_field(name="Count", value=str(count), inline=True)
+        if authors_str:
+            embed.add_field(name="Authors", value=authors_str, inline=False)
+
+        await self._send_log(guild, "message_purge", embed)
 
     # =====================================================================
     # Member Events
@@ -651,6 +668,115 @@ class EventLogCog(commands.Cog):
 
         await self._send_log(channel.guild, "channel_delete", embed)
 
+    @commands.Cog.listener()
+    async def on_guild_channel_update(
+        self,
+        before: discord.abc.GuildChannel,
+        after: discord.abc.GuildChannel,
+    ) -> None:
+        """チャンネル更新イベント。"""
+        if not self._get_channels(after.guild, "channel_update"):
+            return
+
+        changes: list[str] = []
+        if before.name != after.name:
+            changes.append(f"**Name:** {before.name} → {after.name}")
+        if hasattr(before, "topic") and hasattr(after, "topic"):
+            before_topic = getattr(before, "topic", None) or ""
+            after_topic = getattr(after, "topic", None) or ""
+            if before_topic != after_topic:
+                changes.append(
+                    f"**Topic:** {truncate_content(before_topic or '(none)', 200)}"
+                    f" → {truncate_content(after_topic or '(none)', 200)}"
+                )
+        if hasattr(before, "slowmode_delay") and hasattr(after, "slowmode_delay"):
+            b_slow = getattr(before, "slowmode_delay", 0)
+            a_slow = getattr(after, "slowmode_delay", 0)
+            if b_slow != a_slow:
+                changes.append(f"**Slowmode:** {b_slow}s → {a_slow}s")
+        if hasattr(before, "nsfw") and hasattr(after, "nsfw"):
+            b_nsfw = getattr(before, "nsfw", False)
+            a_nsfw = getattr(after, "nsfw", False)
+            if b_nsfw != a_nsfw:
+                changes.append(f"**NSFW:** {b_nsfw} → {a_nsfw}")
+
+        if not changes:
+            return
+
+        embed = create_event_embed("Channel Updated", "channel_update")
+        embed.add_field(
+            name="Channel", value=f"<#{after.id}> ({after.name})", inline=True
+        )
+        embed.add_field(name="Changes", value="\n".join(changes), inline=False)
+
+        await self._send_log(after.guild, "channel_update", embed)
+
+    # =====================================================================
+    # Role Events
+    # =====================================================================
+
+    @commands.Cog.listener()
+    async def on_guild_role_create(self, role: discord.Role) -> None:
+        """ロール作成イベント。"""
+        if not self._get_channels(role.guild, "role_create"):
+            return
+
+        embed = create_event_embed("Role Created", "role_create")
+        embed.add_field(name="Role", value=f"{role.mention} ({role.name})", inline=True)
+        if role.color.value:
+            embed.add_field(name="Color", value=f"#{role.color.value:06X}", inline=True)
+
+        await self._send_log(role.guild, "role_create", embed)
+
+    @commands.Cog.listener()
+    async def on_guild_role_delete(self, role: discord.Role) -> None:
+        """ロール削除イベント。"""
+        if not self._get_channels(role.guild, "role_delete"):
+            return
+
+        embed = create_event_embed("Role Deleted", "role_delete")
+        embed.add_field(name="Role", value=role.name, inline=True)
+        if role.color.value:
+            embed.add_field(name="Color", value=f"#{role.color.value:06X}", inline=True)
+        embed.add_field(name="Members", value=str(len(role.members)), inline=True)
+
+        await self._send_log(role.guild, "role_delete", embed)
+
+    @commands.Cog.listener()
+    async def on_guild_role_update(
+        self, before: discord.Role, after: discord.Role
+    ) -> None:
+        """ロール更新イベント。"""
+        if not self._get_channels(after.guild, "role_update"):
+            return
+
+        changes: list[str] = []
+        if before.name != after.name:
+            changes.append(f"**Name:** {before.name} → {after.name}")
+        if before.color != after.color:
+            changes.append(
+                f"**Color:** #{before.color.value:06X} → #{after.color.value:06X}"
+            )
+        if before.hoist != after.hoist:
+            changes.append(f"**Hoisted:** {before.hoist} → {after.hoist}")
+        if before.mentionable != after.mentionable:
+            changes.append(
+                f"**Mentionable:** {before.mentionable} → {after.mentionable}"
+            )
+        if before.permissions != after.permissions:
+            changes.append("**Permissions:** changed")
+
+        if not changes:
+            return
+
+        embed = create_event_embed("Role Updated", "role_update")
+        embed.add_field(
+            name="Role", value=f"{after.mention} ({after.name})", inline=True
+        )
+        embed.add_field(name="Changes", value="\n".join(changes), inline=False)
+
+        await self._send_log(after.guild, "role_update", embed)
+
     # =====================================================================
     # Voice State Events
     # =====================================================================
@@ -694,6 +820,261 @@ class EventLogCog(commands.Cog):
         set_user_thumbnail(embed, member)
 
         await self._send_log(member.guild, "voice_state", embed)
+
+    # =====================================================================
+    # Invite Events
+    # =====================================================================
+
+    @commands.Cog.listener()
+    async def on_invite_create(self, invite: discord.Invite) -> None:
+        """招待作成イベント。"""
+        if not invite.guild:
+            return
+
+        # 招待キャッシュの更新 (既存ロジック)
+        guild_id = invite.guild.id
+        if guild_id not in self._invite_cache:
+            self._invite_cache[guild_id] = {}
+        self._invite_cache[guild_id][invite.code] = _InviteData(
+            code=invite.code,
+            uses=invite.uses or 0,
+            inviter_id=invite.inviter.id if invite.inviter else None,
+            inviter_name=invite.inviter.name if invite.inviter else None,
+        )
+
+        # ログ送信
+        guild = self.bot.get_guild(guild_id)
+        if not guild or not self._get_channels(guild, "invite_create"):
+            return
+
+        embed = create_event_embed("Invite Created", "invite_create")
+        embed.add_field(name="Code", value=f"`{invite.code}`", inline=True)
+        if invite.inviter:
+            add_user_field(embed, invite.inviter, label="Created By")
+        if invite.channel:
+            embed.add_field(
+                name="Channel",
+                value=f"<#{invite.channel.id}>",
+                inline=True,
+            )
+        if invite.max_age:
+            if invite.max_age >= 3600:
+                age_str = f"{invite.max_age // 3600}h"
+            elif invite.max_age >= 60:
+                age_str = f"{invite.max_age // 60}m"
+            else:
+                age_str = f"{invite.max_age}s"
+            embed.add_field(name="Expires", value=age_str, inline=True)
+        else:
+            embed.add_field(name="Expires", value="Never", inline=True)
+        if invite.max_uses:
+            embed.add_field(name="Max Uses", value=str(invite.max_uses), inline=True)
+
+        await self._send_log(guild, "invite_create", embed)
+
+    @commands.Cog.listener()
+    async def on_invite_delete(self, invite: discord.Invite) -> None:
+        """招待削除イベント。"""
+        if not invite.guild:
+            return
+
+        # 招待キャッシュの更新 (既存ロジック)
+        guild_id = invite.guild.id
+        self._invite_cache.get(guild_id, {}).pop(invite.code, None)
+
+        # ログ送信
+        guild = self.bot.get_guild(guild_id)
+        if not guild or not self._get_channels(guild, "invite_delete"):
+            return
+
+        embed = create_event_embed("Invite Deleted", "invite_delete")
+        embed.add_field(name="Code", value=f"`{invite.code}`", inline=True)
+        if invite.channel:
+            embed.add_field(
+                name="Channel",
+                value=f"<#{invite.channel.id}>",
+                inline=True,
+            )
+
+        await self._send_log(guild, "invite_delete", embed)
+
+    # =====================================================================
+    # Thread Events
+    # =====================================================================
+
+    @commands.Cog.listener()
+    async def on_thread_create(self, thread: discord.Thread) -> None:
+        """スレッド作成イベント。"""
+        if not self._get_channels(thread.guild, "thread_create"):
+            return
+
+        embed = create_event_embed("Thread Created", "thread_create")
+        embed.add_field(name="Name", value=thread.name, inline=True)
+        if thread.parent:
+            embed.add_field(
+                name="Parent",
+                value=f"<#{thread.parent.id}>",
+                inline=True,
+            )
+        if thread.owner:
+            add_user_field(embed, thread.owner, label="Created By")
+
+        await self._send_log(thread.guild, "thread_create", embed)
+
+    @commands.Cog.listener()
+    async def on_thread_delete(self, thread: discord.Thread) -> None:
+        """スレッド削除イベント。"""
+        if not self._get_channels(thread.guild, "thread_delete"):
+            return
+
+        embed = create_event_embed("Thread Deleted", "thread_delete")
+        embed.add_field(name="Name", value=thread.name, inline=True)
+        if thread.parent:
+            embed.add_field(
+                name="Parent",
+                value=f"<#{thread.parent.id}>",
+                inline=True,
+            )
+
+        await self._send_log(thread.guild, "thread_delete", embed)
+
+    @commands.Cog.listener()
+    async def on_thread_update(
+        self, before: discord.Thread, after: discord.Thread
+    ) -> None:
+        """スレッド更新イベント。"""
+        if not self._get_channels(after.guild, "thread_update"):
+            return
+
+        changes: list[str] = []
+        if before.name != after.name:
+            changes.append(f"**Name:** {before.name} → {after.name}")
+        if before.archived != after.archived:
+            changes.append(f"**Archived:** {before.archived} → {after.archived}")
+        if before.locked != after.locked:
+            changes.append(f"**Locked:** {before.locked} → {after.locked}")
+        if before.slowmode_delay != after.slowmode_delay:
+            changes.append(
+                f"**Slowmode:** {before.slowmode_delay}s → {after.slowmode_delay}s"
+            )
+
+        if not changes:
+            return
+
+        embed = create_event_embed("Thread Updated", "thread_update")
+        embed.add_field(name="Thread", value=f"<#{after.id}>", inline=True)
+        embed.add_field(name="Changes", value="\n".join(changes), inline=False)
+
+        await self._send_log(after.guild, "thread_update", embed)
+
+    # =====================================================================
+    # Server Events
+    # =====================================================================
+
+    @commands.Cog.listener()
+    async def on_guild_update(
+        self, before: discord.Guild, after: discord.Guild
+    ) -> None:
+        """サーバー設定変更イベント。"""
+        if not self._get_channels(after, "server_update"):
+            return
+
+        changes: list[str] = []
+        if before.name != after.name:
+            changes.append(f"**Name:** {before.name} → {after.name}")
+        if before.icon != after.icon:
+            changes.append("**Icon:** changed")
+        if before.banner != after.banner:
+            changes.append("**Banner:** changed")
+        if before.description != after.description:
+            changes.append(
+                f"**Description:** "
+                f"{truncate_content(before.description or '(none)', 200)}"
+                f" → "
+                f"{truncate_content(after.description or '(none)', 200)}"
+            )
+        if before.verification_level != after.verification_level:
+            changes.append(
+                f"**Verification Level:** "
+                f"{before.verification_level.name} → "
+                f"{after.verification_level.name}"
+            )
+        if before.default_notifications != after.default_notifications:
+            changes.append(
+                f"**Notifications:** "
+                f"{before.default_notifications.name} → "
+                f"{after.default_notifications.name}"
+            )
+        if before.afk_channel != after.afk_channel:
+            b_afk = f"<#{before.afk_channel.id}>" if before.afk_channel else "(none)"
+            a_afk = f"<#{after.afk_channel.id}>" if after.afk_channel else "(none)"
+            changes.append(f"**AFK Channel:** {b_afk} → {a_afk}")
+        if before.system_channel != after.system_channel:
+            b_sys = (
+                f"<#{before.system_channel.id}>" if before.system_channel else "(none)"
+            )
+            a_sys = (
+                f"<#{after.system_channel.id}>" if after.system_channel else "(none)"
+            )
+            changes.append(f"**System Channel:** {b_sys} → {a_sys}")
+
+        if not changes:
+            return
+
+        embed = create_event_embed("Server Updated", "server_update")
+        embed.add_field(name="Changes", value="\n".join(changes), inline=False)
+
+        await self._send_log(after, "server_update", embed)
+
+    # =====================================================================
+    # Emoji Events
+    # =====================================================================
+
+    @commands.Cog.listener()
+    async def on_guild_emojis_update(
+        self,
+        guild: discord.Guild,
+        before: tuple[discord.Emoji, ...],
+        after: tuple[discord.Emoji, ...],
+    ) -> None:
+        """絵文字更新イベント。"""
+        if not self._get_channels(guild, "emoji_update"):
+            return
+
+        before_set = {e.id: e for e in before}
+        after_set = {e.id: e for e in after}
+
+        changes: list[str] = []
+
+        # Added
+        for eid, emoji in after_set.items():
+            if eid not in before_set:
+                changes.append(f"+ {emoji} (`:{emoji.name}:`)")
+
+        # Removed
+        for eid, emoji in before_set.items():
+            if eid not in after_set:
+                changes.append(f"× `:{emoji.name}:`")
+
+        # Renamed
+        for eid in before_set:
+            if eid in after_set and before_set[eid].name != after_set[eid].name:
+                changes.append(
+                    f"**Renamed:** `:{before_set[eid].name}:` → "
+                    f"`:{after_set[eid].name}:`"
+                )
+
+        if not changes:
+            return
+
+        embed = create_event_embed("Emojis Updated", "emoji_update")
+        embed.add_field(
+            name="Changes",
+            value=truncate_content("\n".join(changes)),
+            inline=False,
+        )
+
+        await self._send_log(guild, "emoji_update", embed)
 
 
 async def setup(bot: commands.Bot) -> None:
