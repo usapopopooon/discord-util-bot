@@ -213,9 +213,9 @@ app.add_middleware(
 # =============================================================================
 
 from src.web.routes.api_auth import router as api_auth_router  # noqa: E402
-from src.web.routes.api_common import router as api_common_router  # noqa: E402
 from src.web.routes.api_automod import router as api_automod_router  # noqa: E402
 from src.web.routes.api_bump import router as api_bump_router  # noqa: E402
+from src.web.routes.api_common import router as api_common_router  # noqa: E402
 from src.web.routes.api_eventlog import router as api_eventlog_router  # noqa: E402
 from src.web.routes.api_joinrole import router as api_joinrole_router  # noqa: E402
 from src.web.routes.api_lobbies import router as api_lobbies_router  # noqa: E402
