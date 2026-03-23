@@ -3,7 +3,7 @@
   "private": true,
   "description": "Discord utility bot - Node.js tooling",
   "volta": {
-    "node": "22.13.1",
+    "node": "24.13.0",
     "npm": "10.9.2"
   },
   "scripts": {
