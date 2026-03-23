@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "tsc": "tsc --noEmit -p tsconfig.check.json",
+    "tsc": "mkdir -p .next/types && echo 'export {}' > .next/types/routes.d.ts && tsc --noEmit",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "format": "prettier --write 'src/**/*.{ts,tsx,json}'",
@@ -46,7 +46,6 @@
     "prettier": "^3.8.1",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vite-tsconfig-paths": "^6.1.1",
     "vitest": "^4.1.1"
   }
 }
