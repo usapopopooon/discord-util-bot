@@ -77,36 +77,7 @@ _bot: EphemeralVCBot | None = None
 
 
 def _handle_shutdown_signal(signum: int, _frame: FrameType | None) -> None:
-    """シャットダウンシグナルハンドラ (SIGTERM/SIGINT)。
-
-    Heroku などのクラウド環境はシャットダウン時に SIGTERM を送信する。
-    Linux で Ctrl+C を押すと SIGINT が送信される。
-    このハンドラで Bot を graceful に停止する。
-
-    Args:
-        signum (int): シグナル番号 (SIGTERM=15, SIGINT=2)。
-        _frame (FrameType | None): 現在のスタックフレーム。未使用。
-
-    Returns:
-        None
-
-    Notes:
-        - シグナルハンドラは同期関数でなければならない
-        - asyncio.create_task() で非同期のシャットダウン処理を起動
-        - _bot が None の場合は何もしない
-        - イベントループが存在しない場合は RuntimeError をキャッチ
-
-    Examples:
-        シグナルハンドラの登録::
-
-            import signal
-            signal.signal(signal.SIGTERM, _handle_shutdown_signal)
-            signal.signal(signal.SIGINT, _handle_shutdown_signal)
-
-    See Also:
-        - :func:`_shutdown_bot`: 実際のシャットダウン処理
-        - Heroku の SIGTERM: https://devcenter.heroku.com/articles/dynos#shutdown
-    """
+    """シャットダウンシグナルハンドラ (SIGTERM/SIGINT)。"""
     # シグナル名を取得 (Linux 互換性のため signal.Signals を使用)
     try:
         sig_name = signal.Signals(signum).name
@@ -126,28 +97,7 @@ def _handle_shutdown_signal(signum: int, _frame: FrameType | None) -> None:
 
 
 async def _shutdown_bot() -> None:
-    """Bot を graceful に停止する。
-
-    Bot の close() メソッドを呼び出し、Discord との接続を
-    安全に切断する。Heroku の SIGTERM 受信時に呼び出される。
-
-    Returns:
-        None
-
-    Notes:
-        - _bot が None の場合は何もしない
-        - close() は非同期処理のため、await が必要
-        - シグナルハンドラから asyncio.create_task() で呼び出される
-
-    Examples:
-        直接呼び出し (通常は不要)::
-
-            await _shutdown_bot()
-
-    See Also:
-        - :func:`_handle_sigterm`: シグナルハンドラ
-        - :meth:`discord.Client.close`: Bot のクローズ処理
-    """
+    """Bot を graceful に停止する。"""
     global _bot
     if _bot is not None:
         logger.info("Closing bot connection...")
@@ -156,45 +106,7 @@ async def _shutdown_bot() -> None:
 
 
 async def main() -> None:
-    """Bot のメインエントリーポイント。
-
-    データベース接続を確認し、シグナルハンドラを設定して
-    Bot を起動する。
-
-    Returns:
-        None
-
-    Raises:
-        SystemExit: データベース接続に失敗した場合 (exit code: 1)。
-        discord.LoginFailure: Discord トークンが無効な場合。
-        discord.PrivilegedIntentsRequired: 特権 Intent が無効な場合。
-
-    Notes:
-        実行される処理:
-
-        1. データベース接続をリトライ付きで確認
-        2. シグナルハンドラを登録:
-           - SIGTERM/SIGINT: graceful shutdown 用
-           - SIGHUP: ターミナル切断時も動作継続 (無視)
-           - SIGPIPE: ソケット切断時のクラッシュ防止 (無視)
-        3. Bot を起動し、Discord に接続
-
-    Examples:
-        asyncio.run での実行::
-
-            import asyncio
-            from src.main import main
-
-            asyncio.run(main())
-
-        または直接実行::
-
-            python -m src.main
-
-    See Also:
-        - :class:`src.bot.EphemeralVCBot`: Bot 本体
-        - :func:`src.database.engine.check_database_connection_with_retry`: DB 確認
-    """
+    """Bot のメインエントリーポイント。DB 確認 → シグナルハンドラ → Bot 起動。"""
     global _bot
 
     # データベース接続チェック (リトライ付き)

@@ -18,9 +18,9 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+import src.web.security as security_module
 from src.constants import DEFAULT_TEST_DATABASE_URL
 from src.database.models import AdminUser, Base
-from src.web import app as web_app_module
 from src.web.app import app, generate_csrf_token, get_db, hash_password
 
 if TYPE_CHECKING:
@@ -58,10 +58,10 @@ _TRUNCATE_SQL = text(
 @pytest.fixture(autouse=True)
 def clear_rate_limit() -> None:
     """各テスト前にレート制限とフォームクールタイムをクリアする。"""
-    web_app_module.LOGIN_ATTEMPTS.clear()
-    web_app_module.FORM_SUBMIT_TIMES.clear()
-    web_app_module._last_cleanup_time = 0.0
-    web_app_module._form_cooldown_last_cleanup_time = 0.0
+    security_module.LOGIN_ATTEMPTS.clear()
+    security_module.FORM_SUBMIT_TIMES.clear()
+    security_module._last_cleanup_time = 0.0
+    security_module._form_cooldown_last_cleanup_time = 0.0
 
 
 @pytest.fixture

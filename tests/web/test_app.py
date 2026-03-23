@@ -11,7 +11,12 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.constants import BCRYPT_MAX_PASSWORD_BYTES, LOGIN_MAX_ATTEMPTS
+import src.web.security as security_module
+from src.constants import (
+    BCRYPT_MAX_PASSWORD_BYTES,
+    LOGIN_MAX_ATTEMPTS,
+    LOGIN_WINDOW_SECONDS,
+)
 from src.database.models import (
     AdminUser,
     AutoModBanList,
@@ -39,14 +44,16 @@ from src.database.models import (
 )
 from src.utils import is_valid_emoji
 from src.web.app import (
-    _cleanup_form_cooldown_entries,
-    _cleanup_old_rate_limit_entries,
     hash_password,
     is_form_cooldown_active,
     is_rate_limited,
     record_failed_attempt,
     record_form_submit,
     verify_password,
+)
+from src.web.security import (
+    _cleanup_form_cooldown_entries,
+    _cleanup_old_rate_limit_entries,
 )
 
 from .conftest import TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD
@@ -216,11 +223,8 @@ class TestLoginRoutes:
         self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """デフォルトの AdminUser 認証情報でログインできる。"""
-        import src.web.app as web_app_module
-
-        # 既知のテスト認証情報を使用
-        monkeypatch.setattr(web_app_module, "INIT_ADMIN_EMAIL", "default@example.com")
-        monkeypatch.setattr(web_app_module, "INIT_ADMIN_PASSWORD", "defaultpassword")
+        monkeypatch.setattr(security_module, "INIT_ADMIN_EMAIL", "default@example.com")
+        monkeypatch.setattr(security_module, "INIT_ADMIN_PASSWORD", "defaultpassword")
 
         response = await client.post(
             "/login",
@@ -238,10 +242,8 @@ class TestLoginRoutes:
         self, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """INIT_ADMIN_PASSWORD が設定されていれば AdminUser が自動作成される。"""
-        import src.web.app as web_app_module
-
-        monkeypatch.setattr(web_app_module, "INIT_ADMIN_EMAIL", "env@example.com")
-        monkeypatch.setattr(web_app_module, "INIT_ADMIN_PASSWORD", "envpassword123")
+        monkeypatch.setattr(security_module, "INIT_ADMIN_EMAIL", "env@example.com")
+        monkeypatch.setattr(security_module, "INIT_ADMIN_PASSWORD", "envpassword123")
 
         # 正しい認証情報でログイン
         response = await client.post(
@@ -2746,10 +2748,9 @@ class TestWebStateIsolation:
 
     def test_cleanup_times_are_reset(self) -> None:
         """各テスト開始時にクリーンアップ時刻がリセットされていることを検証."""
-        import src.web.app as web_app_module
 
-        assert web_app_module._last_cleanup_time == 0.0
-        assert web_app_module._form_cooldown_last_cleanup_time == 0.0
+        assert security_module._last_cleanup_time == 0.0
+        assert security_module._form_cooldown_last_cleanup_time == 0.0
 
 
 class TestRateLimitCleanup:
@@ -2759,7 +2760,6 @@ class TestRateLimitCleanup:
         """古いエントリがクリーンアップされる。"""
         import time
 
-        import src.web.app as web_app_module
         from src.web.app import (
             LOGIN_ATTEMPTS,
         )
@@ -2770,7 +2770,7 @@ class TestRateLimitCleanup:
         LOGIN_ATTEMPTS[test_ip] = [old_time]
 
         # 強制的にクリーンアップを実行
-        web_app_module._last_cleanup_time = 0
+        security_module._last_cleanup_time = 0
         _cleanup_old_rate_limit_entries()
 
         # 古いIPが削除されている
@@ -2780,7 +2780,6 @@ class TestRateLimitCleanup:
         """有効なエントリは保持される。"""
         import time
 
-        import src.web.app as web_app_module
         from src.web.app import (
             LOGIN_ATTEMPTS,
         )
@@ -2790,7 +2789,7 @@ class TestRateLimitCleanup:
         LOGIN_ATTEMPTS[test_ip] = [time.time()]
 
         # 強制的にクリーンアップを実行
-        web_app_module._last_cleanup_time = 0
+        security_module._last_cleanup_time = 0
         _cleanup_old_rate_limit_entries()
 
         # 新しいIPは保持される
@@ -2806,30 +2805,28 @@ class TestRateLimitCleanup:
         """
         import time
 
-        import src.web.app as web_app_module
         from src.web.app import LOGIN_ATTEMPTS
 
         test_ip = "10.0.0.99"
         LOGIN_ATTEMPTS[test_ip] = [time.time() - 400]
 
-        web_app_module._last_cleanup_time = 0
+        security_module._last_cleanup_time = 0
         _cleanup_old_rate_limit_entries()
 
         assert test_ip not in LOGIN_ATTEMPTS
-        assert web_app_module._last_cleanup_time > 0
+        assert security_module._last_cleanup_time > 0
 
     def test_cleanup_interval_respected(self) -> None:
         """クリーンアップ間隔が未経過ならスキップされる."""
         import time
 
-        import src.web.app as web_app_module
         from src.web.app import LOGIN_ATTEMPTS
 
         test_ip = "10.0.0.88"
         LOGIN_ATTEMPTS[test_ip] = [time.time() - 400]
 
         # 最終クリーンアップを最近に設定 (間隔未経過)
-        web_app_module._last_cleanup_time = time.time() - 1
+        security_module._last_cleanup_time = time.time() - 1
         _cleanup_old_rate_limit_entries()
 
         # 間隔未経過なのでエントリはまだ残る
@@ -2840,7 +2837,6 @@ class TestRateLimitCleanup:
         """期限切れエントリは削除、アクティブは保持."""
         import time
 
-        import src.web.app as web_app_module
         from src.web.app import LOGIN_ATTEMPTS
 
         expired_ip = "10.0.0.77"
@@ -2848,7 +2844,7 @@ class TestRateLimitCleanup:
         LOGIN_ATTEMPTS[expired_ip] = [time.time() - 400]
         LOGIN_ATTEMPTS[active_ip] = [time.time()]
 
-        web_app_module._last_cleanup_time = 0
+        security_module._last_cleanup_time = 0
         _cleanup_old_rate_limit_entries()
 
         assert expired_ip not in LOGIN_ATTEMPTS
@@ -4721,127 +4717,6 @@ class TestGetDiscordCategories:
         assert categories_map["222"] == [("2", "Cat B")]
 
 
-class TestGetKnownGuildsAndChannels:
-    """_get_known_guilds_and_channels のテスト。"""
-
-    async def test_collects_lobby_channels(self, db_session: AsyncSession) -> None:
-        """Lobby からチャンネルIDを収集する。"""
-        from src.web.app import _get_known_guilds_and_channels
-
-        db_session.add(
-            Lobby(guild_id="123", lobby_channel_id="456", default_user_limit=10)
-        )
-        db_session.add(
-            Lobby(guild_id="123", lobby_channel_id="789", default_user_limit=5)
-        )
-        await db_session.commit()
-
-        result = await _get_known_guilds_and_channels(db_session)
-
-        assert "123" in result
-        assert "456" in result["123"]
-        assert "789" in result["123"]
-
-    async def test_collects_bump_config_channels(
-        self, db_session: AsyncSession
-    ) -> None:
-        """BumpConfig からチャンネルIDを収集する。"""
-        from src.web.app import _get_known_guilds_and_channels
-
-        db_session.add(BumpConfig(guild_id="111", channel_id="222"))
-        await db_session.commit()
-
-        result = await _get_known_guilds_and_channels(db_session)
-
-        assert "111" in result
-        assert "222" in result["111"]
-
-    async def test_collects_sticky_channels(self, db_session: AsyncSession) -> None:
-        """StickyMessage からチャンネルIDを収集する。"""
-        from src.web.app import _get_known_guilds_and_channels
-
-        db_session.add(
-            StickyMessage(
-                guild_id="333",
-                channel_id="444",
-                message_type="text",
-                title="",
-                description="Test sticky",
-            )
-        )
-        await db_session.commit()
-
-        result = await _get_known_guilds_and_channels(db_session)
-
-        assert "333" in result
-        assert "444" in result["333"]
-
-    async def test_collects_role_panel_channels(self, db_session: AsyncSession) -> None:
-        """RolePanel からチャンネルIDを収集する。"""
-        from src.web.app import _get_known_guilds_and_channels
-
-        db_session.add(
-            RolePanel(
-                guild_id="555",
-                channel_id="666",
-                message_id="777",
-                panel_type="button",
-                title="Test Panel",
-            )
-        )
-        await db_session.commit()
-
-        result = await _get_known_guilds_and_channels(db_session)
-
-        assert "555" in result
-        assert "666" in result["555"]
-
-    async def test_returns_empty_when_no_data(self, db_session: AsyncSession) -> None:
-        """データがない場合は空の辞書を返す。"""
-        from src.web.app import _get_known_guilds_and_channels
-
-        result = await _get_known_guilds_and_channels(db_session)
-
-        assert result == {}
-
-    async def test_collects_from_multiple_sources(
-        self, db_session: AsyncSession
-    ) -> None:
-        """複数のソースからチャンネルIDを収集する。"""
-        from src.web.app import _get_known_guilds_and_channels
-
-        # 同じギルドに複数のソースからチャンネルを追加
-        db_session.add(
-            Lobby(guild_id="100", lobby_channel_id="1", default_user_limit=10)
-        )
-        db_session.add(BumpConfig(guild_id="100", channel_id="2"))
-        db_session.add(
-            StickyMessage(
-                guild_id="100",
-                channel_id="3",
-                message_type="text",
-                title="",
-                description="Test",
-            )
-        )
-        db_session.add(
-            RolePanel(
-                guild_id="100",
-                channel_id="4",
-                message_id="999",
-                panel_type="button",
-                title="Test",
-            )
-        )
-        await db_session.commit()
-
-        result = await _get_known_guilds_and_channels(db_session)
-
-        assert "100" in result
-        assert len(result["100"]) == 4
-        assert set(result["100"]) == {"1", "2", "3", "4"}
-
-
 class TestRolePanelCreatePageWithGuildChannelNames:
     """ギルド・チャンネル名を含むパネル作成ページのテスト。"""
 
@@ -6392,11 +6267,8 @@ class TestFormCooldown:
         """クールタイムエントリのクリーンアップ。"""
         import time
 
-        import src.web.app as web_app_module
-        from src.web.app import (
-            FORM_SUBMIT_TIMES,
-            _cleanup_form_cooldown_entries,
-        )
+        from src.web.app import FORM_SUBMIT_TIMES
+        from src.web.security import _cleanup_form_cooldown_entries
 
         # 古いタイムスタンプを設定（クールタイムの5倍以上前）
         old_time = time.time() - 10  # 10秒前
@@ -6404,7 +6276,7 @@ class TestFormCooldown:
         FORM_SUBMIT_TIMES[test_key] = old_time
 
         # 強制的にクリーンアップを実行
-        web_app_module._form_cooldown_last_cleanup_time = 0
+        security_module._form_cooldown_last_cleanup_time = 0
         _cleanup_form_cooldown_entries()
 
         # 古いエントリが削除されている
@@ -6417,36 +6289,30 @@ class TestFormCooldown:
         """
         import time
 
-        import src.web.app as web_app_module
-        from src.web.app import (
-            FORM_SUBMIT_TIMES,
-            _cleanup_form_cooldown_entries,
-        )
+        from src.web.app import FORM_SUBMIT_TIMES
+        from src.web.security import _cleanup_form_cooldown_entries
 
         test_key = "guard_test@example.com:/test/guard"
         FORM_SUBMIT_TIMES[test_key] = time.time() - 100
 
-        web_app_module._form_cooldown_last_cleanup_time = 0
+        security_module._form_cooldown_last_cleanup_time = 0
         _cleanup_form_cooldown_entries()
 
         assert test_key not in FORM_SUBMIT_TIMES
-        assert web_app_module._form_cooldown_last_cleanup_time > 0
+        assert security_module._form_cooldown_last_cleanup_time > 0
 
     def test_cooldown_cleanup_interval_respected(self) -> None:
         """クリーンアップ間隔が未経過ならスキップされる."""
         import time
 
-        import src.web.app as web_app_module
-        from src.web.app import (
-            FORM_SUBMIT_TIMES,
-            _cleanup_form_cooldown_entries,
-        )
+        from src.web.app import FORM_SUBMIT_TIMES
+        from src.web.security import _cleanup_form_cooldown_entries
 
         test_key = "interval_test@example.com:/test/interval"
         FORM_SUBMIT_TIMES[test_key] = time.time() - 100
 
         # 最終クリーンアップを最近に設定 (間隔未経過)
-        web_app_module._form_cooldown_last_cleanup_time = time.time() - 1
+        security_module._form_cooldown_last_cleanup_time = time.time() - 1
         _cleanup_form_cooldown_entries()
 
         # 間隔未経過なのでエントリはまだ残る
@@ -6457,18 +6323,15 @@ class TestFormCooldown:
         """期限切れエントリは削除、アクティブは保持."""
         import time
 
-        import src.web.app as web_app_module
-        from src.web.app import (
-            FORM_SUBMIT_TIMES,
-            _cleanup_form_cooldown_entries,
-        )
+        from src.web.app import FORM_SUBMIT_TIMES
+        from src.web.security import _cleanup_form_cooldown_entries
 
         expired_key = "expired@example.com:/test/expired"
         active_key = "active@example.com:/test/active"
         FORM_SUBMIT_TIMES[expired_key] = time.time() - 100
         FORM_SUBMIT_TIMES[active_key] = time.time()
 
-        web_app_module._form_cooldown_last_cleanup_time = 0
+        security_module._form_cooldown_last_cleanup_time = 0
         _cleanup_form_cooldown_entries()
 
         assert expired_key not in FORM_SUBMIT_TIMES
@@ -7739,7 +7602,7 @@ class TestRateLimitingFunctions:
         app_module.LOGIN_ATTEMPTS[ip] = [old_time]
 
         # クリーンアップ間隔を超えた状態にする
-        app_module._last_cleanup_time = time.time() - 4000
+        security_module._last_cleanup_time = time.time() - 4000
 
         # is_rate_limited 呼び出しでクリーンアップがトリガーされる
         is_rate_limited(ip)
@@ -7800,7 +7663,7 @@ class TestFormCooldownFunctions:
         app_module.FORM_SUBMIT_TIMES[key] = old_time
 
         # クリーンアップ間隔を超えた状態にする
-        app_module._form_cooldown_last_cleanup_time = time.time() - 4000
+        security_module._form_cooldown_last_cleanup_time = time.time() - 4000
 
         # クリーンアップを実行
         _cleanup_form_cooldown_entries()
@@ -7814,14 +7677,13 @@ class TestRateLimitCleanupEmptyCache:
 
     def test_cleanup_on_empty_cache_does_not_crash(self) -> None:
         """LOGIN_ATTEMPTS が空でもクリーンアップがクラッシュしない."""
-        import src.web.app as web_app_module
         from src.web.app import LOGIN_ATTEMPTS
 
         assert len(LOGIN_ATTEMPTS) == 0
-        web_app_module._last_cleanup_time = 0
+        security_module._last_cleanup_time = 0
         _cleanup_old_rate_limit_entries()
         assert len(LOGIN_ATTEMPTS) == 0
-        assert web_app_module._last_cleanup_time > 0
+        assert security_module._last_cleanup_time > 0
 
     def test_is_rate_limited_on_empty_returns_false(self) -> None:
         """空状態で is_rate_limited が False を返す."""
@@ -7839,7 +7701,6 @@ class TestRateLimitCleanupAllExpired:
         """全エントリが期限切れなら全て削除されキャッシュが空になる."""
         import time
 
-        import src.web.app as web_app_module
         from src.web.app import LOGIN_ATTEMPTS
 
         old_time = time.time() - 400
@@ -7847,7 +7708,7 @@ class TestRateLimitCleanupAllExpired:
         LOGIN_ATTEMPTS["10.0.0.2"] = [old_time - 100]
         LOGIN_ATTEMPTS["10.0.0.3"] = [old_time - 200]
 
-        web_app_module._last_cleanup_time = 0
+        security_module._last_cleanup_time = 0
         _cleanup_old_rate_limit_entries()
 
         assert len(LOGIN_ATTEMPTS) == 0
@@ -7860,25 +7721,23 @@ class TestRateLimitCleanupTriggerViaPublicAPI:
         """is_rate_limited がクリーンアップをトリガーする."""
         import time
 
-        import src.web.app as web_app_module
         from src.web.app import LOGIN_ATTEMPTS
 
         old_ip = "10.0.0.50"
         LOGIN_ATTEMPTS[old_ip] = [time.time() - 400]
 
-        web_app_module._last_cleanup_time = 0
+        security_module._last_cleanup_time = 0
         is_rate_limited("10.0.0.51")
 
         assert old_ip not in LOGIN_ATTEMPTS
 
     def test_cleanup_updates_last_cleanup_time(self) -> None:
         """クリーンアップ実行後に _last_cleanup_time が更新される."""
-        import src.web.app as web_app_module
 
-        web_app_module._last_cleanup_time = 0
+        security_module._last_cleanup_time = 0
         is_rate_limited("10.0.0.52")
 
-        assert web_app_module._last_cleanup_time > 0
+        assert security_module._last_cleanup_time > 0
 
 
 class TestFormCooldownCleanupEmptyCache:
@@ -7886,14 +7745,13 @@ class TestFormCooldownCleanupEmptyCache:
 
     def test_cleanup_on_empty_cache_does_not_crash(self) -> None:
         """FORM_SUBMIT_TIMES が空でもクリーンアップがクラッシュしない."""
-        import src.web.app as app_module
         from src.web.app import FORM_SUBMIT_TIMES
 
         assert len(FORM_SUBMIT_TIMES) == 0
-        app_module._form_cooldown_last_cleanup_time = 0
+        security_module._form_cooldown_last_cleanup_time = 0
         _cleanup_form_cooldown_entries()
         assert len(FORM_SUBMIT_TIMES) == 0
-        assert app_module._form_cooldown_last_cleanup_time > 0
+        assert security_module._form_cooldown_last_cleanup_time > 0
 
     def test_is_form_cooldown_on_empty_returns_false(self) -> None:
         """空状態で is_form_cooldown_active が False を返す."""
@@ -7911,7 +7769,6 @@ class TestFormCooldownCleanupAllExpired:
         """全エントリが期限切れなら全て削除されキャッシュが空になる."""
         import time
 
-        import src.web.app as app_module
         from src.web.app import FORM_SUBMIT_TIMES
 
         old_time = time.time() - 100
@@ -7919,7 +7776,7 @@ class TestFormCooldownCleanupAllExpired:
         FORM_SUBMIT_TIMES["user2@example.com:/path2"] = old_time - 100
         FORM_SUBMIT_TIMES["user3@example.com:/path3"] = old_time - 200
 
-        app_module._form_cooldown_last_cleanup_time = 0
+        security_module._form_cooldown_last_cleanup_time = 0
         _cleanup_form_cooldown_entries()
 
         assert len(FORM_SUBMIT_TIMES) == 0
@@ -7932,53 +7789,49 @@ class TestFormCooldownCleanupTriggerViaPublicAPI:
         """is_form_cooldown_active がクリーンアップをトリガーする."""
         import time
 
-        import src.web.app as app_module
         from src.web.app import FORM_SUBMIT_TIMES
 
         old_key = "old@example.com:/old"
         FORM_SUBMIT_TIMES[old_key] = time.time() - 100
 
-        app_module._form_cooldown_last_cleanup_time = 0
+        security_module._form_cooldown_last_cleanup_time = 0
         is_form_cooldown_active("new@example.com", "/new")
 
         assert old_key not in FORM_SUBMIT_TIMES
 
     def test_cleanup_updates_last_cleanup_time(self) -> None:
         """クリーンアップ実行後に _form_cooldown_last_cleanup_time が更新される."""
-        import src.web.app as app_module
 
-        app_module._form_cooldown_last_cleanup_time = 0
+        security_module._form_cooldown_last_cleanup_time = 0
         is_form_cooldown_active("new@example.com", "/new")
 
-        assert app_module._form_cooldown_last_cleanup_time > 0
+        assert security_module._form_cooldown_last_cleanup_time > 0
 
     def test_form_cooldown_guard_allows_zero(self) -> None:
         """_form_cooldown_last_cleanup_time=0 でもクリーンアップが実行される."""
         import time
 
-        import src.web.app as app_module
         from src.web.app import FORM_SUBMIT_TIMES
 
         old_key = "guard@example.com:/guard"
         FORM_SUBMIT_TIMES[old_key] = time.time() - 100
 
-        app_module._form_cooldown_last_cleanup_time = 0
+        security_module._form_cooldown_last_cleanup_time = 0
         _cleanup_form_cooldown_entries()
 
         assert old_key not in FORM_SUBMIT_TIMES
-        assert app_module._form_cooldown_last_cleanup_time > 0
+        assert security_module._form_cooldown_last_cleanup_time > 0
 
     def test_form_cooldown_interval_respected(self) -> None:
         """フォームクールダウンクリーンアップ間隔が未経過ならスキップされる."""
         import time
 
-        import src.web.app as app_module
         from src.web.app import FORM_SUBMIT_TIMES
 
         old_key = "interval@example.com:/interval"
         FORM_SUBMIT_TIMES[old_key] = time.time() - 100
 
-        app_module._form_cooldown_last_cleanup_time = time.time() - 1
+        security_module._form_cooldown_last_cleanup_time = time.time() - 1
         _cleanup_form_cooldown_entries()
 
         # 間隔未経過なのでエントリはまだ残る
@@ -7989,7 +7842,6 @@ class TestFormCooldownCleanupTriggerViaPublicAPI:
         """期限切れエントリは削除、アクティブは保持."""
         import time
 
-        import src.web.app as app_module
         from src.web.app import FORM_SUBMIT_TIMES
 
         expired_key = "expired@example.com:/expired"
@@ -7997,7 +7849,7 @@ class TestFormCooldownCleanupTriggerViaPublicAPI:
         FORM_SUBMIT_TIMES[expired_key] = time.time() - 100
         FORM_SUBMIT_TIMES[active_key] = time.time()
 
-        app_module._form_cooldown_last_cleanup_time = 0
+        security_module._form_cooldown_last_cleanup_time = 0
         _cleanup_form_cooldown_entries()
 
         assert expired_key not in FORM_SUBMIT_TIMES
@@ -8755,76 +8607,6 @@ class TestRolePanelItemDuplicateEmoji:
 # ===========================================================================
 # Role Panel Get Known Roles by Guild テスト
 # ===========================================================================
-
-
-class TestGetKnownRolesByGuild:
-    """_get_known_roles_by_guild 関数のテスト。"""
-
-    async def test_returns_role_ids_grouped_by_guild(
-        self,
-        db_session: AsyncSession,
-    ) -> None:
-        """ギルドごとにロールIDがグループ化される。"""
-        from src.web.app import _get_known_roles_by_guild
-
-        # 2つのギルドに属するパネルとアイテムを作成
-        panel1 = RolePanel(
-            guild_id="111111111111111111",
-            channel_id="123456789012345678",
-            panel_type="button",
-            title="Guild 1 Panel",
-        )
-        panel2 = RolePanel(
-            guild_id="222222222222222222",
-            channel_id="987654321098765432",
-            panel_type="button",
-            title="Guild 2 Panel",
-        )
-        db_session.add_all([panel1, panel2])
-        await db_session.commit()
-        await db_session.refresh(panel1)
-        await db_session.refresh(panel2)
-
-        # アイテムを追加
-        items = [
-            RolePanelItem(
-                panel_id=panel1.id,
-                role_id="role_a",
-                emoji="⭐",
-                position=0,
-            ),
-            RolePanelItem(
-                panel_id=panel1.id,
-                role_id="role_b",
-                emoji="🎮",
-                position=1,
-            ),
-            RolePanelItem(
-                panel_id=panel2.id,
-                role_id="role_c",
-                emoji="🎵",
-                position=0,
-            ),
-        ]
-        db_session.add_all(items)
-        await db_session.commit()
-
-        result = await _get_known_roles_by_guild(db_session)
-
-        assert "111111111111111111" in result
-        assert "222222222222222222" in result
-        assert sorted(result["111111111111111111"]) == ["role_a", "role_b"]
-        assert result["222222222222222222"] == ["role_c"]
-
-    async def test_returns_empty_dict_when_no_items(
-        self,
-        db_session: AsyncSession,
-    ) -> None:
-        """アイテムがない場合は空の辞書を返す。"""
-        from src.web.app import _get_known_roles_by_guild
-
-        result = await _get_known_roles_by_guild(db_session)
-        assert result == {}
 
 
 # ===========================================================================
@@ -13843,7 +13625,7 @@ class TestAppCoverageGaps:
 
         test_ip = "127.0.0.1"
         web_app_module.LOGIN_ATTEMPTS.clear()
-        old_time = time.time() - web_app_module.LOGIN_WINDOW_SECONDS - 10
+        old_time = time.time() - LOGIN_WINDOW_SECONDS - 10
         web_app_module.LOGIN_ATTEMPTS[test_ip] = [old_time]
 
         await client.post(
@@ -13856,9 +13638,7 @@ class TestAppCoverageGaps:
         )
         # 古いエントリはクリーンアップされ、新しい失敗のみ残る
         remaining = web_app_module.LOGIN_ATTEMPTS.get(test_ip, [])
-        assert all(
-            time.time() - t < web_app_module.LOGIN_WINDOW_SECONDS for t in remaining
-        )
+        assert all(time.time() - t < LOGIN_WINDOW_SECONDS for t in remaining)
 
     @pytest.mark.asyncio
     async def test_login_rate_limit_cleanup_partial(
@@ -13871,7 +13651,7 @@ class TestAppCoverageGaps:
 
         test_ip = "127.0.0.1"
         web_app_module.LOGIN_ATTEMPTS.clear()
-        old_time = time.time() - web_app_module.LOGIN_WINDOW_SECONDS - 10
+        old_time = time.time() - LOGIN_WINDOW_SECONDS - 10
         recent_time = time.time()
         web_app_module.LOGIN_ATTEMPTS[test_ip] = [old_time, recent_time]
 

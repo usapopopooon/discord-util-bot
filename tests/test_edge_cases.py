@@ -185,9 +185,9 @@ class TestRateLimitingEdgeCases:
         LOGIN_ATTEMPTS["old_ip"] = [old_time]
 
         # クリーンアップをトリガー
-        import src.web.app as app_module
+        import src.web.security as security_module
 
-        app_module._last_cleanup_time = 0  # 強制的にクリーンアップを実行
+        security_module._last_cleanup_time = 0  # 強制的にクリーンアップを実行
         is_rate_limited("test_ip")
 
         # 古いエントリが削除されていることを確認
@@ -388,8 +388,8 @@ class TestAdminPasswordEdgeCases:
 class TestGetOrCreateAdminEdgeCases:
     """get_or_create_admin function edge case tests."""
 
-    @patch("src.web.app.INIT_ADMIN_PASSWORD", "test_password")
-    @patch("src.web.app.INIT_ADMIN_EMAIL", "test@example.com")
+    @patch("src.web.security.INIT_ADMIN_PASSWORD", "test_password")
+    @patch("src.web.security.INIT_ADMIN_EMAIL", "test@example.com")
     async def test_creates_admin_when_empty_and_password_set(self) -> None:
         """AdminUser が存在しない＆パスワード設定済みなら作成される。"""
         import os
@@ -428,7 +428,7 @@ class TestGetOrCreateAdminEdgeCases:
         finally:
             await engine.dispose()
 
-    @patch("src.web.app.INIT_ADMIN_PASSWORD", "")
+    @patch("src.web.security.INIT_ADMIN_PASSWORD", "")
     async def test_returns_none_when_no_password_and_empty_db(self) -> None:
         """パスワード未設定＆AdminUser 未作成の場合は None を返す。"""
         import os
@@ -517,7 +517,7 @@ class TestGetOrCreateAdminEdgeCases:
         finally:
             await engine.dispose()
 
-    @patch("src.web.app.INIT_ADMIN_PASSWORD", "")
+    @patch("src.web.security.INIT_ADMIN_PASSWORD", "")
     async def test_returns_existing_even_when_password_not_set(self) -> None:
         """パスワード未設定でも既存 AdminUser は返す。"""
         import os
