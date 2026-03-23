@@ -41,9 +41,7 @@ describe("LoginPage", () => {
   it("renders the sign in button", () => {
     render(<LoginPage />);
 
-    expect(
-      screen.getByRole("button", { name: "Sign in" })
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
   });
 
   it("allows typing in email and password fields", async () => {
@@ -125,9 +123,7 @@ describe("LoginPage", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     await waitFor(() => {
-      expect(
-        screen.getByText("Network error. Please try again.")
-      ).toBeInTheDocument();
+      expect(screen.getByText("Network error. Please try again.")).toBeInTheDocument();
     });
   });
 
@@ -135,8 +131,7 @@ describe("LoginPage", () => {
     let resolvePromise!: () => void;
     global.fetch = vi.fn().mockReturnValue(
       new Promise<{ ok: boolean; json: () => Promise<object> }>((resolve) => {
-        resolvePromise = () =>
-          resolve({ ok: true, json: () => Promise.resolve({}) });
+        resolvePromise = () => resolve({ ok: true, json: () => Promise.resolve({}) });
       })
     );
 

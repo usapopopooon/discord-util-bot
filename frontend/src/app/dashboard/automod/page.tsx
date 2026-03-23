@@ -1,13 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type {
-  AutoModRule,
-  GuildsMap,
-  ChannelsMap,
-} from "@/lib/types";
+import type { AutoModRule, GuildsMap, ChannelsMap } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,36 +31,25 @@ function resolveGuildName(guilds: GuildsMap, guildId: string) {
   return guilds[guildId] ?? guildId;
 }
 
-function resolveChannelName(
-  channels: ChannelsMap,
-  guildId: string,
-  channelId: string | null
-) {
+function resolveChannelName(channels: ChannelsMap, guildId: string, channelId: string | null) {
   if (!channelId) return "-";
   const list = channels[guildId] ?? [];
   const ch = list.find((c) => c.id === channelId);
   return ch ? `#${ch.name}` : channelId;
 }
 
-function formatDetails(
-  rule: AutoModRule,
-  channels: ChannelsMap
-): string {
+function formatDetails(rule: AutoModRule, channels: ChannelsMap): string {
   switch (rule.rule_type) {
     case "username_match":
       return `Pattern: ${rule.pattern ?? "-"}${rule.use_wildcard ? " (wildcard)" : ""}`;
     case "account_age":
-      return rule.threshold_seconds
-        ? `< ${Math.round(rule.threshold_seconds / 60)} min`
-        : "-";
+      return rule.threshold_seconds ? `< ${Math.round(rule.threshold_seconds / 60)} min` : "-";
     case "no_avatar":
       return "-";
     case "role_acquired":
     case "vc_join":
     case "message_post":
-      return rule.threshold_seconds
-        ? `Within ${rule.threshold_seconds}s`
-        : "-";
+      return rule.threshold_seconds ? `Within ${rule.threshold_seconds}s` : "-";
     case "vc_without_intro":
     case "msg_without_intro":
       return `Channel: ${resolveChannelName(channels, rule.guild_id, rule.required_channel_id)}`;
@@ -75,7 +59,6 @@ function formatDetails(
 }
 
 export default function AutoModPage() {
-  const router = useRouter();
   const [rules, setRules] = useState<AutoModRule[]>([]);
   const [guilds, setGuilds] = useState<GuildsMap>({});
   const [channels, setChannels] = useState<ChannelsMap>({});
@@ -157,9 +140,7 @@ export default function AutoModPage() {
               Edit
             </Button>
           </Link>
-          <DeleteButton
-            endpoint={`/api/proxy/api/v1/automod/rules/${row.id}/delete`}
-          />
+          <DeleteButton endpoint={`/api/proxy/api/v1/automod/rules/${row.id}/delete`} />
         </div>
       ),
     },
@@ -199,11 +180,7 @@ export default function AutoModPage() {
           <CardTitle>Configured Rules</CardTitle>
         </CardHeader>
         <CardContent>
-          <DataTable
-            columns={columns}
-            data={rules}
-            emptyMessage="No AutoMod rules configured"
-          />
+          <DataTable columns={columns} data={rules} emptyMessage="No AutoMod rules configured" />
         </CardContent>
       </Card>
     </div>

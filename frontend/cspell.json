@@ -1,0 +1,27 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "words": [
+    "shadcn",
+    "tailwindcss",
+    "clsx",
+    "sonner",
+    "radix",
+    "lucide",
+    "vitest",
+    "jsdom",
+    "automod",
+    "rolepanel",
+    "rolepanels",
+    "joinrole",
+    "eventlog",
+    "banlogs",
+    "banlist",
+    "unban",
+    "kbps",
+    "cooldown",
+    "mypassword"
+  ],
+  "ignorePaths": ["node_modules", ".next", "coverage", "components/ui"],
+  "enableFiletypes": ["typescript", "typescriptreact"]
+}

@@ -3,9 +3,9 @@
 # =============================================================================
 #
 # このワークフローは、コードの品質を自動的にチェックする。
-# push 時に実行され、以下の検証を行う:
+# push/PR 時に実行され、以下の検証を行う:
 #
-# [lint ジョブ] (PostgreSQL 不要 — 高速)
+# [backend-lint ジョブ] (PostgreSQL 不要 -- 高速)
 #   1. requirements.txt 同期チェック
 #   2. スペルチェック (cspell)
 #   3. JSON/YAML/TOML の構文チェック
@@ -13,11 +13,21 @@
 #   5. Python コードの静的解析 (Ruff check)
 #   6. 型チェック (mypy)
 #
-# [test ジョブ] (PostgreSQL 必要)
+# [backend-test ジョブ] (PostgreSQL 必要)
 #   7. ユニットテスト (pytest + xdist 並列実行)
 #   8. カバレッジレポート (Codecov)
 #
-# lint と test は並列実行される。
+# [frontend-lint ジョブ] (Node.js のみ)
+#   9. TypeScript 型チェック (tsc)
+#  10. ESLint
+#  11. Prettier フォーマットチェック
+#  12. スペルチェック (cspell)
+#
+# [frontend-test ジョブ] (Node.js のみ)
+#  13. Vitest ユニットテスト
+#
+# [frontend-build ジョブ] (frontend-lint + frontend-test 完了後)
+#  14. Next.js ビルド
 #
 # 注意:
 # - ローカルからの手動デプロイは禁止 (バージョン齟齬・テスト見逃し防止)
@@ -29,116 +39,75 @@ name: CI
 # -----------------------------------------------------------------------------
 # トリガー設定
 # -----------------------------------------------------------------------------
-# push: 任意のブランチへの push 時に実行
-# (PR マージ時も main への push として実行される)
 on:
   push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
   # ===========================================================================
-  # Lint ジョブ — PostgreSQL 不要、高速
+  # Backend Lint ジョブ -- PostgreSQL 不要、高速
   # ===========================================================================
-  lint:
+  backend-lint:
     runs-on: ubuntu-latest
 
     steps:
-      # -----------------------------------------------------------------------
-      # 1. リポジトリのチェックアウト
-      # -----------------------------------------------------------------------
       - uses: actions/checkout@v4
 
-      # -----------------------------------------------------------------------
-      # 2. Node.js のセットアップ (Volta 経由)
-      # -----------------------------------------------------------------------
       - name: Set up Node.js with Volta
         uses: volta-cli/action@v4
 
-      # -----------------------------------------------------------------------
-      # 3. Node.js 依存関係のインストール
-      # -----------------------------------------------------------------------
       - name: Install Node.js dependencies
         run: npm ci
 
-      # -----------------------------------------------------------------------
-      # 4. Python のセットアップ (pip キャッシュ有効)
-      # -----------------------------------------------------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
 
-      # -----------------------------------------------------------------------
-      # 5. Python 依存関係のインストール
-      # -----------------------------------------------------------------------
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]" yamllint taplo
 
-      # -----------------------------------------------------------------------
-      # 6. requirements.txt 同期チェック
-      # -----------------------------------------------------------------------
       - name: Check requirements.txt sync
         run: python scripts/sync_requirements.py --check
 
-      # -----------------------------------------------------------------------
-      # 7. スペルチェック (cspell)
-      # -----------------------------------------------------------------------
       - name: Spell check with cspell
         run: npm run lint:spell
 
-      # -----------------------------------------------------------------------
-      # 8. JSON 構文チェック
-      # -----------------------------------------------------------------------
       - name: Lint JSON
         run: npm run lint:json
 
-      # -----------------------------------------------------------------------
-      # 9. YAML 構文チェック (yamllint)
-      # -----------------------------------------------------------------------
       - name: Lint YAML
         run: yamllint -s .
 
-      # -----------------------------------------------------------------------
-      # 10. TOML 構文チェック (taplo)
-      # -----------------------------------------------------------------------
       - name: Lint TOML
         run: taplo check pyproject.toml
 
-      # -----------------------------------------------------------------------
-      # 11. Python フォーマットチェック (Ruff format)
-      # -----------------------------------------------------------------------
       - name: Format check with Ruff
         run: ruff format --check .
 
-      # -----------------------------------------------------------------------
-      # 12. Python 静的解析 (Ruff check)
-      # -----------------------------------------------------------------------
       - name: Lint with Ruff
         run: ruff check src tests
 
-      # -----------------------------------------------------------------------
-      # 13. 型チェック (mypy)
-      # -----------------------------------------------------------------------
       - name: Type check with mypy
         run: mypy src
 
   # ===========================================================================
-  # Test ジョブ — PostgreSQL + pytest-xdist 並列実行
+  # Backend Test ジョブ -- PostgreSQL + pytest-xdist 並列実行
   # ===========================================================================
-  test:
+  backend-test:
     runs-on: ubuntu-latest
 
-    # -------------------------------------------------------------------------
-    # サービスコンテナ (PostgreSQL)
-    # -------------------------------------------------------------------------
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17-alpine
         env:
           POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_pass
+          POSTGRES_PASSWORD: test_password
           POSTGRES_DB: discord_util_bot_test
         ports:
           - 5432:5432
@@ -149,47 +118,93 @@ jobs:
           --health-retries=5
 
     steps:
-      # -----------------------------------------------------------------------
-      # 1. リポジトリのチェックアウト
-      # -----------------------------------------------------------------------
       - uses: actions/checkout@v4
 
-      # -----------------------------------------------------------------------
-      # 2. Python のセットアップ (pip キャッシュ有効)
-      # -----------------------------------------------------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
 
-      # -----------------------------------------------------------------------
-      # 3. Python 依存関係のインストール
-      # -----------------------------------------------------------------------
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      # -----------------------------------------------------------------------
-      # 4. ユニットテスト (pytest-xdist で並列実行)
-      # -----------------------------------------------------------------------
-      # -n auto: CPU コア数に基づいてワーカー数を自動決定
-      # 各ワーカーは専用の PostgreSQL データベースを自動作成する
-      # (tests/conftest.py の xdist セットアップコードを参照)
       - name: Run tests with coverage
-        run: pytest -n auto --cov --cov-report=xml
+        run: pytest -n auto --cov=src --cov-report=term-missing --cov-report=xml -v
         env:
-          DISCORD_TOKEN: test-token
-          DATABASE_URL: postgresql+asyncpg://test_user:test_pass@localhost/discord_util_bot_test
-          TEST_DATABASE_URL: postgresql+asyncpg://test_user:test_pass@localhost/discord_util_bot_test
-          TEST_DATABASE_URL_SYNC: postgresql://test_user:test_pass@localhost/discord_util_bot_test
+          DISCORD_TOKEN: test_token
+          DATABASE_URL: postgresql+asyncpg://test_user:test_password@localhost/discord_util_bot_test
+          TEST_DATABASE_URL: postgresql+asyncpg://test_user:test_password@localhost/discord_util_bot_test
+          TEST_DATABASE_URL_SYNC: postgresql://test_user:test_password@localhost/discord_util_bot_test
 
-      # -----------------------------------------------------------------------
-      # 5. カバレッジレポートのアップロード (Codecov)
-      # -----------------------------------------------------------------------
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
           files: coverage.xml
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ===========================================================================
+  # Frontend Lint ジョブ -- Node.js のみ
+  # ===========================================================================
+  frontend-lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js with Volta
+        uses: volta-cli/action@v4
+
+      - name: Install dependencies
+        run: cd frontend && npm ci
+
+      - name: TypeScript type check
+        run: cd frontend && npm run tsc
+
+      - name: Lint with ESLint
+        run: cd frontend && npm run lint
+
+      - name: Format check with Prettier
+        run: cd frontend && npm run format:check
+
+      - name: Spell check with cspell
+        run: cd frontend && npm run spell
+
+  # ===========================================================================
+  # Frontend Test ジョブ -- Node.js のみ
+  # ===========================================================================
+  frontend-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js with Volta
+        uses: volta-cli/action@v4
+
+      - name: Install dependencies
+        run: cd frontend && npm ci
+
+      - name: Run tests with Vitest
+        run: cd frontend && npm run test:run
+
+  # ===========================================================================
+  # Frontend Build ジョブ -- lint + test 完了後に実行
+  # ===========================================================================
+  frontend-build:
+    runs-on: ubuntu-latest
+    needs: [frontend-lint, frontend-test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js with Volta
+        uses: volta-cli/action@v4
+
+      - name: Install dependencies
+        run: cd frontend && npm ci
+
+      - name: Build Next.js
+        run: cd frontend && npm run build

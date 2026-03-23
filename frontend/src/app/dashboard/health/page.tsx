@@ -22,11 +22,7 @@ function resolveGuildName(guilds: GuildsMap, guildId: string) {
   return guilds[guildId] ?? guildId;
 }
 
-function resolveChannelName(
-  channels: ChannelsMap,
-  guildId: string,
-  channelId: string
-) {
+function resolveChannelName(channels: ChannelsMap, guildId: string, channelId: string) {
   const list = channels[guildId] ?? [];
   const ch = list.find((c) => c.id === channelId);
   return ch ? `#${ch.name}` : channelId;
@@ -61,9 +57,7 @@ export default function HealthPage() {
     fetchData();
   }, [fetchData]);
 
-  const filteredChannels = selectedGuild
-    ? channels[selectedGuild] ?? []
-    : [];
+  const filteredChannels = selectedGuild ? (channels[selectedGuild] ?? []) : [];
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -96,8 +90,7 @@ export default function HealthPage() {
     },
     {
       header: "Channel",
-      accessor: (row) =>
-        resolveChannelName(channels, row.guild_id, row.channel_id),
+      accessor: (row) => resolveChannelName(channels, row.guild_id, row.channel_id),
     },
     {
       header: "Interval",
@@ -122,9 +115,7 @@ export default function HealthPage() {
             endpoint={`/api/proxy/api/v1/health/settings/${row.id}/toggle`}
             enabled={row.enabled}
           />
-          <DeleteButton
-            endpoint={`/api/proxy/api/v1/health/settings/${row.id}/delete`}
-          />
+          <DeleteButton endpoint={`/api/proxy/api/v1/health/settings/${row.id}/delete`} />
         </div>
       ),
     },
@@ -171,9 +162,7 @@ export default function HealthPage() {
               </Select>
             </div>
             <div className="flex-1">
-              <label className="text-sm font-medium mb-1.5 block">
-                Channel
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Channel</label>
               <Select
                 value={selectedChannel}
                 onValueChange={setSelectedChannel}
@@ -192,9 +181,7 @@ export default function HealthPage() {
               </Select>
             </div>
             <div className="w-40">
-              <label className="text-sm font-medium mb-1.5 block">
-                Interval (seconds)
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Interval (seconds)</label>
               <Input
                 type="number"
                 min={60}
@@ -203,10 +190,7 @@ export default function HealthPage() {
                 onChange={(e) => setIntervalSeconds(e.target.value)}
               />
             </div>
-            <Button
-              type="submit"
-              disabled={submitting || !selectedGuild || !selectedChannel}
-            >
+            <Button type="submit" disabled={submitting || !selectedGuild || !selectedChannel}>
               {submitting ? "Adding..." : "Add"}
             </Button>
           </form>
@@ -218,11 +202,7 @@ export default function HealthPage() {
           <CardTitle>Health Configs</CardTitle>
         </CardHeader>
         <CardContent>
-          <DataTable
-            columns={columns}
-            data={configs}
-            emptyMessage="No health configs configured"
-          />
+          <DataTable columns={columns} data={configs} emptyMessage="No health configs configured" />
         </CardContent>
       </Card>
     </div>

@@ -1,10 +1,5 @@
 import { apiFetch } from "@/lib/api";
-import type {
-  BumpConfig,
-  BumpReminder,
-  GuildsMap,
-  ChannelsMap,
-} from "@/lib/types";
+import type { BumpConfig, BumpReminder, GuildsMap, ChannelsMap } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/data-table";
@@ -15,11 +10,7 @@ function resolveGuildName(guilds: GuildsMap, guildId: string) {
   return guilds[guildId] ?? guildId;
 }
 
-function resolveChannelName(
-  channels: ChannelsMap,
-  guildId: string,
-  channelId: string
-) {
+function resolveChannelName(channels: ChannelsMap, guildId: string, channelId: string) {
   const list = channels[guildId] ?? [];
   const ch = list.find((c) => c.id === channelId);
   return ch ? `#${ch.name}` : channelId;
@@ -49,8 +40,7 @@ export default async function BumpPage() {
     },
     {
       header: "Channel",
-      accessor: (row) =>
-        resolveChannelName(channels, row.guild_id, row.channel_id),
+      accessor: (row) => resolveChannelName(channels, row.guild_id, row.channel_id),
     },
     {
       header: "Service",
@@ -59,9 +49,7 @@ export default async function BumpPage() {
     {
       header: "Actions",
       accessor: (row) => (
-        <DeleteButton
-          endpoint={`/api/proxy/api/v1/bump/config/${row.guild_id}/delete`}
-        />
+        <DeleteButton endpoint={`/api/proxy/api/v1/bump/config/${row.guild_id}/delete`} />
       ),
     },
   ];
@@ -73,8 +61,7 @@ export default async function BumpPage() {
     },
     {
       header: "Channel",
-      accessor: (row) =>
-        resolveChannelName(channels, row.guild_id, row.channel_id),
+      accessor: (row) => resolveChannelName(channels, row.guild_id, row.channel_id),
     },
     {
       header: "Service",
@@ -99,9 +86,7 @@ export default async function BumpPage() {
             endpoint={`/api/proxy/api/v1/bump/reminder/${row.id}/toggle`}
             enabled={row.enabled}
           />
-          <DeleteButton
-            endpoint={`/api/proxy/api/v1/bump/reminder/${row.id}/delete`}
-          />
+          <DeleteButton endpoint={`/api/proxy/api/v1/bump/reminder/${row.id}/delete`} />
         </div>
       ),
     },

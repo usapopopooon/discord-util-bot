@@ -31,14 +31,12 @@ export function GuildChannelSelector({
   channelLabel = "Channel",
 }: GuildChannelSelectorProps) {
   const guildEntries = Object.entries(guilds);
-  const filteredChannels = selectedGuild ? channels[selectedGuild] ?? [] : [];
+  const filteredChannels = selectedGuild ? (channels[selectedGuild] ?? []) : [];
 
   return (
     <div className="flex gap-4">
       <div className="flex-1">
-        <label className="text-sm font-medium mb-1.5 block">
-          {guildLabel}
-        </label>
+        <label className="text-sm font-medium mb-1.5 block">{guildLabel}</label>
         <Select
           value={selectedGuild}
           onValueChange={(v) => {
@@ -59,14 +57,8 @@ export function GuildChannelSelector({
         </Select>
       </div>
       <div className="flex-1">
-        <label className="text-sm font-medium mb-1.5 block">
-          {channelLabel}
-        </label>
-        <Select
-          value={selectedChannel}
-          onValueChange={onChannelChange}
-          disabled={!selectedGuild}
-        >
+        <label className="text-sm font-medium mb-1.5 block">{channelLabel}</label>
+        <Select value={selectedChannel} onValueChange={onChannelChange} disabled={!selectedGuild}>
           <SelectTrigger className="w-full">
             <SelectValue placeholder="Select channel" />
           </SelectTrigger>

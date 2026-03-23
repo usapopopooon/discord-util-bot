@@ -1,11 +1,5 @@
 import { apiFetch } from "@/lib/api";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import Link from "next/link";
 
 interface DashboardData {
@@ -80,8 +74,8 @@ export default async function DashboardPage() {
         </CardHeader>
         <CardContent>
           <p className="text-muted-foreground">
-            Logged in as <span className="font-medium text-foreground">{email}</span>.
-            Select a section from the sidebar or use the quick links below.
+            Logged in as <span className="font-medium text-foreground">{email}</span>. Select a
+            section from the sidebar or use the quick links below.
           </p>
         </CardContent>
       </Card>
@@ -94,9 +88,7 @@ export default async function DashboardPage() {
                 <CardTitle className="text-base">{link.title}</CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-muted-foreground">
-                  {link.description}
-                </p>
+                <p className="text-sm text-muted-foreground">{link.description}</p>
               </CardContent>
             </Card>
           </Link>

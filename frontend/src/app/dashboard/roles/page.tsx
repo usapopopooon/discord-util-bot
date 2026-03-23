@@ -13,11 +13,7 @@ function resolveGuildName(guilds: GuildsMap, guildId: string) {
   return guilds[guildId] ?? guildId;
 }
 
-function resolveChannelName(
-  channels: ChannelsMap,
-  guildId: string,
-  channelId: string
-) {
+function resolveChannelName(channels: ChannelsMap, guildId: string, channelId: string) {
   const list = channels[guildId] ?? [];
   const ch = list.find((c) => c.id === channelId);
   return ch ? `#${ch.name}` : channelId;
@@ -52,8 +48,7 @@ export default function RolePanelsPage() {
     },
     {
       header: "Channel",
-      accessor: (row) =>
-        resolveChannelName(channels, row.guild_id, row.channel_id),
+      accessor: (row) => resolveChannelName(channels, row.guild_id, row.channel_id),
     },
     {
       header: "Title",
@@ -62,9 +57,7 @@ export default function RolePanelsPage() {
     {
       header: "Type",
       accessor: (row) => (
-        <Badge variant="secondary">
-          {row.panel_type === "button" ? "Button" : "Reaction"}
-        </Badge>
+        <Badge variant="secondary">{row.panel_type === "button" ? "Button" : "Reaction"}</Badge>
       ),
     },
     {
@@ -121,11 +114,7 @@ export default function RolePanelsPage() {
           <CardTitle>Configured Panels</CardTitle>
         </CardHeader>
         <CardContent>
-          <DataTable
-            columns={columns}
-            data={panels}
-            emptyMessage="No role panels configured"
-          />
+          <DataTable columns={columns} data={panels} emptyMessage="No role panels configured" />
         </CardContent>
       </Card>
     </div>

@@ -67,12 +67,10 @@ export default function RolePanelNewPage() {
     fetchData();
   }, [fetchData]);
 
-  const filteredRoles = selectedGuild ? roles[selectedGuild] ?? [] : [];
+  const filteredRoles = selectedGuild ? (roles[selectedGuild] ?? []) : [];
 
   function updateItem(index: number, field: keyof ItemForm, value: string) {
-    setItems((prev) =>
-      prev.map((item, i) => (i === index ? { ...item, [field]: value } : item))
-    );
+    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, [field]: value } : item)));
   }
 
   function removeItem(index: number) {
@@ -156,14 +154,8 @@ export default function RolePanelNewPage() {
             />
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Panel Type
-              </label>
-              <RadioGroup
-                value={panelType}
-                onValueChange={setPanelType}
-                className="flex gap-4"
-              >
+              <label className="text-sm font-medium mb-1.5 block">Panel Type</label>
+              <RadioGroup value={panelType} onValueChange={setPanelType} className="flex gap-4">
                 <div className="flex items-center gap-2">
                   <RadioGroupItem value="button" id="type-button" />
                   <label htmlFor="type-button" className="text-sm">
@@ -192,9 +184,7 @@ export default function RolePanelNewPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Description
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Description</label>
               <Textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -204,9 +194,7 @@ export default function RolePanelNewPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Embed Color
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Embed Color</label>
               <div className="flex items-center gap-2">
                 <input
                   type="color"
@@ -232,21 +220,15 @@ export default function RolePanelNewPage() {
                     className="flex items-end gap-2 rounded-md border border-border p-3"
                   >
                     <div className="w-20">
-                      <label className="text-xs text-muted-foreground mb-1 block">
-                        Emoji
-                      </label>
+                      <label className="text-xs text-muted-foreground mb-1 block">Emoji</label>
                       <Input
                         value={item.emoji}
-                        onChange={(e) =>
-                          updateItem(index, "emoji", e.target.value)
-                        }
+                        onChange={(e) => updateItem(index, "emoji", e.target.value)}
                         placeholder="🎮"
                       />
                     </div>
                     <div className="flex-1">
-                      <label className="text-xs text-muted-foreground mb-1 block">
-                        Role
-                      </label>
+                      <label className="text-xs text-muted-foreground mb-1 block">Role</label>
                       <Select
                         value={item.role_id}
                         onValueChange={(v) => updateItem(index, "role_id", v)}
@@ -267,26 +249,18 @@ export default function RolePanelNewPage() {
                     {panelType === "button" && (
                       <>
                         <div className="flex-1">
-                          <label className="text-xs text-muted-foreground mb-1 block">
-                            Label
-                          </label>
+                          <label className="text-xs text-muted-foreground mb-1 block">Label</label>
                           <Input
                             value={item.label}
-                            onChange={(e) =>
-                              updateItem(index, "label", e.target.value)
-                            }
+                            onChange={(e) => updateItem(index, "label", e.target.value)}
                             placeholder="Button label"
                           />
                         </div>
                         <div className="w-40">
-                          <label className="text-xs text-muted-foreground mb-1 block">
-                            Style
-                          </label>
+                          <label className="text-xs text-muted-foreground mb-1 block">Style</label>
                           <Select
                             value={item.style}
-                            onValueChange={(v) =>
-                              updateItem(index, "style", v)
-                            }
+                            onValueChange={(v) => updateItem(index, "style", v)}
                           >
                             <SelectTrigger className="w-full">
                               <SelectValue />
@@ -315,22 +289,14 @@ export default function RolePanelNewPage() {
                   </div>
                 ))}
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addItem}
-                className="mt-2"
-              >
+              <Button type="button" variant="outline" size="sm" onClick={addItem} className="mt-2">
                 + Add Item
               </Button>
             </div>
 
             <Button
               type="submit"
-              disabled={
-                submitting || !selectedGuild || !selectedChannel || !title.trim()
-              }
+              disabled={submitting || !selectedGuild || !selectedChannel || !title.trim()}
             >
               {submitting ? "Creating..." : "Create Panel"}
             </Button>

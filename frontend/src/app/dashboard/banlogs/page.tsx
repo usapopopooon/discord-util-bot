@@ -37,9 +37,7 @@ export default function BanLogsPage() {
     {
       header: "User ID",
       accessor: (row) => (
-        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
-          {row.user_id}
-        </code>
+        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{row.user_id}</code>
       ),
     },
     {
@@ -59,9 +57,7 @@ export default function BanLogsPage() {
       accessor: (row) => (
         <Badge
           className={
-            row.is_automod
-              ? "bg-red-600 hover:bg-red-600"
-              : "bg-blue-600 hover:bg-blue-600"
+            row.is_automod ? "bg-red-600 hover:bg-red-600" : "bg-blue-600 hover:bg-blue-600"
           }
         >
           {row.is_automod ? "AutoMod" : "Manual"}
@@ -92,11 +88,7 @@ export default function BanLogsPage() {
           <CardTitle>All Bans</CardTitle>
         </CardHeader>
         <CardContent>
-          <DataTable
-            columns={columns}
-            data={logs}
-            emptyMessage="No ban logs found"
-          />
+          <DataTable columns={columns} data={logs} emptyMessage="No ban logs found" />
         </CardContent>
       </Card>
     </div>

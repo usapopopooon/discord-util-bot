@@ -18,11 +18,7 @@ interface DataTableProps<T> {
   emptyMessage?: string;
 }
 
-export function DataTable<T>({
-  columns,
-  data,
-  emptyMessage = "No data found",
-}: DataTableProps<T>) {
+export function DataTable<T>({ columns, data, emptyMessage = "No data found" }: DataTableProps<T>) {
   return (
     <Table>
       <TableHeader>
@@ -35,10 +31,7 @@ export function DataTable<T>({
       <TableBody>
         {data.length === 0 ? (
           <TableRow>
-            <TableCell
-              colSpan={columns.length}
-              className="text-center text-muted-foreground py-8"
-            >
+            <TableCell colSpan={columns.length} className="text-center text-muted-foreground py-8">
               {emptyMessage}
             </TableCell>
           </TableRow>

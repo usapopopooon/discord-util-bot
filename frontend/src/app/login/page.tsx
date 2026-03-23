@@ -2,13 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -51,15 +45,11 @@ export default function LoginPage() {
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle className="text-2xl">Login</CardTitle>
-          <CardDescription>
-            Enter your credentials to access the admin panel.
-          </CardDescription>
+          <CardDescription>Enter your credentials to access the admin panel.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            {error && (
-              <p className="text-sm text-destructive-foreground">{error}</p>
-            )}
+            {error && <p className="text-sm text-destructive-foreground">{error}</p>}
             <div className="flex flex-col gap-2">
               <Label htmlFor="email">Email</Label>
               <Input

@@ -3,12 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type {
-  GuildsMap,
-  ChannelsMap,
-  RolesMap,
-  TicketCategory,
-} from "@/lib/types";
+import type { GuildsMap, ChannelsMap, RolesMap, TicketCategory } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,9 +43,7 @@ export default function TicketPanelNewPage() {
   const [selectedCategories, setSelectedCategories] = useState<number[]>([]);
 
   const fetchData = useCallback(async () => {
-    const res = await fetch(
-      "/api/proxy/api/v1/tickets/panels/form-data"
-    ).then((r) => r.json());
+    const res = await fetch("/api/proxy/api/v1/tickets/panels/form-data").then((r) => r.json());
     setFormData(res ?? null);
     setLoading(false);
   }, []);
@@ -68,14 +61,10 @@ export default function TicketPanelNewPage() {
     );
   }
 
-  const filteredChannels = selectedGuild
-    ? formData.channels[selectedGuild] ?? []
-    : [];
-  const filteredRoles = selectedGuild
-    ? formData.roles[selectedGuild] ?? []
-    : [];
+  const filteredChannels = selectedGuild ? (formData.channels[selectedGuild] ?? []) : [];
+  const filteredRoles = selectedGuild ? (formData.roles[selectedGuild] ?? []) : [];
   const filteredDiscordCategories = selectedGuild
-    ? formData.discord_categories[selectedGuild] ?? []
+    ? (formData.discord_categories[selectedGuild] ?? [])
     : [];
   const filteredCategories = selectedGuild
     ? formData.categories.filter((c) => c.guild_id === selectedGuild)
@@ -138,9 +127,7 @@ export default function TicketPanelNewPage() {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Server
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Server</label>
               <Select
                 value={selectedGuild}
                 onValueChange={(v) => {
@@ -166,14 +153,8 @@ export default function TicketPanelNewPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Channel
-              </label>
-              <Select
-                value={channelId}
-                onValueChange={setChannelId}
-                disabled={!selectedGuild}
-              >
+              <label className="text-sm font-medium mb-1.5 block">Channel</label>
+              <Select value={channelId} onValueChange={setChannelId} disabled={!selectedGuild}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select channel" />
                 </SelectTrigger>
@@ -188,9 +169,7 @@ export default function TicketPanelNewPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Title
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Title</label>
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
@@ -200,9 +179,7 @@ export default function TicketPanelNewPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Description
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Description</label>
               <Textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -211,9 +188,7 @@ export default function TicketPanelNewPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Color (hex)
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Color (hex)</label>
               <Input
                 type="color"
                 value={color || "#000000"}
@@ -222,14 +197,8 @@ export default function TicketPanelNewPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Staff Role
-              </label>
-              <Select
-                value={staffRoleId}
-                onValueChange={setStaffRoleId}
-                disabled={!selectedGuild}
-              >
+              <label className="text-sm font-medium mb-1.5 block">Staff Role</label>
+              <Select value={staffRoleId} onValueChange={setStaffRoleId} disabled={!selectedGuild}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select staff role (optional)" />
                 </SelectTrigger>
@@ -244,9 +213,7 @@ export default function TicketPanelNewPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Discord Category
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Discord Category</label>
               <Select
                 value={discordCategoryId}
                 onValueChange={setDiscordCategoryId}
@@ -266,9 +233,7 @@ export default function TicketPanelNewPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Log Channel
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Log Channel</label>
               <Select
                 value={logChannelId}
                 onValueChange={setLogChannelId}
@@ -289,9 +254,7 @@ export default function TicketPanelNewPage() {
 
             {filteredCategories.length > 0 && (
               <div>
-                <label className="text-sm font-medium mb-1.5 block">
-                  Ticket Categories
-                </label>
+                <label className="text-sm font-medium mb-1.5 block">Ticket Categories</label>
                 <div className="space-y-2 rounded-md border p-3">
                   {filteredCategories.map((cat) => (
                     <div key={cat.id} className="flex items-center gap-2">
@@ -305,9 +268,7 @@ export default function TicketPanelNewPage() {
                       <label htmlFor={`cat-${cat.id}`} className="text-sm">
                         {cat.name}
                         {cat.description && (
-                          <span className="text-muted-foreground ml-2">
-                            - {cat.description}
-                          </span>
+                          <span className="text-muted-foreground ml-2">- {cat.description}</span>
                         )}
                       </label>
                     </div>
@@ -316,10 +277,7 @@ export default function TicketPanelNewPage() {
               </div>
             )}
 
-            <Button
-              type="submit"
-              disabled={submitting || !selectedGuild || !channelId || !title}
-            >
+            <Button type="submit" disabled={submitting || !selectedGuild || !channelId || !title}>
               {submitting ? "Creating..." : "Create Panel"}
             </Button>
           </form>

@@ -153,8 +153,7 @@ export default function SettingsPage() {
     );
   }
 
-  const offsetLabel =
-    timezoneOffset >= 0 ? `UTC+${timezoneOffset}` : `UTC${timezoneOffset}`;
+  const offsetLabel = timezoneOffset >= 0 ? `UTC+${timezoneOffset}` : `UTC${timezoneOffset}`;
 
   return (
     <div className="space-y-6">
@@ -179,9 +178,7 @@ export default function SettingsPage() {
                 max={14}
                 value={timezoneOffset}
                 onChange={(e) =>
-                  setTimezoneOffset(
-                    Math.min(14, Math.max(-12, parseInt(e.target.value, 10) || 0))
-                  )
+                  setTimezoneOffset(Math.min(14, Math.max(-12, parseInt(e.target.value, 10) || 0)))
                 }
                 className="w-32 mt-1.5"
               />
@@ -204,9 +201,7 @@ export default function SettingsPage() {
               Current email: <span className="font-medium text-foreground">{currentEmail}</span>
             </p>
             {pendingEmail && (
-              <p className="text-sm text-yellow-500">
-                Pending email change: {pendingEmail}
-              </p>
+              <p className="text-sm text-yellow-500">Pending email change: {pendingEmail}</p>
             )}
             <div>
               <Label htmlFor="new-email">New Email</Label>

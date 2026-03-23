@@ -13,11 +13,7 @@ function resolveGuildName(guilds: GuildsMap, guildId: string) {
   return guilds[guildId] ?? guildId;
 }
 
-function resolveChannelName(
-  channels: ChannelsMap,
-  guildId: string,
-  channelId: string
-) {
+function resolveChannelName(channels: ChannelsMap, guildId: string, channelId: string) {
   const list = channels[guildId] ?? [];
   const ch = list.find((c) => c.id === channelId);
   return ch ? `#${ch.name}` : channelId;
@@ -52,8 +48,7 @@ export default function TicketPanelsPage() {
     },
     {
       header: "Channel",
-      accessor: (row) =>
-        resolveChannelName(channels, row.guild_id, row.channel_id),
+      accessor: (row) => resolveChannelName(channels, row.guild_id, row.channel_id),
     },
     {
       header: "Title",
@@ -64,9 +59,7 @@ export default function TicketPanelsPage() {
       accessor: (row) => (
         <Badge
           className={
-            row.message_id
-              ? "bg-green-600 hover:bg-green-600"
-              : "bg-gray-500 hover:bg-gray-500"
+            row.message_id ? "bg-green-600 hover:bg-green-600" : "bg-gray-500 hover:bg-gray-500"
           }
         >
           {row.message_id ? "Yes" : "No"}
@@ -82,9 +75,7 @@ export default function TicketPanelsPage() {
               View
             </Button>
           </Link>
-          <DeleteButton
-            endpoint={`/api/proxy/api/v1/tickets/panels/${row.id}/delete`}
-          />
+          <DeleteButton endpoint={`/api/proxy/api/v1/tickets/panels/${row.id}/delete`} />
         </div>
       ),
     },
@@ -120,11 +111,7 @@ export default function TicketPanelsPage() {
           <CardTitle>Configured Panels</CardTitle>
         </CardHeader>
         <CardContent>
-          <DataTable
-            columns={columns}
-            data={panels}
-            emptyMessage="No ticket panels configured"
-          />
+          <DataTable columns={columns} data={panels} emptyMessage="No ticket panels configured" />
         </CardContent>
       </Card>
     </div>

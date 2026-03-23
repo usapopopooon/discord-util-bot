@@ -51,21 +51,13 @@ describe("DataTable", () => {
   });
 
   it("shows custom empty message when provided", () => {
-    render(
-      <DataTable
-        columns={columns}
-        data={[]}
-        emptyMessage="Nothing to display"
-      />
-    );
+    render(<DataTable columns={columns} data={[]} emptyMessage="Nothing to display" />);
 
     expect(screen.getByText("Nothing to display")).toBeInTheDocument();
   });
 
   it("renders the correct number of data rows", () => {
-    const { container } = render(
-      <DataTable columns={columns} data={testData} />
-    );
+    const { container } = render(<DataTable columns={columns} data={testData} />);
 
     // Header row + 2 data rows
     const rows = container.querySelectorAll("tr");
@@ -73,9 +65,7 @@ describe("DataTable", () => {
   });
 
   it("renders empty state with colspan spanning all columns", () => {
-    const { container } = render(
-      <DataTable columns={columns} data={[]} />
-    );
+    const { container } = render(<DataTable columns={columns} data={[]} />);
 
     const td = container.querySelector("td");
     expect(td).toHaveAttribute("colspan", "3");

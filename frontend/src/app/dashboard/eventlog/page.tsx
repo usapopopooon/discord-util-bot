@@ -2,11 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import type {
-  EventLogConfig,
-  GuildsMap,
-  ChannelsMap,
-} from "@/lib/types";
+import type { EventLogConfig, GuildsMap, ChannelsMap } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -53,11 +49,7 @@ function resolveGuildName(guilds: GuildsMap, guildId: string) {
   return guilds[guildId] ?? guildId;
 }
 
-function resolveChannelName(
-  channels: ChannelsMap,
-  guildId: string,
-  channelId: string
-) {
+function resolveChannelName(channels: ChannelsMap, guildId: string, channelId: string) {
   const list = channels[guildId] ?? [];
   const ch = list.find((c) => c.id === channelId);
   return ch ? `#${ch.name}` : channelId;
@@ -92,9 +84,7 @@ export default function EventLogPage() {
     fetchData();
   }, [fetchData]);
 
-  const filteredChannels = selectedGuild
-    ? channels[selectedGuild] ?? []
-    : [];
+  const filteredChannels = selectedGuild ? (channels[selectedGuild] ?? []) : [];
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -128,15 +118,12 @@ export default function EventLogPage() {
     {
       header: "Event Type",
       accessor: (row) => (
-        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
-          {row.event_type}
-        </code>
+        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{row.event_type}</code>
       ),
     },
     {
       header: "Channel",
-      accessor: (row) =>
-        resolveChannelName(channels, row.guild_id, row.channel_id),
+      accessor: (row) => resolveChannelName(channels, row.guild_id, row.channel_id),
     },
     {
       header: "Status",
@@ -157,9 +144,7 @@ export default function EventLogPage() {
             endpoint={`/api/proxy/api/v1/eventlog/${row.id}/toggle`}
             enabled={row.enabled}
           />
-          <DeleteButton
-            endpoint={`/api/proxy/api/v1/eventlog/${row.id}/delete`}
-          />
+          <DeleteButton endpoint={`/api/proxy/api/v1/eventlog/${row.id}/delete`} />
         </div>
       ),
     },
@@ -206,13 +191,8 @@ export default function EventLogPage() {
               </Select>
             </div>
             <div className="flex-1">
-              <label className="text-sm font-medium mb-1.5 block">
-                Event Type
-              </label>
-              <Select
-                value={selectedEventType}
-                onValueChange={setSelectedEventType}
-              >
+              <label className="text-sm font-medium mb-1.5 block">Event Type</label>
+              <Select value={selectedEventType} onValueChange={setSelectedEventType}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select event type" />
                 </SelectTrigger>
@@ -226,9 +206,7 @@ export default function EventLogPage() {
               </Select>
             </div>
             <div className="flex-1">
-              <label className="text-sm font-medium mb-1.5 block">
-                Channel
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Channel</label>
               <Select
                 value={selectedChannel}
                 onValueChange={setSelectedChannel}
@@ -248,12 +226,7 @@ export default function EventLogPage() {
             </div>
             <Button
               type="submit"
-              disabled={
-                submitting ||
-                !selectedGuild ||
-                !selectedEventType ||
-                !selectedChannel
-              }
+              disabled={submitting || !selectedGuild || !selectedEventType || !selectedChannel}
             >
               {submitting ? "Adding..." : "Add"}
             </Button>
@@ -266,11 +239,7 @@ export default function EventLogPage() {
           <CardTitle>Configured Event Logs</CardTitle>
         </CardHeader>
         <CardContent>
-          <DataTable
-            columns={columns}
-            data={configs}
-            emptyMessage="No event logs configured"
-          />
+          <DataTable columns={columns} data={configs} emptyMessage="No event logs configured" />
         </CardContent>
       </Card>
     </div>

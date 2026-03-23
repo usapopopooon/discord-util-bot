@@ -62,9 +62,7 @@ export default function AutoModNewPage() {
     fetchData();
   }, [fetchData]);
 
-  const filteredChannels = selectedGuild
-    ? channels[selectedGuild] ?? []
-    : [];
+  const filteredChannels = selectedGuild ? (channels[selectedGuild] ?? []) : [];
 
   const showPattern = ruleType === "username_match";
   const showAccountAge = ruleType === "account_age";
@@ -185,9 +183,7 @@ export default function AutoModNewPage() {
             {showPattern && (
               <>
                 <div>
-                  <label className="text-sm font-medium mb-1.5 block">
-                    Pattern
-                  </label>
+                  <label className="text-sm font-medium mb-1.5 block">Pattern</label>
                   <Input
                     value={pattern}
                     onChange={(e) => setPattern(e.target.value)}
@@ -198,9 +194,7 @@ export default function AutoModNewPage() {
                   <Checkbox
                     id="use_wildcard"
                     checked={useWildcard}
-                    onCheckedChange={(checked) =>
-                      setUseWildcard(checked === true)
-                    }
+                    onCheckedChange={(checked) => setUseWildcard(checked === true)}
                   />
                   <label htmlFor="use_wildcard" className="text-sm">
                     Use wildcard matching
@@ -243,9 +237,7 @@ export default function AutoModNewPage() {
 
             {showRequiredChannel && (
               <div>
-                <label className="text-sm font-medium mb-1.5 block">
-                  Required Channel
-                </label>
+                <label className="text-sm font-medium mb-1.5 block">Required Channel</label>
                 <Select
                   value={requiredChannelId}
                   onValueChange={setRequiredChannelId}
@@ -281,10 +273,7 @@ export default function AutoModNewPage() {
               </div>
             )}
 
-            <Button
-              type="submit"
-              disabled={submitting || !selectedGuild || !ruleType || !action}
-            >
+            <Button type="submit" disabled={submitting || !selectedGuild || !ruleType || !action}>
               {submitting ? "Creating..." : "Create Rule"}
             </Button>
           </form>

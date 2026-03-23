@@ -33,11 +33,7 @@ const ACTIONS = [
   { value: "timeout", label: "Timeout" },
 ];
 
-export default function AutoModEditPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default function AutoModEditPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const [guilds, setGuilds] = useState<GuildsMap>({});
@@ -77,9 +73,7 @@ export default function AutoModEditPage({
       }
 
       if (ruleRes.timeout_duration_seconds) {
-        setTimeoutDurationMinutes(
-          String(Math.round(ruleRes.timeout_duration_seconds / 60))
-        );
+        setTimeoutDurationMinutes(String(Math.round(ruleRes.timeout_duration_seconds / 60)));
       }
     }
     setLoading(false);
@@ -98,19 +92,12 @@ export default function AutoModEditPage({
     );
   }
 
-  const filteredChannels = rule.guild_id
-    ? channels[rule.guild_id] ?? []
-    : [];
+  const filteredChannels = rule.guild_id ? (channels[rule.guild_id] ?? []) : [];
 
   const showPattern = rule.rule_type === "username_match";
   const showAccountAge = rule.rule_type === "account_age";
-  const showThreshold = ["role_acquired", "vc_join", "message_post"].includes(
-    rule.rule_type
-  );
-  const showRequiredChannel = [
-    "vc_without_intro",
-    "msg_without_intro",
-  ].includes(rule.rule_type);
+  const showThreshold = ["role_acquired", "vc_join", "message_post"].includes(rule.rule_type);
+  const showRequiredChannel = ["vc_without_intro", "msg_without_intro"].includes(rule.rule_type);
   const showTimeoutDuration = action === "timeout";
 
   async function handleSubmit(e: React.FormEvent) {
@@ -136,9 +123,7 @@ export default function AutoModEditPage({
         use_wildcard: showPattern ? useWildcard : false,
         threshold_seconds: thresholdSeconds,
         timeout_duration_seconds: timeoutSeconds,
-        required_channel_id: showRequiredChannel
-          ? requiredChannelId || null
-          : null,
+        required_channel_id: showRequiredChannel ? requiredChannelId || null : null,
       };
 
       await fetch(`/api/proxy/api/v1/automod/rules/${id}`, {
@@ -171,22 +156,12 @@ export default function AutoModEditPage({
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="text-sm font-medium mb-1.5 block">Server</label>
-              <Input
-                value={guilds[rule.guild_id] ?? rule.guild_id}
-                disabled
-              />
+              <Input value={guilds[rule.guild_id] ?? rule.guild_id} disabled />
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Rule Type
-              </label>
-              <Input
-                value={
-                  RULE_TYPE_LABELS[rule.rule_type] ?? rule.rule_type
-                }
-                disabled
-              />
+              <label className="text-sm font-medium mb-1.5 block">Rule Type</label>
+              <Input value={RULE_TYPE_LABELS[rule.rule_type] ?? rule.rule_type} disabled />
             </div>
 
             <div>
@@ -208,9 +183,7 @@ export default function AutoModEditPage({
             {showPattern && (
               <>
                 <div>
-                  <label className="text-sm font-medium mb-1.5 block">
-                    Pattern
-                  </label>
+                  <label className="text-sm font-medium mb-1.5 block">Pattern</label>
                   <Input
                     value={pattern}
                     onChange={(e) => setPattern(e.target.value)}
@@ -221,9 +194,7 @@ export default function AutoModEditPage({
                   <Checkbox
                     id="use_wildcard"
                     checked={useWildcard}
-                    onCheckedChange={(checked) =>
-                      setUseWildcard(checked === true)
-                    }
+                    onCheckedChange={(checked) => setUseWildcard(checked === true)}
                   />
                   <label htmlFor="use_wildcard" className="text-sm">
                     Use wildcard matching
@@ -264,13 +235,8 @@ export default function AutoModEditPage({
 
             {showRequiredChannel && (
               <div>
-                <label className="text-sm font-medium mb-1.5 block">
-                  Required Channel
-                </label>
-                <Select
-                  value={requiredChannelId}
-                  onValueChange={setRequiredChannelId}
-                >
+                <label className="text-sm font-medium mb-1.5 block">Required Channel</label>
+                <Select value={requiredChannelId} onValueChange={setRequiredChannelId}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select channel" />
                   </SelectTrigger>

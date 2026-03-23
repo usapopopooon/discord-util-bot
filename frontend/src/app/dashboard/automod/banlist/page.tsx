@@ -79,9 +79,7 @@ export default function AutoModBanListPage() {
     {
       header: "User ID",
       accessor: (row) => (
-        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
-          {row.user_id}
-        </code>
+        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{row.user_id}</code>
       ),
     },
     {
@@ -95,9 +93,7 @@ export default function AutoModBanListPage() {
     {
       header: "Actions",
       accessor: (row) => (
-        <DeleteButton
-          endpoint={`/api/proxy/api/v1/automod/banlist/${row.id}/delete`}
-        />
+        <DeleteButton endpoint={`/api/proxy/api/v1/automod/banlist/${row.id}/delete`} />
       ),
     },
   ];
@@ -130,10 +126,7 @@ export default function AutoModBanListPage() {
           <form onSubmit={handleSubmit} className="flex items-end gap-4">
             <div className="flex-1">
               <label className="text-sm font-medium mb-1.5 block">Server</label>
-              <Select
-                value={selectedGuild}
-                onValueChange={setSelectedGuild}
-              >
+              <Select value={selectedGuild} onValueChange={setSelectedGuild}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select server" />
                 </SelectTrigger>
@@ -147,9 +140,7 @@ export default function AutoModBanListPage() {
               </Select>
             </div>
             <div className="flex-1">
-              <label className="text-sm font-medium mb-1.5 block">
-                User ID
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">User ID</label>
               <Input
                 value={userId}
                 onChange={(e) => setUserId(e.target.value)}
@@ -158,19 +149,14 @@ export default function AutoModBanListPage() {
               />
             </div>
             <div className="flex-1">
-              <label className="text-sm font-medium mb-1.5 block">
-                Reason (optional)
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Reason (optional)</label>
               <Input
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder="Reason for ban"
               />
             </div>
-            <Button
-              type="submit"
-              disabled={submitting || !selectedGuild || !userId}
-            >
+            <Button type="submit" disabled={submitting || !selectedGuild || !userId}>
               {submitting ? "Adding..." : "Add"}
             </Button>
           </form>
@@ -182,11 +168,7 @@ export default function AutoModBanListPage() {
           <CardTitle>Ban List Entries</CardTitle>
         </CardHeader>
         <CardContent>
-          <DataTable
-            columns={columns}
-            data={entries}
-            emptyMessage="No ban list entries"
-          />
+          <DataTable columns={columns} data={entries} emptyMessage="No ban list entries" />
         </CardContent>
       </Card>
     </div>

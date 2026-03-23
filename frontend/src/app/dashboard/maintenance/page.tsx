@@ -145,8 +145,8 @@ export default function MaintenancePage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Run cleanup to remove orphaned channels, expired join role assignments,
-            and stale voice sessions.
+            Run cleanup to remove orphaned channels, expired join role assignments, and stale voice
+            sessions.
           </p>
 
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -159,8 +159,8 @@ export default function MaintenancePage() {
               <DialogHeader>
                 <DialogTitle>Confirm Cleanup</DialogTitle>
                 <DialogDescription>
-                  This will remove orphaned channels, expired assignments, and
-                  stale sessions from the database. This action cannot be undone.
+                  This will remove orphaned channels, expired assignments, and stale sessions from
+                  the database. This action cannot be undone.
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
@@ -184,27 +184,19 @@ export default function MaintenancePage() {
                 <ul className="space-y-1 text-sm">
                   <li>
                     Orphaned channels removed:{" "}
-                    <span className="font-medium">
-                      {cleanupResult.orphaned_channels_removed}
-                    </span>
+                    <span className="font-medium">{cleanupResult.orphaned_channels_removed}</span>
                   </li>
                   <li>
                     Expired assignments removed:{" "}
-                    <span className="font-medium">
-                      {cleanupResult.expired_assignments_removed}
-                    </span>
+                    <span className="font-medium">{cleanupResult.expired_assignments_removed}</span>
                   </li>
                   <li>
                     Stale sessions removed:{" "}
-                    <span className="font-medium">
-                      {cleanupResult.stale_sessions_removed}
-                    </span>
+                    <span className="font-medium">{cleanupResult.stale_sessions_removed}</span>
                   </li>
                 </ul>
                 {cleanupResult.message && (
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {cleanupResult.message}
-                  </p>
+                  <p className="mt-2 text-sm text-muted-foreground">{cleanupResult.message}</p>
                 )}
               </CardContent>
             </Card>

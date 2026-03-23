@@ -33,6 +33,10 @@ CHECKS: list[Check] = [
     Check("Ruff format", ["ruff", "format", "--check", "."]),
     Check("Ruff check", ["ruff", "check", "src", "tests"]),
     Check("mypy", ["mypy", "src"]),
+    Check("Frontend (tsc)", ["npx", "tsc", "--noEmit"], cwd="frontend"),
+    Check("Frontend (eslint)", ["npm", "run", "lint"], cwd="frontend"),
+    Check("Frontend (prettier)", ["npm", "run", "format:check"], cwd="frontend"),
+    Check("Frontend (cspell)", ["npm", "run", "spell"], cwd="frontend"),
     Check(
         "Frontend (vitest)",
         ["npm", "run", "test:run"],
@@ -40,6 +44,12 @@ CHECKS: list[Check] = [
         cwd="frontend",
     ),
     Check("pytest", ["pytest", "--cov", "--cov-report=term-missing"], is_test=True),
+    Check(
+        "Frontend (build)",
+        ["npm", "run", "build"],
+        is_test=True,
+        cwd="frontend",
+    ),
 ]
 
 

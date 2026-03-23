@@ -36,9 +36,7 @@ export default function TicketsPage() {
   }, [fetchData]);
 
   const filteredTickets =
-    statusFilter === "all"
-      ? tickets
-      : tickets.filter((t) => t.status === statusFilter);
+    statusFilter === "all" ? tickets : tickets.filter((t) => t.status === statusFilter);
 
   const columns: Column<Ticket>[] = [
     {
@@ -84,9 +82,7 @@ export default function TicketsPage() {
               View
             </Button>
           </Link>
-          <DeleteButton
-            endpoint={`/api/proxy/api/v1/tickets/${row.id}/delete`}
-          />
+          <DeleteButton endpoint={`/api/proxy/api/v1/tickets/${row.id}/delete`} />
         </div>
       ),
     },
@@ -130,11 +126,7 @@ export default function TicketsPage() {
           <CardTitle>Tickets</CardTitle>
         </CardHeader>
         <CardContent>
-          <DataTable
-            columns={columns}
-            data={filteredTickets}
-            emptyMessage="No tickets found"
-          />
+          <DataTable columns={columns} data={filteredTickets} emptyMessage="No tickets found" />
         </CardContent>
       </Card>
     </div>

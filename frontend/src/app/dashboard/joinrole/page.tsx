@@ -2,11 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import type {
-  JoinRoleConfig,
-  GuildsMap,
-  RolesMap,
-} from "@/lib/types";
+import type { JoinRoleConfig, GuildsMap, RolesMap } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -61,7 +57,7 @@ export default function JoinRolePage() {
     fetchData();
   }, [fetchData]);
 
-  const filteredRoles = selectedGuild ? roles[selectedGuild] ?? [] : [];
+  const filteredRoles = selectedGuild ? (roles[selectedGuild] ?? []) : [];
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -119,9 +115,7 @@ export default function JoinRolePage() {
             endpoint={`/api/proxy/api/v1/joinrole/${row.id}/toggle`}
             enabled={row.enabled}
           />
-          <DeleteButton
-            endpoint={`/api/proxy/api/v1/joinrole/${row.id}/delete`}
-          />
+          <DeleteButton endpoint={`/api/proxy/api/v1/joinrole/${row.id}/delete`} />
         </div>
       ),
     },
@@ -187,9 +181,7 @@ export default function JoinRolePage() {
               </Select>
             </div>
             <div className="w-40">
-              <label className="text-sm font-medium mb-1.5 block">
-                Duration (hours)
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Duration (hours)</label>
               <Input
                 type="number"
                 min={1}
@@ -210,11 +202,7 @@ export default function JoinRolePage() {
           <CardTitle>Configured Join Roles</CardTitle>
         </CardHeader>
         <CardContent>
-          <DataTable
-            columns={columns}
-            data={configs}
-            emptyMessage="No join roles configured"
-          />
+          <DataTable columns={columns} data={configs} emptyMessage="No join roles configured" />
         </CardContent>
       </Card>
     </div>

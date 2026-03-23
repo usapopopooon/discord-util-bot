@@ -92,9 +92,7 @@ export default function ActivityPage() {
         <CardContent>
           <form onSubmit={handleSave} className="space-y-4 max-w-md">
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Activity Type
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Activity Type</label>
               <Select value={activityType} onValueChange={setActivityType}>
                 <SelectTrigger className="w-full">
                   <SelectValue />
@@ -109,9 +107,7 @@ export default function ActivityPage() {
               </Select>
             </div>
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Activity Text
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Activity Text</label>
               <Input
                 value={activityText}
                 onChange={(e) => setActivityText(e.target.value)}
@@ -121,9 +117,7 @@ export default function ActivityPage() {
             {message && (
               <p
                 className={
-                  message.type === "success"
-                    ? "text-sm text-green-500"
-                    : "text-sm text-destructive"
+                  message.type === "success" ? "text-sm text-green-500" : "text-sm text-destructive"
                 }
               >
                 {message.text}

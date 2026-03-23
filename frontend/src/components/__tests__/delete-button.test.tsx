@@ -42,17 +42,13 @@ describe("DeleteButton", () => {
 
     expect(screen.getByText("Confirm Deletion")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Are you sure you want to delete this item? This action cannot be undone."
-      )
+      screen.getByText("Are you sure you want to delete this item? This action cannot be undone.")
     ).toBeInTheDocument();
   });
 
   it("shows custom confirm message", async () => {
     const user = userEvent.setup();
-    render(
-      <DeleteButton endpoint="/api/test/1" confirmMessage="Really delete?" />
-    );
+    render(<DeleteButton endpoint="/api/test/1" confirmMessage="Really delete?" />);
 
     await user.click(screen.getByRole("button", { name: "Delete" }));
 

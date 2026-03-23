@@ -55,11 +55,7 @@ export function DeleteButton({
           <Button variant="outline" onClick={() => setOpen(false)}>
             Cancel
           </Button>
-          <Button
-            variant="destructive"
-            onClick={handleDelete}
-            disabled={loading}
-          >
+          <Button variant="destructive" onClick={handleDelete} disabled={loading}>
             {loading ? "Deleting..." : "Delete"}
           </Button>
         </DialogFooter>

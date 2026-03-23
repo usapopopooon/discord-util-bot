@@ -3,13 +3,7 @@
 import { useEffect, useState, useCallback, use } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type {
-  TicketPanelDetail,
-  TicketPanelCategory,
-  GuildsMap,
-  ChannelsMap,
-  RolesMap,
-} from "@/lib/types";
+import type { TicketPanelDetail, GuildsMap, ChannelsMap, RolesMap } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,33 +29,14 @@ function resolveGuildName(guilds: GuildsMap, guildId: string) {
   return guilds[guildId] ?? guildId;
 }
 
-function resolveChannelName(
-  channels: ChannelsMap,
-  guildId: string,
-  channelId: string | null
-) {
+function resolveChannelName(channels: ChannelsMap, guildId: string, channelId: string | null) {
   if (!channelId) return "-";
   const list = channels[guildId] ?? [];
   const ch = list.find((c) => c.id === channelId);
   return ch ? `#${ch.name}` : channelId;
 }
 
-function resolveRoleName(
-  roles: RolesMap,
-  guildId: string,
-  roleId: string | null
-) {
-  if (!roleId) return "-";
-  const list = roles[guildId] ?? [];
-  const role = list.find((r) => r.id === roleId);
-  return role ? role.name : roleId;
-}
-
-export default function TicketPanelDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default function TicketPanelDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const [panel, setPanel] = useState<TicketPanelDetail | null>(null);
@@ -83,10 +58,7 @@ export default function TicketPanelDetailPage({
 
   // Button edit state per assoc_id
   const [buttonEdits, setButtonEdits] = useState<
-    Record<
-      number,
-      { emoji: string; label: string; style: string; saving: boolean }
-    >
+    Record<number, { emoji: string; label: string; style: string; saving: boolean }>
   >({});
 
   const fetchData = useCallback(async () => {
@@ -99,9 +71,9 @@ export default function TicketPanelDetailPage({
     // Try to get discord categories from form-data
     let discCats: ChannelsMap = {};
     try {
-      const formDataRes = await fetch(
-        "/api/proxy/api/v1/tickets/panels/form-data"
-      ).then((r) => r.json());
+      const formDataRes = await fetch("/api/proxy/api/v1/tickets/panels/form-data").then((r) =>
+        r.json()
+      );
       discCats = formDataRes?.discord_categories ?? {};
     } catch {
       // ignore
@@ -161,8 +133,7 @@ export default function TicketPanelDetailPage({
 
   const filteredChannels = channels[panel.guild_id] ?? [];
   const filteredRoles = roles[panel.guild_id] ?? [];
-  const filteredDiscordCategories =
-    discordCategories[panel.guild_id] ?? [];
+  const filteredDiscordCategories = discordCategories[panel.guild_id] ?? [];
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -207,18 +178,15 @@ export default function TicketPanelDetailPage({
       [assocId]: { ...prev[assocId], saving: true },
     }));
     try {
-      await fetch(
-        `/api/proxy/api/v1/tickets/panels/${id}/buttons/${assocId}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            button_emoji: edit.emoji || null,
-            button_label: edit.label || null,
-            button_style: edit.style || null,
-          }),
-        }
-      );
+      await fetch(`/api/proxy/api/v1/tickets/panels/${id}/buttons/${assocId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          button_emoji: edit.emoji || null,
+          button_label: edit.label || null,
+          button_style: edit.style || null,
+        }),
+      });
     } finally {
       setButtonEdits((prev) => ({
         ...prev,
@@ -227,11 +195,7 @@ export default function TicketPanelDetailPage({
     }
   }
 
-  function updateButtonEdit(
-    assocId: number,
-    field: "emoji" | "label" | "style",
-    value: string
-  ) {
+  function updateButtonEdit(assocId: number, field: "emoji" | "label" | "style", value: string) {
     setButtonEdits((prev) => ({
       ...prev,
       [assocId]: { ...prev[assocId], [field]: value },
@@ -249,9 +213,7 @@ export default function TicketPanelDetailPage({
         <h1 className="text-2xl font-bold">Panel: {panel.title}</h1>
         <Badge
           className={
-            panel.message_id
-              ? "bg-green-600 hover:bg-green-600"
-              : "bg-gray-500 hover:bg-gray-500"
+            panel.message_id ? "bg-green-600 hover:bg-green-600" : "bg-gray-500 hover:bg-gray-500"
           }
         >
           {panel.message_id ? "Posted" : "Not Posted"}
@@ -271,20 +233,12 @@ export default function TicketPanelDetailPage({
 
           <form onSubmit={handleSave} className="space-y-4">
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Title
-              </label>
-              <Input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                required
-              />
+              <label className="text-sm font-medium mb-1.5 block">Title</label>
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} required />
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Description
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Description</label>
               <Textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -293,9 +247,7 @@ export default function TicketPanelDetailPage({
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Color (hex)
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Color (hex)</label>
               <Input
                 type="color"
                 value={color || "#000000"}
@@ -304,9 +256,7 @@ export default function TicketPanelDetailPage({
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Staff Role
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Staff Role</label>
               <Select value={staffRoleId} onValueChange={setStaffRoleId}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select staff role (optional)" />
@@ -322,13 +272,8 @@ export default function TicketPanelDetailPage({
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Discord Category
-              </label>
-              <Select
-                value={discordCategoryId}
-                onValueChange={setDiscordCategoryId}
-              >
+              <label className="text-sm font-medium mb-1.5 block">Discord Category</label>
+              <Select value={discordCategoryId} onValueChange={setDiscordCategoryId}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select category (optional)" />
                 </SelectTrigger>
@@ -343,9 +288,7 @@ export default function TicketPanelDetailPage({
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Log Channel
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Log Channel</label>
               <Select value={logChannelId} onValueChange={setLogChannelId}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select log channel (optional)" />
@@ -379,53 +322,30 @@ export default function TicketPanelDetailPage({
                 const edit = buttonEdits[cat.assoc_id];
                 if (!edit) return null;
                 return (
-                  <div
-                    key={cat.assoc_id}
-                    className="rounded-md border p-4 space-y-3"
-                  >
+                  <div key={cat.assoc_id} className="rounded-md border p-4 space-y-3">
                     <div className="font-medium">{cat.category_name}</div>
                     <div className="grid grid-cols-3 gap-3">
                       <div>
-                        <label className="text-sm font-medium mb-1 block">
-                          Emoji
-                        </label>
+                        <label className="text-sm font-medium mb-1 block">Emoji</label>
                         <Input
                           value={edit.emoji}
-                          onChange={(e) =>
-                            updateButtonEdit(
-                              cat.assoc_id,
-                              "emoji",
-                              e.target.value
-                            )
-                          }
+                          onChange={(e) => updateButtonEdit(cat.assoc_id, "emoji", e.target.value)}
                           placeholder="e.g. ticket emoji"
                         />
                       </div>
                       <div>
-                        <label className="text-sm font-medium mb-1 block">
-                          Label
-                        </label>
+                        <label className="text-sm font-medium mb-1 block">Label</label>
                         <Input
                           value={edit.label}
-                          onChange={(e) =>
-                            updateButtonEdit(
-                              cat.assoc_id,
-                              "label",
-                              e.target.value
-                            )
-                          }
+                          onChange={(e) => updateButtonEdit(cat.assoc_id, "label", e.target.value)}
                           placeholder="Button label"
                         />
                       </div>
                       <div>
-                        <label className="text-sm font-medium mb-1 block">
-                          Style
-                        </label>
+                        <label className="text-sm font-medium mb-1 block">Style</label>
                         <Select
                           value={edit.style}
-                          onValueChange={(v) =>
-                            updateButtonEdit(cat.assoc_id, "style", v)
-                          }
+                          onValueChange={(v) => updateButtonEdit(cat.assoc_id, "style", v)}
                         >
                           <SelectTrigger className="w-full">
                             <SelectValue />
@@ -463,11 +383,7 @@ export default function TicketPanelDetailPage({
         <CardContent>
           <div className="flex items-center gap-3">
             <Button onClick={handlePost} disabled={posting}>
-              {posting
-                ? "Posting..."
-                : panel.message_id
-                  ? "Update in Discord"
-                  : "Post to Discord"}
+              {posting ? "Posting..." : panel.message_id ? "Update in Discord" : "Post to Discord"}
             </Button>
             <DeleteButton
               endpoint={`/api/proxy/api/v1/tickets/panels/${id}/delete`}

@@ -46,9 +46,7 @@ export default function AutoModSettingsPage() {
     if (!guildId) return;
     setConfigLoading(true);
     try {
-      const res = await fetch(
-        `/api/proxy/api/v1/automod/settings?guild_id=${guildId}`
-      );
+      const res = await fetch(`/api/proxy/api/v1/automod/settings?guild_id=${guildId}`);
       if (res.ok) {
         const config: AutoModConfig = await res.json();
         setLogChannelId(config.log_channel_id ?? "");
@@ -68,9 +66,7 @@ export default function AutoModSettingsPage() {
     }
   }, [selectedGuild, loadConfig]);
 
-  const filteredChannels = selectedGuild
-    ? channels[selectedGuild] ?? []
-    : [];
+  const filteredChannels = selectedGuild ? (channels[selectedGuild] ?? []) : [];
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -146,13 +142,8 @@ export default function AutoModSettingsPage() {
             {selectedGuild && !configLoading && (
               <>
                 <div>
-                  <label className="text-sm font-medium mb-1.5 block">
-                    Log Channel
-                  </label>
-                  <Select
-                    value={logChannelId}
-                    onValueChange={setLogChannelId}
-                  >
+                  <label className="text-sm font-medium mb-1.5 block">Log Channel</label>
+                  <Select value={logChannelId} onValueChange={setLogChannelId}>
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Select channel (optional)" />
                     </SelectTrigger>
@@ -196,24 +187,17 @@ export default function AutoModSettingsPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <Button
-                    type="submit"
-                    disabled={submitting || !selectedGuild}
-                  >
+                  <Button type="submit" disabled={submitting || !selectedGuild}>
                     {submitting ? "Saving..." : "Save Settings"}
                   </Button>
                   {saved && (
-                    <span className="text-sm text-green-600">
-                      Settings saved successfully
-                    </span>
+                    <span className="text-sm text-green-600">Settings saved successfully</span>
                   )}
                 </div>
               </>
             )}
 
-            {configLoading && (
-              <p className="text-muted-foreground">Loading settings...</p>
-            )}
+            {configLoading && <p className="text-muted-foreground">Loading settings...</p>}
           </form>
         </CardContent>
       </Card>

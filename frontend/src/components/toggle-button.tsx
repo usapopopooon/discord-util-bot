@@ -27,11 +27,5 @@ export function ToggleButton({ endpoint, enabled }: ToggleButtonProps) {
     }
   }
 
-  return (
-    <Switch
-      checked={enabled}
-      onCheckedChange={handleToggle}
-      disabled={loading}
-    />
-  );
+  return <Switch checked={enabled} onCheckedChange={handleToggle} disabled={loading} />;
 }

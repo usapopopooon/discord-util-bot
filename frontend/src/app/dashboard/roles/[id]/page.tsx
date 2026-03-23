@@ -2,13 +2,7 @@
 
 import { useEffect, useState, useCallback, use } from "react";
 import { useRouter } from "next/navigation";
-import type {
-  RolePanelDetail,
-  RolePanelItem,
-  GuildsMap,
-  ChannelsMap,
-  RolesMap,
-} from "@/lib/types";
+import type { RolePanelDetail, RolePanelItem, GuildsMap, ChannelsMap, RolesMap } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -66,11 +60,7 @@ function resolveRoleName(
   return role ? role.name : roleId;
 }
 
-export default function RolePanelDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default function RolePanelDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const [panel, setPanel] = useState<RolePanelDetail | null>(null);
@@ -166,11 +156,7 @@ export default function RolePanelDetailPage({
       method: "POST",
     });
     if (res.ok) {
-      toast.success(
-        panel?.message_id
-          ? "Panel updated in Discord"
-          : "Panel posted to Discord"
-      );
+      toast.success(panel?.message_id ? "Panel updated in Discord" : "Panel posted to Discord");
       fetchData();
     } else {
       const err = await res.text();
@@ -205,10 +191,9 @@ export default function RolePanelDetailPage({
   }
 
   async function handleDeleteItem(itemId: number) {
-    const res = await fetch(
-      `/api/proxy/api/v1/rolepanels/${id}/items/${itemId}`,
-      { method: "DELETE" }
-    );
+    const res = await fetch(`/api/proxy/api/v1/rolepanels/${id}/items/${itemId}`, {
+      method: "DELETE",
+    });
     if (res.ok) {
       toast.success("Item removed");
       fetchData();
@@ -218,14 +203,11 @@ export default function RolePanelDetailPage({
   }
 
   async function handleMoveItem(itemId: number, direction: "up" | "down") {
-    const res = await fetch(
-      `/api/proxy/api/v1/rolepanels/${id}/items/${itemId}/move`,
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ direction }),
-      }
-    );
+    const res = await fetch(`/api/proxy/api/v1/rolepanels/${id}/items/${itemId}/move`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ direction }),
+    });
     if (res.ok) {
       fetchData();
     }
@@ -273,9 +255,7 @@ export default function RolePanelDetailPage({
           </Button>
         </Link>
         <h1 className="text-2xl font-bold">Role Panel #{id}</h1>
-        <Badge variant="secondary">
-          {panel.panel_type === "button" ? "Button" : "Reaction"}
-        </Badge>
+        <Badge variant="secondary">{panel.panel_type === "button" ? "Button" : "Reaction"}</Badge>
         {panel.message_id ? (
           <Badge className="bg-green-600 hover:bg-green-600">Posted</Badge>
         ) : (
@@ -300,17 +280,11 @@ export default function RolePanelDetailPage({
               <label className="text-sm font-medium mb-1.5 block">
                 Title <span className="text-red-500">*</span>
               </label>
-              <Input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                required
-              />
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} required />
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Description
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Description</label>
               <Textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -319,9 +293,7 @@ export default function RolePanelDetailPage({
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Embed Color
-              </label>
+              <label className="text-sm font-medium mb-1.5 block">Embed Color</label>
               <div className="flex items-center gap-2">
                 <input
                   type="color"
@@ -329,11 +301,7 @@ export default function RolePanelDetailPage({
                   onChange={(e) => setColor(e.target.value)}
                   className="h-10 w-14 cursor-pointer rounded border border-border bg-transparent"
                 />
-                <Input
-                  value={color}
-                  onChange={(e) => setColor(e.target.value)}
-                  className="w-32"
-                />
+                <Input value={color} onChange={(e) => setColor(e.target.value)} className="w-32" />
               </div>
             </div>
 
@@ -342,9 +310,7 @@ export default function RolePanelDetailPage({
                 <Checkbox
                   id="remove_reaction"
                   checked={removeReaction}
-                  onCheckedChange={(checked) =>
-                    setRemoveReaction(checked === true)
-                  }
+                  onCheckedChange={(checked) => setRemoveReaction(checked === true)}
                 />
                 <label htmlFor="remove_reaction" className="text-sm">
                   Remove reaction on toggle (role removed when reaction removed)
@@ -393,20 +359,14 @@ export default function RolePanelDetailPage({
               ) : (
                 sortedItems.map((item: RolePanelItem, index: number) => (
                   <TableRow key={item.id}>
-                    <TableCell className="text-muted-foreground">
-                      {index + 1}
-                    </TableCell>
+                    <TableCell className="text-muted-foreground">{index + 1}</TableCell>
                     <TableCell>{item.emoji || "-"}</TableCell>
-                    <TableCell>
-                      {resolveRoleName(guildRoles, item.role_id)}
-                    </TableCell>
+                    <TableCell>{resolveRoleName(guildRoles, item.role_id)}</TableCell>
                     {panel.panel_type === "button" && (
                       <>
                         <TableCell>{item.label || "-"}</TableCell>
                         <TableCell>
-                          <Badge variant="secondary">
-                            {item.style || "-"}
-                          </Badge>
+                          <Badge variant="secondary">{item.style || "-"}</Badge>
                         </TableCell>
                       </>
                     )}
@@ -450,9 +410,7 @@ export default function RolePanelDetailPage({
             className="mt-4 flex items-end gap-2 rounded-md border border-border p-3"
           >
             <div className="w-20">
-              <label className="text-xs text-muted-foreground mb-1 block">
-                Emoji
-              </label>
+              <label className="text-xs text-muted-foreground mb-1 block">Emoji</label>
               <Input
                 value={newEmoji}
                 onChange={(e) => setNewEmoji(e.target.value)}
@@ -460,9 +418,7 @@ export default function RolePanelDetailPage({
               />
             </div>
             <div className="flex-1">
-              <label className="text-xs text-muted-foreground mb-1 block">
-                Role
-              </label>
+              <label className="text-xs text-muted-foreground mb-1 block">Role</label>
               <Select value={newRoleId} onValueChange={setNewRoleId}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select role" />
@@ -479,9 +435,7 @@ export default function RolePanelDetailPage({
             {panel.panel_type === "button" && (
               <>
                 <div className="flex-1">
-                  <label className="text-xs text-muted-foreground mb-1 block">
-                    Label
-                  </label>
+                  <label className="text-xs text-muted-foreground mb-1 block">Label</label>
                   <Input
                     value={newLabel}
                     onChange={(e) => setNewLabel(e.target.value)}
@@ -489,9 +443,7 @@ export default function RolePanelDetailPage({
                   />
                 </div>
                 <div className="w-40">
-                  <label className="text-xs text-muted-foreground mb-1 block">
-                    Style
-                  </label>
+                  <label className="text-xs text-muted-foreground mb-1 block">Style</label>
                   <Select value={newStyle} onValueChange={setNewStyle}>
                     <SelectTrigger className="w-full">
                       <SelectValue />
@@ -535,22 +487,14 @@ export default function RolePanelDetailPage({
                 <DialogHeader>
                   <DialogTitle>Confirm Deletion</DialogTitle>
                   <DialogDescription>
-                    Are you sure you want to delete this role panel? This action
-                    cannot be undone.
+                    Are you sure you want to delete this role panel? This action cannot be undone.
                   </DialogDescription>
                 </DialogHeader>
                 <DialogFooter>
-                  <Button
-                    variant="outline"
-                    onClick={() => setDeleteOpen(false)}
-                  >
+                  <Button variant="outline" onClick={() => setDeleteOpen(false)}>
                     Cancel
                   </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={handleDelete}
-                    disabled={deleteLoading}
-                  >
+                  <Button variant="destructive" onClick={handleDelete} disabled={deleteLoading}>
                     {deleteLoading ? "Deleting..." : "Delete"}
                   </Button>
                 </DialogFooter>

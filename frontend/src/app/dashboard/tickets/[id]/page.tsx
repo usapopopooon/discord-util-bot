@@ -12,11 +12,7 @@ function resolveGuildName(guilds: GuildsMap, guildId: string) {
   return guilds[guildId] ?? guildId;
 }
 
-export default function TicketDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default function TicketDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [ticket, setTicket] = useState<TicketDetail | null>(null);
   const [guilds, setGuilds] = useState<GuildsMap>({});
@@ -64,9 +60,7 @@ export default function TicketDetailPage({
             Back
           </Button>
         </Link>
-        <h1 className="text-2xl font-bold">
-          Ticket #{ticket.ticket_number}
-        </h1>
+        <h1 className="text-2xl font-bold">Ticket #{ticket.ticket_number}</h1>
       </div>
 
       <Card>
@@ -91,9 +85,7 @@ export default function TicketDetailPage({
               <dd>{resolveGuildName(guilds, ticket.guild_id)}</dd>
             </div>
             <div>
-              <dt className="font-medium text-muted-foreground">
-                Ticket Number
-              </dt>
+              <dt className="font-medium text-muted-foreground">Ticket Number</dt>
               <dd>#{ticket.ticket_number}</dd>
             </div>
             <div>
@@ -118,17 +110,11 @@ export default function TicketDetailPage({
             </div>
             <div>
               <dt className="font-medium text-muted-foreground">Closed At</dt>
-              <dd>
-                {ticket.closed_at
-                  ? new Date(ticket.closed_at).toLocaleString()
-                  : "-"}
-              </dd>
+              <dd>{ticket.closed_at ? new Date(ticket.closed_at).toLocaleString() : "-"}</dd>
             </div>
             <div>
               <dt className="font-medium text-muted-foreground">Channel ID</dt>
-              <dd className="font-mono text-xs">
-                {ticket.channel_id ?? "Deleted"}
-              </dd>
+              <dd className="font-mono text-xs">{ticket.channel_id ?? "Deleted"}</dd>
             </div>
           </dl>
         </CardContent>
