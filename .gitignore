@@ -54,19 +54,19 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
+/build/
+/develop-eggs/
+/dist/
+/downloads/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
+/share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -81,7 +81,7 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
-htmlcov/
+/htmlcov/
 .tox/
 .nox/
 .coverage
@@ -93,7 +93,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
-cover/
+/cover/
 
 # Translations
 *.mo
@@ -106,24 +106,24 @@ db.sqlite3
 db.sqlite3-journal
 
 # Flask
-instance/
+/instance/
 .webassets-cache
 
 # Scrapy
 .scrapy
 
 # Sphinx documentation
-docs/_build/
+/docs/_build/
 
 # PyBuilder
 .pybuilder/
-target/
+/target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
 
 # IPython
-profile_default/
+/profile_default/
 ipython_config.py
 
 # pyenv (keep .python-version for project consistency)
@@ -153,11 +153,11 @@ celerybeat.pid
 # Environments
 .env
 .venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+/env/
+/venv/
+/ENV/
+/env.bak/
+/venv.bak/
 
 # Spyder
 .spyderproject
@@ -181,7 +181,7 @@ dmypy.json
 .pytype/
 
 # Cython
-cython_debug/
+/cython_debug/
 
 # ruff
 .ruff_cache/
@@ -247,7 +247,7 @@ AGENTS.md
 *.iml
 *.ipr
 *.iws
-out/
+/out/
 
 # Vim
 [._]*.s[a-v][a-z]
@@ -280,7 +280,7 @@ tramp
 *.rel
 /auto/
 .cask/
-dist/
+/dist/
 flycheck_*.el
 .projectile
 .dir-locals.el
@@ -291,7 +291,7 @@ flycheck_*.el
 # =========================
 
 # Logs
-logs/
+/logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -302,11 +302,11 @@ yarn-error.log*
 *.key
 .env.local
 .env.*.local
-secrets/
+/secrets/
 
 # Temporary files
-tmp/
-temp/
+/tmp/
+/temp/
 *.tmp
 *.temp
 *.bak
