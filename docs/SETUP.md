@@ -1,22 +1,5 @@
 # 環境構築ガイド
 
-Discord Util Bot の環境構築・開発・デプロイに関するドキュメント。
-
-## 目次
-
-- [環境変数](#環境変数)
-- [セットアップ](#セットアップ)
-  - [ローカル開発 (Make)](#ローカル開発-make)
-  - [ローカル開発 (手動)](#ローカル開発-手動)
-  - [Docker Compose](#docker-compose)
-  - [Railway へのデプロイ](#railway-へのデプロイ)
-- [開発](#開発)
-  - [Make コマンド](#make-コマンド)
-  - [テスト](#テスト)
-  - [マイグレーション](#マイグレーション)
-  - [CI](#ci)
-- [クロスプラットフォーム対応](#クロスプラットフォーム対応)
-
 ## 環境変数
 
 ### 必須
@@ -24,206 +7,150 @@ Discord Util Bot の環境構築・開発・デプロイに関するドキュメ
 | 変数名 | 説明 |
 |--------|------|
 | `DISCORD_TOKEN` | Discord Bot トークン |
+| `DATABASE_URL` | PostgreSQL 接続 URL |
 
 ### オプション (Bot)
 
 | 変数名 | デフォルト | 説明 |
 |--------|-----------|------|
-| `DATABASE_URL` | `postgresql+asyncpg://user@localhost/discord_util_bot` | PostgreSQL 接続 URL |
-| `HEALTH_CHANNEL_ID` | `0` | ヘルスチェック Embed を送信するチャンネル ID (0 = 無効) |
-| `BUMP_CHANNEL_ID` | `0` | Bump リマインダー用チャンネル ID (0 = 無効) |
-| `TIMEZONE_OFFSET` | `9` | UTC からのタイムゾーンオフセット (例: `9` = JST, `-5` = EST)。Web 管理画面からも変更可能 (DB 値優先) |
+| `TIMEZONE_OFFSET` | `9` | UTC オフセット (DB 値優先) |
+| `LOG_LEVEL` | `INFO` | ログレベル |
 
-### オプション (データベース接続)
-
-| 変数名 | デフォルト | 説明 |
-|--------|-----------|------|
-| `DATABASE_REQUIRE_SSL` | `false` | SSL 接続を有効化 (Railway / クラウド Postgres 用) |
-| `DB_POOL_SIZE` | `5` | コネクションプールサイズ |
-| `DB_MAX_OVERFLOW` | `10` | オーバーフロー接続数 |
-
-### オプション (Web 管理画面)
+### オプション (API)
 
 | 変数名 | デフォルト | 説明 |
 |--------|-----------|------|
 | `ADMIN_EMAIL` | `admin@example.com` | 初期管理者メールアドレス |
 | `ADMIN_PASSWORD` | `changeme` | 初期管理者パスワード |
-| `SESSION_SECRET_KEY` | (ランダム生成) | セッション署名キー (再起動後もセッション維持する場合は設定) |
-| `SECURE_COOKIE` | `true` | HTTPS 環境でのみ Cookie を送信 |
-| `APP_URL` | `http://localhost:8000` | パスワードリセットリンク用 URL |
+| `SESSION_SECRET_KEY` | (ランダム生成) | JWT 署名キー |
+| `SECURE_COOKIE` | `true` | HTTPS のみ Cookie 送信 |
+| `CORS_ORIGINS` | `http://localhost:3000` | CORS 許可オリジン (カンマ区切り) |
 
-### オプション (SMTP / メール送信)
+### オプション (Frontend)
 
 | 変数名 | デフォルト | 説明 |
 |--------|-----------|------|
-| `SMTP_HOST` | (空) | SMTP サーバーホスト名 (設定時にメール機能有効) |
+| `API_URL` | `http://localhost:8000` | FastAPI の内部 URL (ビルド時に評価) |
+
+### オプション (DB 接続)
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `DATABASE_REQUIRE_SSL` | `false` | SSL 接続を有効化 |
+| `DB_POOL_SIZE` | `5` | コネクションプールサイズ |
+| `DB_MAX_OVERFLOW` | `10` | オーバーフロー接続数 |
+
+### オプション (SMTP)
+
+| 変数名 | デフォルト | 説明 |
+|--------|-----------|------|
+| `SMTP_HOST` | (空) | SMTP サーバーホスト名 |
 | `SMTP_PORT` | `587` | SMTP ポート番号 |
 | `SMTP_USER` | (空) | SMTP 認証ユーザー名 |
 | `SMTP_PASSWORD` | (空) | SMTP 認証パスワード |
 | `SMTP_FROM_EMAIL` | (空) | 送信元メールアドレス |
-| `SMTP_USE_TLS` | `true` | TLS を使用するかどうか |
+| `SMTP_USE_TLS` | `true` | TLS 使用 |
 
-## セットアップ
+## ローカル開発
 
-### ローカル開発 (Make)
+### Docker Compose (推奨)
 
 ```bash
-git clone https://github.com/usapopopooon/discord-util-bot.git
-cd discord-util-bot
 cp .env.example .env  # DISCORD_TOKEN を設定
-make run
+docker compose up db api frontend mailpit
 ```
 
-### ローカル開発 (手動)
+| サービス | URL |
+|----------|-----|
+| Frontend | http://localhost:3000 |
+| API | http://localhost:8000 |
+| Mailpit | http://localhost:8025 |
+| PostgreSQL | localhost:5432 |
+
+Bot も起動する場合:
+```bash
+docker compose up
+```
+
+### 手動セットアップ
 
 ```bash
-git clone https://github.com/usapopopooon/discord-util-bot.git
-cd discord-util-bot
+# Python バックエンド
 python3 -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env  # DISCORD_TOKEN を設定
+alembic upgrade head
+python -m src.main              # Bot
+uvicorn src.web.app:app --reload  # API
 
-# マイグレーション実行
+# フロントエンド
+cd frontend
+npm ci
+npm run dev
+```
+
+## テスト
+
+### Python (pytest)
+
+```bash
+# Docker
+docker compose run --rm --profile dev test
+
+# ローカル
+pytest -v --cov=src
+```
+
+### Frontend (Vitest)
+
+```bash
+# Docker
+docker compose run --rm --profile dev frontend-test
+
+# ローカル
+cd frontend && npm run test:run
+```
+
+## Lint / 型チェック
+
+```bash
+# ローカル CI (全チェック)
+python scripts/ci_check.py
+
+# テスト込み
+python scripts/ci_check.py --all
+
+# Docker
+docker compose run --rm --profile dev lint
+```
+
+## マイグレーション
+
+```bash
+# 適用
 alembic upgrade head
 
-# Bot 起動
-python -m src.main
-```
+# Docker
+docker compose run --rm --profile dev migrate
 
-### Docker Compose
-
-```bash
-cp .env.example .env  # DISCORD_TOKEN を設定
-docker-compose up -d
-```
-
-PostgreSQL と Bot が一緒に起動する。
-
-### Railway へのデプロイ
-
-1. 必要な環境変数を設定:
-   - `DISCORD_TOKEN`: Bot トークン
-   - `DATABASE_URL`: PostgreSQL 接続 URL
-   - `TIMEZONE_OFFSET`: `9` (JST)
-
-2. Bot と Web は**別サービス**として動作:
-   - Bot: `python -m src.main`
-   - Web: `uvicorn src.web.app:app --host 0.0.0.0 --port $PORT`
-
-3. 各サービスの Custom Start Command に `alembic upgrade head &&` を prefix 推奨 (冪等)
-
-4. Dockerfile CMD が Procfile より優先される
-
-5. デプロイは GitHub 経由の CI/CD で実行
-
-## 開発
-
-### Make コマンド
-
-| コマンド | 説明 |
-|---------|------|
-| `make setup` | venv 作成 + 依存関係インストール |
-| `make run` | Bot を起動 |
-| `make test` | テスト実行 |
-| `make test-db` | PostgreSQL コンテナを使ったテスト実行 |
-| `make lint` | Ruff リンター実行 |
-| `make typecheck` | mypy 型チェック実行 |
-| `make spellcheck` | cspell スペルチェック実行 |
-| `make ci` | CI と同じ全チェックを実行 |
-| `make clean` | venv とキャッシュを削除 |
-
-### テスト
-
-```bash
-# テスト実行
-make test
-
-# カバレッジ付き
-.venv/bin/pytest --cov --cov-report=html
-
-# 特定のテストファイル
-.venv/bin/pytest tests/cogs/test_sticky.py -v
-```
-
-#### PostgreSQL を使ったテスト
-
-ローカルで PostgreSQL コンテナを使ってテストを実行するスクリプトを提供しています。
-
-```bash
-# Linux / macOS (Bash)
-./scripts/test-with-db.sh
-
-# Windows (PowerShell)
-.\scripts\test-with-db.ps1
-
-# 全 OS (Python)
-python scripts/test_with_db.py
-```
-
-オプション:
-
-| オプション | 説明 |
-|-----------|------|
-| `-v` | verbose モードで実行 |
-| `-k <pattern>` | パターンにマッチするテストのみ実行 |
-| `--keep` | テスト後コンテナを停止しない |
-
-### マイグレーション
-
-```bash
-# マイグレーション作成
+# 新規作成
 alembic revision --autogenerate -m "Add new table"
-
-# マイグレーション適用
-alembic upgrade head
-
-# ロールバック
-alembic downgrade -1
 ```
 
-### CI
+## Railway デプロイ
 
-GitHub Actions で以下を自動実行:
-- cspell (スペルチェック)
-- JSON / YAML / TOML lint (構文チェック)
-- Ruff format (フォーマットチェック)
-- Ruff check (リンター)
-- mypy (型チェック)
-- pytest + Codecov (テスト + カバレッジ 98%+)
+同一プロジェクト内に 3 サービス:
 
-## クロスプラットフォーム対応
+| サービス | Root Directory | Start Command |
+|----------|----------------|---------------|
+| bot | `/` | `alembic upgrade head && python -m src.main` |
+| api | `/` | `alembic upgrade head && uvicorn src.web.app:app --host 0.0.0.0 --port $PORT` |
+| frontend | `/frontend` | `npm run start` |
 
-このプロジェクトは macOS / Linux を主な開発環境としていますが、Windows でも開発可能です。
+### frontend の環境変数
 
-### Windows での開発
+```
+API_URL=http://api.railway.internal:<PORT>
+```
 
-| 機能 | 対応状況 | 備考 |
-|-----|---------|------|
-| Python コード | 完全対応 | シグナルハンドリングは try/except でフォールバック |
-| Docker Compose | 完全対応 | Docker Desktop for Windows を使用 |
-| テストスクリプト | 完全対応 | PowerShell / Python 版を提供 |
-| Make コマンド | 非対応 | 手動コマンドまたは WSL2 を使用 |
-
-### スクリプト一覧
-
-| スクリプト | 対象環境 | 説明 |
-|-----------|---------|------|
-| `scripts/test-with-db.sh` | Linux / macOS | Bash 版テストスクリプト |
-| `scripts/test-with-db.ps1` | Windows | PowerShell 版テストスクリプト |
-| `scripts/test_with_db.py` | 全 OS | クロスプラットフォーム Python スクリプト |
-
-### 推奨環境
-
-Windows で完全な互換性を得るには、以下のいずれかを推奨:
-
-1. **WSL2 + Docker Desktop** (推奨)
-   - Linux 環境で開発できるため、全てのスクリプトがそのまま動作
-   - Docker Desktop の WSL2 バックエンドを有効化
-
-2. **PowerShell + Docker Desktop**
-   - ネイティブ Windows 環境
-   - 提供されている PowerShell スクリプトを使用
-
-3. **Python スクリプト**
-   - `python scripts/test_with_db.py` で全 OS 共通のテスト実行
+api サービスの Private Networking を有効にし、`PORT` は api サービスの実際のポートを指定。
