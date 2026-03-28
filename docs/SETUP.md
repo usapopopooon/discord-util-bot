@@ -23,6 +23,8 @@
 | `ADMIN_EMAIL` | `admin@example.com` | 初期管理者メールアドレス |
 | `ADMIN_PASSWORD` | `changeme` | 初期管理者パスワード |
 | `SESSION_SECRET_KEY` | (ランダム生成) | JWT 署名キー |
+| `APP_URL` | `http://localhost:8000` | API 側で生成するメールリンクのベース URL |
+| `FRONTEND_URL` | (未設定時 `APP_URL`) | チケットクローズログ内リンクのベース URL |
 | `SECURE_COOKIE` | `true` | HTTPS のみ Cookie 送信 |
 | `CORS_ORIGINS` | `http://localhost:3000` | CORS 許可オリジン (カンマ区切り) |
 

@@ -172,7 +172,7 @@ async def send_close_log(
         return
 
     category_name = category.name
-    web_url = f"{app_url.rstrip('/')}/tickets/{ticket.id}"
+    web_url = f"{app_url.rstrip('/')}/dashboard/tickets/{ticket.id}"
 
     embed = discord.Embed(
         title=f"Ticket #{ticket.ticket_number} Closed",
@@ -427,7 +427,7 @@ class TicketCloseButton(discord.ui.Button[Any]):
                 ticket,
                 category,
                 interaction.user.name,
-                settings.app_url,
+                settings.ticket_web_base_url,
             )
 
             # チャンネル削除

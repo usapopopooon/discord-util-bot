@@ -155,6 +155,10 @@ class Settings(BaseSettings):
     # アプリの URL (パスワードリセットリンク用)
     app_url: str = "http://localhost:8000"
 
+    # フロントエンドのベース URL (Discord ログ内リンク用)
+    # 未設定時は app_url をフォールバックとして使用
+    frontend_url: str = ""
+
     # タイムゾーンオフセット (UTC からの時差。例: 9 = JST, -5 = EST)
     timezone_offset: int = 9
 
@@ -179,6 +183,15 @@ class Settings(BaseSettings):
             - :attr:`smtp_auth_required`: 認証が必要かどうか
         """
         return bool(self.smtp_host)
+
+    @property
+    def ticket_web_base_url(self) -> str:
+        """チケットログの Web URL ベースを返す。
+
+        Returns:
+            str: FRONTEND_URL が設定されていればその値、未設定なら app_url。
+        """
+        return self.frontend_url or self.app_url
 
     @property
     def smtp_auth_required(self) -> bool:

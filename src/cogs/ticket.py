@@ -189,7 +189,7 @@ class TicketCog(commands.Cog):
             ticket,
             category,
             interaction.user.name,
-            settings.app_url,
+            settings.ticket_web_base_url,
         )
 
         # チャンネル削除
