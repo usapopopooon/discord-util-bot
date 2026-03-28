@@ -52,7 +52,7 @@ class TestConfigEdgeCases:
 
         from src.config import Settings
 
-        settings = Settings()
+        settings = Settings(_env_file=None)  # type: ignore[call-arg]
         assert (
             settings.async_database_url == "postgresql+asyncpg://user:pass@localhost/db"
         )
@@ -66,7 +66,7 @@ class TestConfigEdgeCases:
 
         from src.config import Settings
 
-        settings = Settings()
+        settings = Settings(_env_file=None)  # type: ignore[call-arg]
         assert (
             settings.async_database_url == "postgresql+asyncpg://user:pass@localhost/db"
         )
@@ -80,7 +80,7 @@ class TestConfigEdgeCases:
 
         from src.config import Settings
 
-        settings = Settings()
+        settings = Settings(_env_file=None)  # type: ignore[call-arg]
         assert (
             settings.async_database_url == "postgresql+asyncpg://user:pass@localhost/db"
         )

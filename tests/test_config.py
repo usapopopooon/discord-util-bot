@@ -21,6 +21,7 @@ class TestAsyncDatabaseUrl:
         s = Settings(
             discord_token="test",
             database_url="postgres://user:pass@host:5432/db",
+            _env_file=None,  # type: ignore[call-arg]
         )
         assert s.async_database_url == ("postgresql+asyncpg://user:pass@host:5432/db")
 
@@ -29,6 +30,7 @@ class TestAsyncDatabaseUrl:
         s = Settings(
             discord_token="test",
             database_url="postgresql://user:pass@host:5432/db",
+            _env_file=None,  # type: ignore[call-arg]
         )
         assert s.async_database_url == ("postgresql+asyncpg://user:pass@host:5432/db")
 
@@ -37,6 +39,7 @@ class TestAsyncDatabaseUrl:
         s = Settings(
             discord_token="test",
             database_url="postgresql+asyncpg://user:pass@host:5432/db",
+            _env_file=None,  # type: ignore[call-arg]
         )
         assert s.async_database_url == ("postgresql+asyncpg://user:pass@host:5432/db")
 
@@ -51,6 +54,7 @@ class TestAsyncDatabaseUrl:
         s = Settings(
             discord_token="test",
             database_url="postgres://u:p@host/db?sslmode=require",
+            _env_file=None,  # type: ignore[call-arg]
         )
         assert s.async_database_url == (
             "postgresql+asyncpg://u:p@host/db?sslmode=require"
@@ -61,6 +65,7 @@ class TestAsyncDatabaseUrl:
         s = Settings(
             discord_token="test",
             database_url="postgresql://user:p%40ss@host:5432/db",
+            _env_file=None,  # type: ignore[call-arg]
         )
         assert s.async_database_url == ("postgresql+asyncpg://user:p%40ss@host:5432/db")
 
@@ -69,6 +74,7 @@ class TestAsyncDatabaseUrl:
         s = Settings(
             discord_token="test",
             database_url="postgres://user@host/db",
+            _env_file=None,  # type: ignore[call-arg]
         )
         assert s.async_database_url == "postgresql+asyncpg://user@host/db"
 
@@ -77,6 +83,7 @@ class TestAsyncDatabaseUrl:
         s = Settings(
             discord_token="test",
             database_url="postgres://user@postgres/db",
+            _env_file=None,  # type: ignore[call-arg]
         )
         assert s.async_database_url == ("postgresql+asyncpg://user@postgres/db")
 
@@ -85,6 +92,7 @@ class TestAsyncDatabaseUrl:
         s = Settings(
             discord_token="test",
             database_url="postgresql://u:p@host:5432/my_long_db_name",
+            _env_file=None,  # type: ignore[call-arg]
         )
         assert "my_long_db_name" in s.async_database_url
 
@@ -105,6 +113,7 @@ class TestSettingsValidation:
         s = Settings(
             discord_token="tok",
             database_url="postgresql+asyncpg://u@h/d",
+            _env_file=None,  # type: ignore[call-arg]
         )
         assert s.discord_token == "tok"
         assert s.database_url == "postgresql+asyncpg://u@h/d"

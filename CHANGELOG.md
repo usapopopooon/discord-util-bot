@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - Fixed dashboard maintenance page crash by aligning frontend schema with API response.
 - Updated tests to match ticket log URL path (`/dashboard/tickets/{id}`).
+- Wrapped login page `useSearchParams()` in `Suspense` boundary to fix Next.js build error.
+- Isolated config tests from local `.env` extra keys by passing `_env_file=None`.
 
 ### Docs
 - Expanded `.env.example` with complete environment variable template.
