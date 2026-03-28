@@ -4,7 +4,7 @@ import type { NextRequest } from 'next/server'
 const publicPaths = ['/login', '/api', '/_next', '/favicon.ico']
 
 export function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl
+  const { pathname, search } = request.nextUrl
 
   // Allow public paths
   if (publicPaths.some((p) => pathname.startsWith(p))) {
@@ -15,6 +15,7 @@ export function proxy(request: NextRequest) {
   const session = request.cookies.get('session')
   if (!session) {
     const loginUrl = new URL('/login', request.url)
+    loginUrl.searchParams.set('redirect', `${pathname}${search}`)
     return NextResponse.redirect(loginUrl)
   }
 

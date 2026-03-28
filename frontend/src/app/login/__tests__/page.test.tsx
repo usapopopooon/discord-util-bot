@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import LoginPage from '../page'
 
 const mockPush = vi.fn()
+const mockSearchParamsGet = vi.fn().mockReturnValue(null)
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -14,12 +15,16 @@ vi.mock('next/navigation', () => ({
     replace: vi.fn(),
     prefetch: vi.fn(),
   }),
+  useSearchParams: () => ({
+    get: mockSearchParamsGet,
+  }),
 }))
 
 describe('LoginPage', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     mockPush.mockClear()
+    mockSearchParamsGet.mockReturnValue(null)
   })
 
   it('renders the login form', () => {
@@ -59,6 +64,44 @@ describe('LoginPage', () => {
   })
 
   it('redirects to /dashboard on successful login', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ token: 'abc' }),
+    })
+
+    const user = userEvent.setup()
+    render(<LoginPage />)
+
+    await user.type(screen.getByLabelText('Email'), 'admin@example.com')
+    await user.type(screen.getByLabelText('Password'), 'password')
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/dashboard')
+    })
+  })
+
+  it('redirects to redirect query path on successful login', async () => {
+    mockSearchParamsGet.mockReturnValue('/dashboard/tickets/123')
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ token: 'abc' }),
+    })
+
+    const user = userEvent.setup()
+    render(<LoginPage />)
+
+    await user.type(screen.getByLabelText('Email'), 'admin@example.com')
+    await user.type(screen.getByLabelText('Password'), 'password')
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/dashboard/tickets/123')
+    })
+  })
+
+  it('falls back to /dashboard when redirect query is unsafe', async () => {
+    mockSearchParamsGet.mockReturnValue('//evil.example.com')
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ token: 'abc' }),
