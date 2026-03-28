@@ -1,8 +1,10 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
+import { useState } from 'react'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard' },
@@ -23,6 +25,23 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname()
+  const router = useRouter()
+  const [isLoggingOut, setIsLoggingOut] = useState(false)
+
+  async function handleLogout() {
+    if (isLoggingOut) return
+    setIsLoggingOut(true)
+    try {
+      await fetch('/api/v1/auth/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+    } finally {
+      router.push('/login')
+      router.refresh()
+      setIsLoggingOut(false)
+    }
+  }
 
   return (
     <aside className="flex h-screen w-64 flex-col border-r border-border bg-card">
@@ -49,6 +68,17 @@ export function Sidebar() {
           )
         })}
       </nav>
+      <div className="border-t border-border p-3">
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full justify-center"
+          onClick={handleLogout}
+          disabled={isLoggingOut}
+        >
+          {isLoggingOut ? 'Logging out...' : 'Logout'}
+        </Button>
+      </div>
     </aside>
   )
 }

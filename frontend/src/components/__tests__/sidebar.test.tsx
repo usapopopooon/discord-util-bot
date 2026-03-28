@@ -1,11 +1,18 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { beforeEach, describe, it, expect, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { Sidebar } from '../sidebar'
 
 const mockPathname = vi.fn().mockReturnValue('/dashboard')
+const mockPush = vi.fn()
+const mockRefresh = vi.fn()
 
 vi.mock('next/navigation', () => ({
   usePathname: () => mockPathname(),
+  useRouter: () => ({
+    push: mockPush,
+    refresh: mockRefresh,
+  }),
 }))
 
 const expectedNavItems = [
@@ -26,6 +33,40 @@ const expectedNavItems = [
 ]
 
 describe('Sidebar', () => {
+  beforeEach(() => {
+    mockPathname.mockReturnValue('/dashboard')
+    mockPush.mockClear()
+    mockRefresh.mockClear()
+    vi.unstubAllGlobals()
+  })
+
+  it('renders logout button', () => {
+    render(<Sidebar />)
+    expect(screen.getByRole('button', { name: 'Logout' })).toBeInTheDocument()
+  })
+
+  it('calls logout API and redirects to /login on logout click', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<Sidebar />)
+    await user.click(screen.getByRole('button', { name: 'Logout' }))
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/auth/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/login')
+      expect(mockRefresh).toHaveBeenCalled()
+    })
+
+    vi.unstubAllGlobals()
+  })
+
   it('renders the Bot Admin heading', () => {
     render(<Sidebar />)
     expect(screen.getByText('Bot Admin')).toBeInTheDocument()
