@@ -1537,7 +1537,7 @@ class TestSendCloseLog:
         embed = log_channel.send.call_args[1]["embed"]
         # Find the Transcript field
         transcript_field = next(f for f in embed.fields if f.name == "Transcript")
-        assert "http://localhost:8000/tickets/42" in transcript_field.value
+        assert "http://localhost:8000/dashboard/tickets/42" in transcript_field.value
 
     async def test_embed_includes_close_reason(self) -> None:
         """close_reason がある場合はEmbedに含まれる。"""
