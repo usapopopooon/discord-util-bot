@@ -17,25 +17,33 @@ import {
 import { toast } from 'sonner'
 
 interface MaintenanceStats {
-  lobbies: number
-  sessions: number
-  orphaned_channels: number
-  sticky_messages: number
-  bump_configs: number
-  automod_rules: number
-  tickets_open: number
-  tickets_closed: number
-  role_panels: number
-  join_role_configs: number
-  join_role_assignments: number
-  eventlog_configs: number
+  guild_count: number
+  lobbies: {
+    total: number
+    orphaned: number
+  }
+  bump_configs: {
+    total: number
+    orphaned: number
+  }
+  stickies: {
+    total: number
+    orphaned: number
+  }
+  role_panels: {
+    total: number
+    orphaned: number
+  }
 }
 
 interface CleanupResult {
-  orphaned_channels_removed: number
-  expired_assignments_removed: number
-  stale_sessions_removed: number
-  message: string
+  ok: boolean
+  deleted: {
+    lobbies: number
+    bump_configs: number
+    stickies: number
+    role_panels: number
+  }
 }
 
 export default function MaintenancePage() {
@@ -48,10 +56,9 @@ export default function MaintenancePage() {
   async function fetchStats() {
     try {
       const res = await fetch(`${API_BASE}/maintenance`)
-      if (res.ok) {
-        const data: MaintenanceStats = await res.json()
-        setStats(data)
-      }
+      if (!res.ok) return
+      const data: MaintenanceStats = await res.json()
+      setStats(data)
     } finally {
       setLoading(false)
     }
@@ -70,13 +77,7 @@ export default function MaintenancePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       })
-      if (res.ok) {
-        const result: CleanupResult = await res.json()
-        setCleanupResult(result)
-        toast.success('Cleanup completed successfully')
-        // Refresh stats
-        fetchStats()
-      } else {
+      if (!res.ok) {
         const body = await res.text()
         let msg: string
         try {
@@ -85,7 +86,13 @@ export default function MaintenancePage() {
           msg = body
         }
         toast.error(`Cleanup failed: ${msg}`)
+        return
       }
+      const result: CleanupResult = await res.json()
+      setCleanupResult(result)
+      toast.success('Cleanup completed successfully')
+      // Refresh stats
+      fetchStats()
     } catch {
       toast.error('Cleanup failed')
     } finally {
@@ -104,18 +111,15 @@ export default function MaintenancePage() {
 
   const statCards = stats
     ? [
-        { label: 'Voice Lobbies', value: stats.lobbies },
-        { label: 'Active Sessions', value: stats.sessions },
-        { label: 'Orphaned Channels', value: stats.orphaned_channels },
-        { label: 'Sticky Messages', value: stats.sticky_messages },
-        { label: 'Bump Configs', value: stats.bump_configs },
-        { label: 'AutoMod Rules', value: stats.automod_rules },
-        { label: 'Open Tickets', value: stats.tickets_open },
-        { label: 'Closed Tickets', value: stats.tickets_closed },
-        { label: 'Role Panels', value: stats.role_panels },
-        { label: 'Join Role Configs', value: stats.join_role_configs },
-        { label: 'Join Role Assignments', value: stats.join_role_assignments },
-        { label: 'Event Log Configs', value: stats.eventlog_configs },
+        { label: 'Active Guilds', value: stats.guild_count },
+        { label: 'Voice Lobbies', value: stats.lobbies.total },
+        { label: 'Orphaned Lobbies', value: stats.lobbies.orphaned },
+        { label: 'Bump Configs', value: stats.bump_configs.total },
+        { label: 'Orphaned Bump Configs', value: stats.bump_configs.orphaned },
+        { label: 'Sticky Messages', value: stats.stickies.total },
+        { label: 'Orphaned Stickies', value: stats.stickies.orphaned },
+        { label: 'Role Panels', value: stats.role_panels.total },
+        { label: 'Orphaned Role Panels', value: stats.role_panels.orphaned },
       ]
     : []
 
@@ -184,21 +188,22 @@ export default function MaintenancePage() {
               <CardContent>
                 <ul className="space-y-1 text-sm">
                   <li>
-                    Orphaned channels removed:{' '}
-                    <span className="font-medium">{cleanupResult.orphaned_channels_removed}</span>
+                    Orphaned lobbies removed:{' '}
+                    <span className="font-medium">{cleanupResult.deleted.lobbies}</span>
                   </li>
                   <li>
-                    Expired assignments removed:{' '}
-                    <span className="font-medium">{cleanupResult.expired_assignments_removed}</span>
+                    Orphaned bump configs removed:{' '}
+                    <span className="font-medium">{cleanupResult.deleted.bump_configs}</span>
                   </li>
                   <li>
-                    Stale sessions removed:{' '}
-                    <span className="font-medium">{cleanupResult.stale_sessions_removed}</span>
+                    Orphaned sticky messages removed:{' '}
+                    <span className="font-medium">{cleanupResult.deleted.stickies}</span>
+                  </li>
+                  <li>
+                    Orphaned role panels removed:{' '}
+                    <span className="font-medium">{cleanupResult.deleted.role_panels}</span>
                   </li>
                 </ul>
-                {cleanupResult.message && (
-                  <p className="mt-2 text-sm text-muted-foreground">{cleanupResult.message}</p>
-                )}
               </CardContent>
             </Card>
           )}
