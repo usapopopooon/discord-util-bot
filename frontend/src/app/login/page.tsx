@@ -18,9 +18,7 @@ export default function LoginPage() {
 
   const redirectParam = searchParams.get('redirect') ?? ''
   const redirectPath =
-    redirectParam.startsWith('/') && !redirectParam.startsWith('//')
-      ? redirectParam
-      : '/dashboard'
+    redirectParam.startsWith('/') && !redirectParam.startsWith('//') ? redirectParam : '/dashboard'
 
   async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault()
