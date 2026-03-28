@@ -29,7 +29,7 @@ CHECKS: list[Check] = [
     Check("Spell check (cspell)", ["npm", "run", "lint:spell"]),
     Check("JSON lint", ["npm", "run", "lint:json"]),
     Check("YAML lint", ["yamllint", "-s", "."]),
-    Check("TOML lint", ["python", "scripts/check_toml.py"]),
+    Check("TOML lint", ["taplo", "check", "pyproject.toml"]),
     Check("Ruff format", ["ruff", "format", "--check", "."]),
     Check("Ruff check", ["ruff", "check", "src", "tests"]),
     Check("mypy", ["mypy", "src"]),
@@ -43,11 +43,7 @@ CHECKS: list[Check] = [
         is_test=True,
         cwd="frontend",
     ),
-    Check(
-        "pytest",
-        ["python", "scripts/run_pytest_ci.py"],
-        is_test=True,
-    ),
+    Check("pytest", ["pytest", "--cov", "--cov-report=term-missing"], is_test=True),
     Check(
         "Frontend (build)",
         ["npm", "run", "build"],
