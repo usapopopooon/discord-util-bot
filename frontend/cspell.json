@@ -20,7 +20,8 @@
     "unban",
     "kbps",
     "cooldown",
-    "mypassword"
+    "mypassword",
+    "unstub"
   ],
   "ignorePaths": ["node_modules", ".next", "coverage", "components/ui"],
   "enableFiletypes": ["typescript", "typescriptreact"]
