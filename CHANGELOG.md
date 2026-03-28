@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2] - 2026-03-28
+
+### Added
+- Added logout action in dashboard sidebar.
+- Added redirect-back flow after re-login (`/login?redirect=...`).
+
+### Fixed
+- Fixed dashboard maintenance page crash by aligning frontend schema with API response.
+- Updated tests to match ticket log URL path (`/dashboard/tickets/{id}`).
+
+### Docs
+- Expanded `.env.example` with complete environment variable template.
+
+### Test
+- Stabilized test collection against local `.env` extra keys via test-side config initialization.
+
 ## [0.1.1] - 2026-03-28
 
 ### Fixed
