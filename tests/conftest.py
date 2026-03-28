@@ -1,9 +1,19 @@
 """Shared pytest fixtures."""
 
 import os
+from pathlib import Path
 
 # Set DISCORD_TOKEN before any src imports to avoid validation error
 os.environ.setdefault("DISCORD_TOKEN", "test-token-for-testing")
+
+# Initialize src.config once from tests/ cwd so local project .env extra keys
+# don't break test collection (CI does not rely on local .env).
+_project_cwd = Path.cwd()
+_tests_dir = Path(__file__).resolve().parent
+os.chdir(_tests_dir)
+import src.config as _config  # noqa: F401,E402
+
+os.chdir(_project_cwd)
 
 # =============================================================================
 # xdist: ワーカーごとに専用 DB を作成して並列テストを安全に実行する
