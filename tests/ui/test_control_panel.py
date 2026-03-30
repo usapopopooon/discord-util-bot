@@ -17,6 +17,7 @@ from src.ui.control_panel import (
     CameraToggleSelectMenu,
     CameraToggleSelectView,
     ControlPanelView,
+    DissolveConfirmView,
     KickSelectMenu,
     KickSelectView,
     RegionSelectMenu,
@@ -4117,3 +4118,148 @@ class TestNsfwButtonOwnerNotFound:
         interaction.edit_original_response.assert_awaited_once()
         call_kwargs = interaction.edit_original_response.call_args[1]
         assert "embed" not in call_kwargs
+
+
+# ===========================================================================
+# 解散ボタンテスト
+# ===========================================================================
+
+
+class TestDissolveButton:
+    """Tests for ControlPanelView.dissolve_button."""
+
+    async def test_sends_confirm_dialog(self) -> None:
+        """解散ボタンは確認ダイアログを表示する。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1)
+
+        await view.dissolve_button.callback(interaction)
+
+        interaction.response.send_message.assert_awaited_once()
+        call_args = interaction.response.send_message.call_args
+        assert "解散" in call_args[0][0]
+        kwargs = call_args[1]
+        assert isinstance(kwargs["view"], DissolveConfirmView)
+        assert kwargs["ephemeral"] is True
+
+    async def test_non_voice_channel_returns(self) -> None:
+        """VC 以外のチャンネルでは何もしない。"""
+        view = ControlPanelView(session_id=1)
+        interaction = _make_interaction(user_id=1, is_voice=False)
+
+        await view.dissolve_button.callback(interaction)
+
+        interaction.response.send_message.assert_not_awaited()
+
+    async def test_button_attributes(self) -> None:
+        """解散ボタンの属性が正しい。"""
+        view = ControlPanelView(session_id=1)
+        assert view.dissolve_button.label == "解散"
+        assert str(view.dissolve_button.emoji) == "💣"
+        assert view.dissolve_button.style == discord.ButtonStyle.danger
+
+
+class TestDissolveConfirmView:
+    """Tests for DissolveConfirmView."""
+
+    async def test_confirm_kicks_all_members_and_deletes_channel(self) -> None:
+        """確認ボタンで全メンバーキック + チャンネル削除。"""
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.id = 100
+
+        member1 = MagicMock(spec=discord.Member)
+        member1.move_to = AsyncMock()
+        member2 = MagicMock(spec=discord.Member)
+        member2.move_to = AsyncMock()
+        channel.members = [member1, member2]
+        channel.delete = AsyncMock()
+
+        view = DissolveConfirmView(channel)
+        interaction = _make_interaction(user_id=1)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.delete_voice_session",
+                new_callable=AsyncMock,
+            ) as mock_delete,
+        ):
+            await view.confirm_button.callback(interaction)
+
+        # 全メンバーがキックされた
+        member1.move_to.assert_awaited_once_with(None)
+        member2.move_to.assert_awaited_once_with(None)
+        # DB セッションが削除された
+        mock_delete.assert_awaited_once()
+        # チャンネルが削除された
+        channel.delete.assert_awaited_once()
+
+    async def test_confirm_handles_kick_failure(self) -> None:
+        """メンバーキック失敗時もチャンネル削除は実行される。"""
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.id = 100
+
+        member = MagicMock(spec=discord.Member)
+        member.move_to = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(), "error")
+        )
+        channel.members = [member]
+        channel.delete = AsyncMock()
+
+        view = DissolveConfirmView(channel)
+        interaction = _make_interaction(user_id=1)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.delete_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.confirm_button.callback(interaction)
+
+        # キック失敗してもチャンネルは削除される
+        channel.delete.assert_awaited_once()
+
+    async def test_confirm_empty_channel(self) -> None:
+        """メンバーがいない場合もチャンネル削除が実行される。"""
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.id = 100
+        channel.members = []
+        channel.delete = AsyncMock()
+
+        view = DissolveConfirmView(channel)
+        interaction = _make_interaction(user_id=1)
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.delete_voice_session",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await view.confirm_button.callback(interaction)
+
+        channel.delete.assert_awaited_once()
+
+    async def test_cancel_shows_message(self) -> None:
+        """キャンセルボタンでメッセージが表示される。"""
+        channel = MagicMock(spec=discord.VoiceChannel)
+        view = DissolveConfirmView(channel)
+        interaction = _make_interaction(user_id=1)
+
+        await view.cancel_button.callback(interaction)
+
+        interaction.response.edit_message.assert_awaited_once()
+        call_kwargs = interaction.response.edit_message.call_args[1]
+        assert "キャンセル" in call_kwargs["content"]
+        assert call_kwargs["view"] is None
+
+    async def test_confirm_view_timeout(self) -> None:
+        """確認ダイアログのタイムアウトは30秒。"""
+        channel = MagicMock(spec=discord.VoiceChannel)
+        view = DissolveConfirmView(channel)
+        assert view.timeout == 30

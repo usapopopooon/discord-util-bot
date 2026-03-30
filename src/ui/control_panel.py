@@ -17,6 +17,7 @@ discord.py の UI コンポーネント:
   - ephemeral=True: 操作者にだけ見えるメッセージ
 """
 
+import contextlib
 import logging
 import time
 from typing import Any
@@ -29,7 +30,11 @@ from src.core.permissions import is_owner
 from src.core.validators import validate_channel_name, validate_user_limit
 from src.database.engine import async_session
 from src.database.models import VoiceSession
-from src.services.db_service import get_voice_session, update_voice_session
+from src.services.db_service import (
+    delete_voice_session,
+    get_voice_session,
+    update_voice_session,
+)
 from src.utils import get_resource_lock
 
 logger = logging.getLogger(__name__)
@@ -835,6 +840,58 @@ class RegionSelectMenu(discord.ui.Select[Any]):
             await channel.send(f"🌏 リージョンが **{region_name}** に変更されました。")
 
 
+class DissolveConfirmView(discord.ui.View):
+    """解散の確認ダイアログ。
+
+    「解散する」ボタンで全メンバーをキックし、チャンネルを削除する。
+    「キャンセル」で操作を取り消す。
+    """
+
+    def __init__(self, channel: discord.VoiceChannel) -> None:
+        super().__init__(timeout=30)
+        self.channel = channel
+
+    @discord.ui.button(
+        label="解散する",
+        emoji="💣",
+        style=discord.ButtonStyle.danger,
+    )
+    async def confirm_button(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
+    ) -> None:
+        """解散を実行する。全メンバーをキックし、チャンネルを削除する。"""
+        await interaction.response.edit_message(
+            content="チャンネルを解散しています...", view=None
+        )
+
+        # 全メンバーを VC から切断 (Bot 含む全員)
+        for member in list(self.channel.members):
+            with contextlib.suppress(discord.HTTPException):
+                await member.move_to(None)
+
+        # DB からセッションを削除
+        async with async_session() as db_session:
+            await delete_voice_session(db_session, str(self.channel.id))
+
+        # チャンネルを削除
+        try:
+            await self.channel.delete(reason="オーナーによる解散")
+        except discord.HTTPException as e:
+            logger.warning("Failed to delete channel %s: %s", self.channel.id, e)
+
+    @discord.ui.button(
+        label="キャンセル",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def cancel_button(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
+    ) -> None:
+        """解散をキャンセルする。"""
+        await interaction.response.edit_message(
+            content="解散をキャンセルしました。", view=None
+        )
+
+
 # =============================================================================
 # Main Control Panel View (メインのボタン群)
 # =============================================================================
@@ -849,7 +906,7 @@ class ControlPanelView(discord.ui.View):
       Row 0: [名前変更] [人数制限]
       Row 1: [ビットレート] [リージョン]
       Row 2: [ロック] [非表示] [年齢制限]
-      Row 3: [譲渡] [キック]
+      Row 3: [譲渡] [キック] [解散]
       Row 4: [ブロック] [許可] [カメラ禁止] [カメラ許可]
 
     timeout=None: タイムアウトなし (永続 View)。
@@ -1326,6 +1383,29 @@ class ControlPanelView(discord.ui.View):
         await interaction.response.send_message(
             "キックするユーザーを選択:",
             view=view,
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="解散",
+        emoji="💣",
+        style=discord.ButtonStyle.danger,
+        custom_id="dissolve_button",
+        row=3,
+    )
+    async def dissolve_button(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
+    ) -> None:
+        """解散ボタン。確認後、全メンバーをキックしてチャンネルを削除する。"""
+        channel = interaction.channel
+        if not isinstance(channel, discord.VoiceChannel) or not interaction.guild:
+            return
+
+        # 確認ダイアログを表示
+        await interaction.response.send_message(
+            "本当にこのチャンネルを解散しますか？\n"
+            "全メンバーがキックされ、チャンネルが削除されます。",
+            view=DissolveConfirmView(channel),
             ephemeral=True,
         )
 
