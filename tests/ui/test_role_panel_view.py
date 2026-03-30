@@ -59,6 +59,7 @@ def _make_role_panel(
     color: int | None = None,
     message_id: str | None = None,
     use_embed: bool = True,
+    excluded_role_ids: str = "[]",
 ) -> MagicMock:
     """Create a mock RolePanel object."""
     panel = MagicMock()
@@ -71,6 +72,7 @@ def _make_role_panel(
     panel.color = color
     panel.message_id = message_id
     panel.use_embed = use_embed
+    panel.excluded_role_ids = excluded_role_ids
     return panel
 
 
@@ -1227,6 +1229,149 @@ class TestCooldownFeature:
             await handle_role_reaction(payload, "add")
             # セッションが開始されないことを確認 (クールダウンで早期リターン)
             mock_session.assert_not_called()
+
+
+class TestRoleButtonExcludedRoles:
+    """RoleButton の除外ロールチェックのテスト。"""
+
+    @pytest.mark.asyncio
+    async def test_button_callback_blocks_excluded_role(self) -> None:
+        """除外ロールを持つユーザーはパネルを使用できない。"""
+        import json
+
+        clear_cooldown_cache()
+
+        item = _make_role_panel_item(emoji="🎮", role_id="111")
+        button = RoleButton(panel_id=1, item=item)
+
+        # 除外ロール "555" を持つメンバー
+        excluded_role = MagicMock(spec=discord.Role)
+        excluded_role.id = 555
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.user = MagicMock(spec=discord.Member)
+        interaction.user.id = 12345
+        interaction.user.roles = [excluded_role]
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+
+        mock_panel = _make_role_panel(
+            panel_id=1,
+            excluded_role_ids=json.dumps(["555"]),
+        )
+
+        with patch("src.ui.role_panel_view.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.ui.role_panel_view.get_role_panel") as mock_get:
+                mock_get.return_value = mock_panel
+
+                await button.callback(interaction)
+
+        interaction.response.send_message.assert_called_once()
+        call_args = interaction.response.send_message.call_args
+        assert "あなたのロールではこのパネルを使用できません" in call_args.args[0]
+        assert call_args.kwargs.get("ephemeral") is True
+
+    @pytest.mark.asyncio
+    async def test_button_callback_allows_non_excluded_role(self) -> None:
+        """除外ロールを持たないユーザーはパネルを使用できる。"""
+        import json
+
+        clear_cooldown_cache()
+
+        item = _make_role_panel_item(emoji="🎮", role_id="111")
+        button = RoleButton(panel_id=1, item=item)
+
+        # 除外対象ではないロール "999" を持つメンバー
+        other_role = MagicMock(spec=discord.Role)
+        other_role.id = 999
+
+        target_role = MagicMock(spec=discord.Role)
+        target_role.id = 111
+        target_role.name = "TestRole"
+
+        bot_role = MagicMock(spec=discord.Role)
+        bot_role.id = 888
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.guild.get_role.return_value = target_role
+        interaction.guild.me = MagicMock()
+        interaction.guild.me.top_role = bot_role
+        # target_role < bot_role
+        target_role.__ge__ = MagicMock(return_value=False)
+        interaction.user = MagicMock(spec=discord.Member)
+        interaction.user.id = 12345
+        interaction.user.roles = [other_role]
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+
+        mock_panel = _make_role_panel(
+            panel_id=1,
+            excluded_role_ids=json.dumps(["555"]),
+        )
+
+        with patch("src.ui.role_panel_view.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.ui.role_panel_view.get_role_panel") as mock_get:
+                mock_get.return_value = mock_panel
+
+                await button.callback(interaction)
+
+        # ロール付与メッセージが返される (ブロックされない)
+        interaction.response.send_message.assert_called_once()
+        call_args = interaction.response.send_message.call_args
+        assert "あなたのロールではこのパネルを使用できません" not in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_button_callback_allows_empty_excluded_list(self) -> None:
+        """除外ロールが空の場合は全員使用できる。"""
+        clear_cooldown_cache()
+
+        item = _make_role_panel_item(emoji="🎮", role_id="111")
+        button = RoleButton(panel_id=1, item=item)
+
+        some_role = MagicMock(spec=discord.Role)
+        some_role.id = 999
+
+        target_role = MagicMock(spec=discord.Role)
+        target_role.id = 111
+        target_role.name = "TestRole"
+
+        bot_role = MagicMock(spec=discord.Role)
+        bot_role.id = 888
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock(spec=discord.Guild)
+        interaction.guild.get_role.return_value = target_role
+        interaction.guild.me = MagicMock()
+        interaction.guild.me.top_role = bot_role
+        target_role.__ge__ = MagicMock(return_value=False)
+        interaction.user = MagicMock(spec=discord.Member)
+        interaction.user.id = 12345
+        interaction.user.roles = [some_role]
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+
+        mock_panel = _make_role_panel(panel_id=1, excluded_role_ids="[]")
+
+        with patch("src.ui.role_panel_view.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch("src.ui.role_panel_view.get_role_panel") as mock_get:
+                mock_get.return_value = mock_panel
+
+                await button.callback(interaction)
+
+        # ブロックされない
+        call_args = interaction.response.send_message.call_args
+        assert "あなたのロールではこのパネルを使用できません" not in call_args.args[0]
 
 
 class TestRolePanelCleanupGuard:

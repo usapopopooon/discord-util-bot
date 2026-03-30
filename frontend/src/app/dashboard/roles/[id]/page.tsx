@@ -78,6 +78,7 @@ export default function RolePanelDetailPage({ params }: { params: Promise<{ id: 
   const [description, setDescription] = useState('')
   const [color, setColor] = useState('#5865F2')
   const [removeReaction, setRemoveReaction] = useState(false)
+  const [excludedRoleIds, setExcludedRoleIds] = useState<string[]>([])
 
   // Add item form state
   const [newEmoji, setNewEmoji] = useState('')
@@ -98,6 +99,7 @@ export default function RolePanelDetailPage({ params }: { params: Promise<{ id: 
       setDescription(res.panel.description ?? '')
       setColor(intToHex(res.panel.color))
       setRemoveReaction(res.panel.remove_reaction ?? false)
+      setExcludedRoleIds(res.panel.excluded_role_ids ?? [])
     }
     setLoading(false)
   }
@@ -135,6 +137,7 @@ export default function RolePanelDetailPage({ params }: { params: Promise<{ id: 
           description: description.trim() || null,
           color: color ? hexToInt(color) : null,
           remove_reaction: removeReaction,
+          excluded_role_ids: excludedRoleIds,
         }),
       })
       if (res.ok) {
@@ -314,6 +317,53 @@ export default function RolePanelDetailPage({ params }: { params: Promise<{ id: 
                 </label>
               </div>
             )}
+
+            <div>
+              <label className="text-sm font-medium mb-1.5 block">Excluded Roles</label>
+              <p className="text-xs text-muted-foreground mb-2">
+                These roles will be blocked from using this panel.
+              </p>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {excludedRoleIds.map((roleId) => {
+                  const roleName = resolveRoleName(guildRoles, roleId)
+                  return (
+                    <Badge key={roleId} variant="secondary" className="gap-1">
+                      {roleName}
+                      <button
+                        type="button"
+                        className="ml-1 text-muted-foreground hover:text-foreground"
+                        onClick={() =>
+                          setExcludedRoleIds((prev) => prev.filter((id) => id !== roleId))
+                        }
+                      >
+                        x
+                      </button>
+                    </Badge>
+                  )
+                })}
+              </div>
+              <Select
+                value=""
+                onValueChange={(v) => {
+                  if (v && !excludedRoleIds.includes(v)) {
+                    setExcludedRoleIds((prev) => [...prev, v])
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Add excluded role..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {guildRoles
+                    .filter((r) => !excludedRoleIds.includes(r.id))
+                    .map((role) => (
+                      <SelectItem key={role.id} value={role.id}>
+                        {role.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
 
             <Button type="submit" disabled={submitting || !title.trim()}>
               {submitting ? 'Saving...' : 'Save Changes'}

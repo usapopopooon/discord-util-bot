@@ -10,6 +10,7 @@ UI の構成:
   - create_role_panel_content(): 通常テキスト生成関数
 """
 
+import json
 import logging
 import time
 from typing import Any
@@ -20,6 +21,7 @@ from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.database.models import RolePanel, RolePanelItem
 from src.services.db_service import (
+    get_role_panel,
     get_role_panel_item_by_emoji,
 )
 from src.utils import normalize_emoji
@@ -203,6 +205,24 @@ class RoleButton(discord.ui.Button[Any]):
                 "メンバー情報を取得できませんでした。", ephemeral=True
             )
             return
+
+        # 除外ロールチェック
+        async with async_session() as db_session:
+            panel_obj = await get_role_panel(db_session, self.panel_id)
+            if panel_obj:
+                try:
+                    excluded = json.loads(panel_obj.excluded_role_ids)
+                except (json.JSONDecodeError, TypeError):
+                    excluded = []
+                if excluded:
+                    member_role_ids = {str(r.id) for r in member.roles}
+                    matched = member_role_ids & set(excluded)
+                    if matched:
+                        await interaction.response.send_message(
+                            "あなたのロールではこのパネルを使用できません。",
+                            ephemeral=True,
+                        )
+                        return
 
         role = interaction.guild.get_role(int(self.role_id))
         if role is None:

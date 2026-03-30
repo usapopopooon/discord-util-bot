@@ -133,6 +133,7 @@ export interface RolePanel {
   description: string | null
   color: number | null
   remove_reaction: boolean
+  excluded_role_ids: string[]
   item_count: number
 }
 export interface RolePanelItem {

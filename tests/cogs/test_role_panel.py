@@ -66,6 +66,48 @@ class TestRolePanelModel:
         assert panel.use_embed is True
 
 
+class TestRolePanelExcludedRoleIds:
+    """RolePanel excluded_role_ids フィールドのテスト。"""
+
+    def test_excluded_role_ids_field_exists(self) -> None:
+        """excluded_role_ids フィールドが存在し値を設定できる。"""
+        panel = RolePanel(
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+            excluded_role_ids="[]",
+        )
+        assert panel.excluded_role_ids == "[]"
+
+    def test_excluded_role_ids_can_be_set(self) -> None:
+        """excluded_role_ids に JSON 文字列を設定できる。"""
+        import json
+
+        excluded = ["111", "222", "333"]
+        panel = RolePanel(
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+            excluded_role_ids=json.dumps(excluded),
+        )
+        assert json.loads(panel.excluded_role_ids) == excluded
+
+    def test_excluded_role_ids_empty_list(self) -> None:
+        """excluded_role_ids に空リストを設定できる。"""
+        import json
+
+        panel = RolePanel(
+            guild_id="123",
+            channel_id="456",
+            panel_type="button",
+            title="Test Panel",
+            excluded_role_ids="[]",
+        )
+        assert json.loads(panel.excluded_role_ids) == []
+
+
 class TestRolePanelItemModel:
     """RolePanelItem モデルのテスト。"""
 
@@ -1421,6 +1463,21 @@ class TestHandleReaction:
 class TestRoleButtonCallback:
     """RoleButton.callback のテスト。"""
 
+    @pytest.fixture(autouse=True)
+    def _mock_excluded_roles_check(self) -> None:
+        """除外ロールチェックの DB アクセスをモックする。"""
+        mock_panel = MagicMock()
+        mock_panel.excluded_role_ids = "[]"
+
+        with patch("src.ui.role_panel_view.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch(
+                "src.ui.role_panel_view.get_role_panel", return_value=mock_panel
+            ):
+                yield
+
     async def test_callback_no_guild_error(self) -> None:
         """ギルド外でエラーを返す。"""
         from src.ui.role_panel_view import RoleButton
@@ -2744,12 +2801,229 @@ class TestHandleReactionSuccess:
 
 
 # =============================================================================
+# Reaction Handler Excluded Roles Tests
+# =============================================================================
+
+
+class TestHandleReactionExcludedRoles:
+    """リアクションハンドラの除外ロールテスト。"""
+
+    @pytest.fixture
+    def mock_bot(self) -> MagicMock:
+        """Mock Bot."""
+        bot = MagicMock(spec=commands.Bot)
+        bot.user = MagicMock()
+        bot.user.id = 999
+        return bot
+
+    async def test_excluded_role_blocks_reaction_add(self, mock_bot: MagicMock) -> None:
+        """除外ロールを持つユーザーはリアクションでロール付与されない。"""
+        import json
+
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+        payload = MagicMock(spec=discord.RawReactionActionEvent)
+        payload.user_id = 123
+        payload.message_id = 456
+        payload.guild_id = 789
+        payload.channel_id = 111
+        payload.emoji = MagicMock()
+        payload.emoji.__str__ = MagicMock(return_value="🎮")
+
+        mock_panel = RolePanel(
+            id=1,
+            guild_id="789",
+            channel_id="111",
+            panel_type="reaction",
+            title="Test",
+            remove_reaction=False,
+            excluded_role_ids=json.dumps(["555"]),
+        )
+        mock_item = RolePanelItem(
+            id=1, panel_id=1, role_id="222", emoji="🎮", position=0
+        )
+
+        # 除外ロール "555" を持つメンバー
+        excluded_role = MagicMock(spec=discord.Role)
+        excluded_role.id = 555
+
+        mock_member = MagicMock(spec=discord.Member)
+        mock_member.bot = False
+        mock_member.roles = [excluded_role]
+        mock_member.add_roles = AsyncMock()
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.get_member.return_value = mock_member
+        mock_guild.get_role.return_value = MagicMock(spec=discord.Role)
+
+        mock_bot.get_guild.return_value = mock_guild
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch(
+                "src.cogs.role_panel.get_role_panel_by_message_id"
+            ) as mock_get_panel:
+                mock_get_panel.return_value = mock_panel
+
+                with patch(
+                    "src.cogs.role_panel.get_role_panel_item_by_emoji"
+                ) as mock_get_item:
+                    mock_get_item.return_value = mock_item
+
+                    await cog._handle_reaction(payload, "add")
+
+        # ロール付与が呼ばれないことを確認
+        mock_member.add_roles.assert_not_awaited()
+
+    async def test_non_excluded_role_allows_reaction(self, mock_bot: MagicMock) -> None:
+        """除外ロールを持たないユーザーはリアクションでロール付与される。"""
+        import json
+
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+        payload = MagicMock(spec=discord.RawReactionActionEvent)
+        payload.user_id = 123
+        payload.message_id = 456
+        payload.guild_id = 789
+        payload.channel_id = 111
+        payload.emoji = MagicMock()
+        payload.emoji.__str__ = MagicMock(return_value="🎮")
+
+        mock_panel = RolePanel(
+            id=1,
+            guild_id="789",
+            channel_id="111",
+            panel_type="reaction",
+            title="Test",
+            remove_reaction=False,
+            excluded_role_ids=json.dumps(["555"]),
+        )
+        mock_item = RolePanelItem(
+            id=1, panel_id=1, role_id="222", emoji="🎮", position=0
+        )
+
+        mock_role = MagicMock(spec=discord.Role)
+        mock_role.name = "TestRole"
+
+        # 除外対象ではないロール "999" を持つメンバー
+        other_role = MagicMock(spec=discord.Role)
+        other_role.id = 999
+
+        mock_member = MagicMock(spec=discord.Member)
+        mock_member.bot = False
+        mock_member.roles = [other_role]
+        mock_member.add_roles = AsyncMock()
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.get_member.return_value = mock_member
+        mock_guild.get_role.return_value = mock_role
+
+        mock_bot.get_guild.return_value = mock_guild
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch(
+                "src.cogs.role_panel.get_role_panel_by_message_id"
+            ) as mock_get_panel:
+                mock_get_panel.return_value = mock_panel
+
+                with patch(
+                    "src.cogs.role_panel.get_role_panel_item_by_emoji"
+                ) as mock_get_item:
+                    mock_get_item.return_value = mock_item
+
+                    await cog._handle_reaction(payload, "add")
+
+        # ロール付与が呼ばれることを確認
+        mock_member.add_roles.assert_awaited_once()
+
+    async def test_empty_excluded_list_allows_all(self, mock_bot: MagicMock) -> None:
+        """除外ロールが空の場合は全員使用できる。"""
+        from src.cogs.role_panel import RolePanelCog
+
+        cog = RolePanelCog(mock_bot)
+        payload = MagicMock(spec=discord.RawReactionActionEvent)
+        payload.user_id = 123
+        payload.message_id = 456
+        payload.guild_id = 789
+        payload.channel_id = 111
+        payload.emoji = MagicMock()
+        payload.emoji.__str__ = MagicMock(return_value="🎮")
+
+        mock_panel = RolePanel(
+            id=1,
+            guild_id="789",
+            channel_id="111",
+            panel_type="reaction",
+            title="Test",
+            remove_reaction=False,
+            excluded_role_ids="[]",
+        )
+        mock_item = RolePanelItem(
+            id=1, panel_id=1, role_id="222", emoji="🎮", position=0
+        )
+
+        mock_role = MagicMock(spec=discord.Role)
+        mock_role.name = "TestRole"
+
+        mock_member = MagicMock(spec=discord.Member)
+        mock_member.bot = False
+        mock_member.roles = []
+        mock_member.add_roles = AsyncMock()
+
+        mock_guild = MagicMock(spec=discord.Guild)
+        mock_guild.get_member.return_value = mock_member
+        mock_guild.get_role.return_value = mock_role
+
+        mock_bot.get_guild.return_value = mock_guild
+
+        with patch("src.cogs.role_panel.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch(
+                "src.cogs.role_panel.get_role_panel_by_message_id"
+            ) as mock_get_panel:
+                mock_get_panel.return_value = mock_panel
+
+                with patch(
+                    "src.cogs.role_panel.get_role_panel_item_by_emoji"
+                ) as mock_get_item:
+                    mock_get_item.return_value = mock_item
+
+                    await cog._handle_reaction(payload, "add")
+
+        mock_member.add_roles.assert_awaited_once()
+
+
+# =============================================================================
 # RoleButton HTTPException Test
 # =============================================================================
 
 
 class TestRoleButtonHTTPException:
     """RoleButton の HTTPException テスト。"""
+
+    @pytest.fixture(autouse=True)
+    def _mock_excluded_roles_check(self) -> None:
+        """除外ロールチェックの DB アクセスをモックする。"""
+        mock_panel = MagicMock()
+        mock_panel.excluded_role_ids = "[]"
+
+        with patch("src.ui.role_panel_view.async_session") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__.return_value = mock_db
+
+            with patch(
+                "src.ui.role_panel_view.get_role_panel", return_value=mock_panel
+            ):
+                yield
 
     async def test_callback_http_exception_error(self) -> None:
         """HTTPException でエラーを返す。"""

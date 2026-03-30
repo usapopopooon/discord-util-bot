@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { API_BASE } from '@/lib/constants'
 import type { GuildsMap, ChannelsMap, RolesMap } from '@/lib/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -51,6 +52,7 @@ export default function RolePanelNewPage() {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [color, setColor] = useState('#5865F2')
+  const [excludedRoleIds, setExcludedRoleIds] = useState<string[]>([])
   const [items, setItems] = useState<ItemForm[]>([emptyItem()])
 
   useEffect(() => {
@@ -94,6 +96,7 @@ export default function RolePanelNewPage() {
         description: description.trim() || null,
         color: color ? hexToInt(color) : null,
         remove_reaction: false,
+        excluded_role_ids: excludedRoleIds,
         items: items
           .filter((item) => item.role_id)
           .map((item, i) => ({
@@ -205,6 +208,54 @@ export default function RolePanelNewPage() {
                   className="w-32"
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-1.5 block">Excluded Roles</label>
+              <p className="text-xs text-muted-foreground mb-2">
+                These roles will be blocked from using this panel.
+              </p>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {excludedRoleIds.map((roleId) => {
+                  const role = filteredRoles.find((r) => r.id === roleId)
+                  return (
+                    <Badge key={roleId} variant="secondary" className="gap-1">
+                      {role?.name ?? roleId}
+                      <button
+                        type="button"
+                        className="ml-1 text-muted-foreground hover:text-foreground"
+                        onClick={() =>
+                          setExcludedRoleIds((prev) => prev.filter((id) => id !== roleId))
+                        }
+                      >
+                        x
+                      </button>
+                    </Badge>
+                  )
+                })}
+              </div>
+              <Select
+                value=""
+                onValueChange={(v) => {
+                  if (v && !excludedRoleIds.includes(v)) {
+                    setExcludedRoleIds((prev) => [...prev, v])
+                  }
+                }}
+                disabled={!selectedGuild}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Add excluded role..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {filteredRoles
+                    .filter((r) => !excludedRoleIds.includes(r.id))
+                    .map((role) => (
+                      <SelectItem key={role.id} value={role.id}>
+                        {role.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div>

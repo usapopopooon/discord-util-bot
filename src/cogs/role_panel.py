@@ -14,6 +14,7 @@
   - reaction: リアクション式
 """
 
+import json
 import logging
 from typing import Literal
 
@@ -435,6 +436,12 @@ class RolePanelCog(commands.Cog):
             # remove_reaction モードの情報を保持
             remove_reaction_mode = panel.remove_reaction
 
+            # 除外ロール ID を保持
+            try:
+                excluded_role_ids = json.loads(panel.excluded_role_ids)
+            except (json.JSONDecodeError, TypeError):
+                excluded_role_ids = []
+
         # ギルドとメンバーを取得
         guild = self.bot.get_guild(payload.guild_id) if payload.guild_id else None
         if guild is None:
@@ -449,6 +456,17 @@ class RolePanelCog(commands.Cog):
 
         if member.bot:
             return
+
+        # 除外ロールチェック
+        if excluded_role_ids:
+            member_role_ids = {str(r.id) for r in member.roles}
+            if member_role_ids & set(excluded_role_ids):
+                logger.debug(
+                    "User %s blocked by excluded roles on panel %d",
+                    member.display_name,
+                    panel.id,
+                )
+                return
 
         role = guild.get_role(int(item.role_id))
         if role is None:

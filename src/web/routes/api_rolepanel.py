@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import suppress
 from typing import Any
 
@@ -34,6 +35,11 @@ router = APIRouter(prefix="/api/v1", tags=["api-rolepanels"])
 
 def _serialize_panel(panel: RolePanel, *, item_count: int = 0) -> dict[str, Any]:
     """Serialize a RolePanel to a JSON-safe dict (list view)."""
+    try:
+        excluded = json.loads(panel.excluded_role_ids)
+    except (json.JSONDecodeError, TypeError):
+        excluded = []
+
     return {
         "id": panel.id,
         "guild_id": panel.guild_id,
@@ -44,6 +50,7 @@ def _serialize_panel(panel: RolePanel, *, item_count: int = 0) -> dict[str, Any]
         "description": panel.description,
         "color": panel.color,
         "remove_reaction": panel.remove_reaction,
+        "excluded_role_ids": excluded,
         "item_count": item_count,
     }
 
@@ -280,6 +287,14 @@ async def api_rolepanels_create(
             }
         )
 
+    # Validate excluded_role_ids
+    excluded_raw = body.get("excluded_role_ids", [])
+    if not isinstance(excluded_raw, list) or not all(
+        isinstance(r, str) and r.isdigit() for r in excluded_raw
+    ):
+        excluded_raw = []
+    excluded_json = json.dumps(excluded_raw)
+
     async with get_resource_lock(f"rolepanel:create:{user_email}"):
         panel = RolePanel(
             guild_id=guild_id,
@@ -290,6 +305,7 @@ async def api_rolepanels_create(
             color=color_int,
             remove_reaction=panel_type == "reaction"
             and bool(body.get("remove_reaction")),
+            excluded_role_ids=excluded_json,
         )
         db.add(panel)
         await db.flush()
@@ -361,6 +377,16 @@ async def api_rolepanels_update(
 
     panel.title = title
     panel.description = description or None
+
+    # Update excluded_role_ids
+    excluded_raw = body.get("excluded_role_ids")
+    if excluded_raw is not None:
+        if isinstance(excluded_raw, list) and all(
+            isinstance(r, str) and r.isdigit() for r in excluded_raw
+        ):
+            panel.excluded_role_ids = json.dumps(excluded_raw)
+        else:
+            panel.excluded_role_ids = "[]"
 
     if panel.use_embed and color_raw is not None:
         if isinstance(color_raw, int):
@@ -445,6 +471,7 @@ async def api_rolepanels_copy(
             color=panel.color,
             use_embed=panel.use_embed,
             remove_reaction=panel.remove_reaction,
+            excluded_role_ids=panel.excluded_role_ids,
         )
         db.add(new_panel)
         await db.flush()

@@ -750,6 +750,12 @@ class RolePanel(Base):
         Boolean, default=True, nullable=False, server_default="1"
     )
 
+    # excluded_role_ids: 除外ロール ID リスト (JSON 文字列)
+    # このリストに含まれるロールを持つユーザーはパネルからロールを取得できない
+    excluded_role_ids: Mapped[str] = mapped_column(
+        String, default="[]", nullable=False, server_default="[]"
+    )
+
     # created_at: 作成日時 (UTC)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
