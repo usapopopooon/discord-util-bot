@@ -4164,15 +4164,10 @@ class TestDissolveConfirmView:
     """Tests for DissolveConfirmView."""
 
     async def test_confirm_countdown_and_dissolve(self) -> None:
-        """確認ボタンでカウントダウン後に全メンバーキック + チャンネル削除。"""
+        """確認ボタンでカウントダウン後に DB 削除 + チャンネル削除。"""
         channel = MagicMock(spec=discord.VoiceChannel)
         channel.id = 100
-
-        member1 = MagicMock(spec=discord.Member)
-        member1.move_to = AsyncMock()
-        member2 = MagicMock(spec=discord.Member)
-        member2.move_to = AsyncMock()
-        channel.members = [member1, member2]
+        channel.members = []
         channel.delete = AsyncMock()
 
         countdown_msg = MagicMock()
@@ -4198,9 +4193,6 @@ class TestDissolveConfirmView:
         assert "10" in channel.send.call_args[0][0]
         # カウントダウン中にメッセージが編集された (9回: 9→1)
         assert countdown_msg.edit.call_count >= 9
-        # 全メンバーがキックされた
-        member1.move_to.assert_awaited_once_with(None)
-        member2.move_to.assert_awaited_once_with(None)
         # DB セッションが削除された
         mock_delete.assert_awaited_once()
         # チャンネルが削除された
@@ -4244,17 +4236,14 @@ class TestDissolveConfirmView:
         # チャンネルは削除されない
         channel.delete.assert_not_awaited()
 
-    async def test_confirm_handles_kick_failure(self) -> None:
-        """メンバーキック失敗時もチャンネル削除は実行される。"""
+    async def test_confirm_channel_already_deleted(self) -> None:
+        """チャンネルが既に削除済みでもエラーにならない。"""
         channel = MagicMock(spec=discord.VoiceChannel)
         channel.id = 100
-
-        member = MagicMock(spec=discord.Member)
-        member.move_to = AsyncMock(
-            side_effect=discord.HTTPException(MagicMock(), "error")
+        channel.members = []
+        channel.delete = AsyncMock(
+            side_effect=discord.NotFound(MagicMock(), "Unknown Channel")
         )
-        channel.members = [member]
-        channel.delete = AsyncMock()
 
         countdown_msg = MagicMock()
         countdown_msg.edit = AsyncMock()
@@ -4272,9 +4261,43 @@ class TestDissolveConfirmView:
             ),
             patch("src.ui.control_panel.asyncio.sleep", new_callable=AsyncMock),
         ):
+            # NotFound でも例外が飛ばない
             await view.confirm_button.callback(interaction)
 
         channel.delete.assert_awaited_once()
+
+    async def test_db_deleted_before_channel(self) -> None:
+        """DB セッションがチャンネル削除より先に削除される。"""
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.id = 100
+        channel.members = []
+
+        call_order: list[str] = []
+        channel.delete = AsyncMock(side_effect=lambda **_: call_order.append("channel"))
+
+        countdown_msg = MagicMock()
+        countdown_msg.edit = AsyncMock()
+        channel.send = AsyncMock(return_value=countdown_msg)
+
+        view = DissolveConfirmView(channel)
+        interaction = _make_interaction(user_id=1)
+
+        async def mock_delete_session(*_args: object, **_kwargs: object) -> bool:
+            call_order.append("db")
+            return True
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.delete_voice_session",
+                side_effect=mock_delete_session,
+            ),
+            patch("src.ui.control_panel.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await view.confirm_button.callback(interaction)
+
+        assert call_order == ["db", "channel"]
 
     async def test_cancel_shows_message(self) -> None:
         """キャンセルボタンでメッセージが表示される。"""

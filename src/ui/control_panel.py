@@ -893,18 +893,17 @@ class DissolveConfirmView(discord.ui.View):
                 content="💣 チャンネルを解散しています...", view=None
             )
 
-        # 全メンバーを VC から切断 (Bot 含む全員)
-        for member in list(self.channel.members):
-            with contextlib.suppress(discord.HTTPException):
-                await member.move_to(None)
-
-        # DB からセッションを削除
+        # DB からセッションを先に削除
+        # (キック後に voice cog の _handle_channel_leave が発火しても
+        #  セッションが見つからず何もしない)
         async with async_session() as db_session:
             await delete_voice_session(db_session, str(self.channel.id))
 
-        # チャンネルを削除
+        # チャンネルを削除 (メンバーは自動的に切断される)
         try:
             await self.channel.delete(reason="オーナーによる解散")
+        except discord.NotFound:
+            pass  # 既に削除済み
         except discord.HTTPException as e:
             logger.warning("Failed to delete channel %s: %s", self.channel.id, e)
 
