@@ -17,6 +17,7 @@ discord.py の UI コンポーネント:
   - ephemeral=True: 操作者にだけ見えるメッセージ
 """
 
+import asyncio
 import contextlib
 import logging
 import time
@@ -843,8 +844,8 @@ class RegionSelectMenu(discord.ui.Select[Any]):
 class DissolveConfirmView(discord.ui.View):
     """解散の確認ダイアログ。
 
-    「解散する」ボタンで全メンバーをキックし、チャンネルを削除する。
-    「キャンセル」で操作を取り消す。
+    「解散する」ボタンで10秒カウントダウン後に全メンバーをキックし、
+    チャンネルを削除する。「キャンセル」で操作を取り消す。
     """
 
     def __init__(self, channel: discord.VoiceChannel) -> None:
@@ -859,10 +860,38 @@ class DissolveConfirmView(discord.ui.View):
     async def confirm_button(
         self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
     ) -> None:
-        """解散を実行する。全メンバーをキックし、チャンネルを削除する。"""
+        """解散を実行する。カウントダウン後に全メンバーをキックしチャンネルを削除。"""
+        # ephemeral の確認ダイアログを閉じる
         await interaction.response.edit_message(
-            content="チャンネルを解散しています...", view=None
+            content="解散カウントダウンを開始しました。", view=None
         )
+
+        # チャンネルにカウントダウンメッセージを送信
+        cancel_view = DissolveCancelView()
+        countdown_msg = await self.channel.send(
+            "💣 **10** 秒後にチャンネルを解散します...", view=cancel_view
+        )
+
+        # 10秒カウントダウン
+        for remaining in range(9, 0, -1):
+            await asyncio.sleep(1)
+            if cancel_view.cancelled:
+                return
+            with contextlib.suppress(discord.HTTPException):
+                await countdown_msg.edit(
+                    content=f"💣 **{remaining}** 秒後にチャンネルを解散します..."
+                )
+
+        await asyncio.sleep(1)
+        if cancel_view.cancelled:
+            return
+
+        # カウントダウン完了 → 解散実行
+        cancel_view.stop()
+        with contextlib.suppress(discord.HTTPException):
+            await countdown_msg.edit(
+                content="💣 チャンネルを解散しています...", view=None
+            )
 
         # 全メンバーを VC から切断 (Bot 含む全員)
         for member in list(self.channel.members):
@@ -889,6 +918,29 @@ class DissolveConfirmView(discord.ui.View):
         """解散をキャンセルする。"""
         await interaction.response.edit_message(
             content="解散をキャンセルしました。", view=None
+        )
+
+
+class DissolveCancelView(discord.ui.View):
+    """解散カウントダウン中のキャンセルボタン。"""
+
+    def __init__(self) -> None:
+        super().__init__(timeout=15)
+        self.cancelled = False
+
+    @discord.ui.button(
+        label="キャンセル",
+        emoji="✋",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def cancel_button(
+        self, interaction: discord.Interaction, _button: discord.ui.Button[Any]
+    ) -> None:
+        """カウントダウンをキャンセルする。"""
+        self.cancelled = True
+        self.stop()
+        await interaction.response.edit_message(
+            content="✋ 解散がキャンセルされました。", view=None
         )
 
 

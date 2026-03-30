@@ -17,6 +17,7 @@ from src.ui.control_panel import (
     CameraToggleSelectMenu,
     CameraToggleSelectView,
     ControlPanelView,
+    DissolveCancelView,
     DissolveConfirmView,
     KickSelectMenu,
     KickSelectView,
@@ -4162,8 +4163,8 @@ class TestDissolveButton:
 class TestDissolveConfirmView:
     """Tests for DissolveConfirmView."""
 
-    async def test_confirm_kicks_all_members_and_deletes_channel(self) -> None:
-        """確認ボタンで全メンバーキック + チャンネル削除。"""
+    async def test_confirm_countdown_and_dissolve(self) -> None:
+        """確認ボタンでカウントダウン後に全メンバーキック + チャンネル削除。"""
         channel = MagicMock(spec=discord.VoiceChannel)
         channel.id = 100
 
@@ -4173,6 +4174,10 @@ class TestDissolveConfirmView:
         member2.move_to = AsyncMock()
         channel.members = [member1, member2]
         channel.delete = AsyncMock()
+
+        countdown_msg = MagicMock()
+        countdown_msg.edit = AsyncMock()
+        channel.send = AsyncMock(return_value=countdown_msg)
 
         view = DissolveConfirmView(channel)
         interaction = _make_interaction(user_id=1)
@@ -4184,9 +4189,15 @@ class TestDissolveConfirmView:
                 "src.ui.control_panel.delete_voice_session",
                 new_callable=AsyncMock,
             ) as mock_delete,
+            patch("src.ui.control_panel.asyncio.sleep", new_callable=AsyncMock),
         ):
             await view.confirm_button.callback(interaction)
 
+        # カウントダウンメッセージが送信された
+        channel.send.assert_awaited_once()
+        assert "10" in channel.send.call_args[0][0]
+        # カウントダウン中にメッセージが編集された (9回: 9→1)
+        assert countdown_msg.edit.call_count >= 9
         # 全メンバーがキックされた
         member1.move_to.assert_awaited_once_with(None)
         member2.move_to.assert_awaited_once_with(None)
@@ -4194,6 +4205,44 @@ class TestDissolveConfirmView:
         mock_delete.assert_awaited_once()
         # チャンネルが削除された
         channel.delete.assert_awaited_once()
+
+    async def test_confirm_cancelled_during_countdown(self) -> None:
+        """カウントダウン中にキャンセルされるとチャンネルは削除されない。"""
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.id = 100
+        channel.members = []
+        channel.delete = AsyncMock()
+
+        countdown_msg = MagicMock()
+        countdown_msg.edit = AsyncMock()
+        channel.send = AsyncMock(return_value=countdown_msg)
+
+        view = DissolveConfirmView(channel)
+        interaction = _make_interaction(user_id=1)
+
+        async def cancel_on_sleep(_seconds: float) -> None:
+            # DissolveCancelView はカウントダウンメッセージに付与される
+            # channel.send の kwargs["view"] から取得してキャンセル
+            send_kwargs = channel.send.call_args[1]
+            cancel_view = send_kwargs["view"]
+            cancel_view.cancelled = True
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.ui.control_panel.async_session", mock_factory),
+            patch(
+                "src.ui.control_panel.delete_voice_session",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.ui.control_panel.asyncio.sleep",
+                side_effect=cancel_on_sleep,
+            ),
+        ):
+            await view.confirm_button.callback(interaction)
+
+        # チャンネルは削除されない
+        channel.delete.assert_not_awaited()
 
     async def test_confirm_handles_kick_failure(self) -> None:
         """メンバーキック失敗時もチャンネル削除は実行される。"""
@@ -4207,28 +4256,9 @@ class TestDissolveConfirmView:
         channel.members = [member]
         channel.delete = AsyncMock()
 
-        view = DissolveConfirmView(channel)
-        interaction = _make_interaction(user_id=1)
-
-        mock_factory, _ = _mock_async_session()
-        with (
-            patch("src.ui.control_panel.async_session", mock_factory),
-            patch(
-                "src.ui.control_panel.delete_voice_session",
-                new_callable=AsyncMock,
-            ),
-        ):
-            await view.confirm_button.callback(interaction)
-
-        # キック失敗してもチャンネルは削除される
-        channel.delete.assert_awaited_once()
-
-    async def test_confirm_empty_channel(self) -> None:
-        """メンバーがいない場合もチャンネル削除が実行される。"""
-        channel = MagicMock(spec=discord.VoiceChannel)
-        channel.id = 100
-        channel.members = []
-        channel.delete = AsyncMock()
+        countdown_msg = MagicMock()
+        countdown_msg.edit = AsyncMock()
+        channel.send = AsyncMock(return_value=countdown_msg)
 
         view = DissolveConfirmView(channel)
         interaction = _make_interaction(user_id=1)
@@ -4240,6 +4270,7 @@ class TestDissolveConfirmView:
                 "src.ui.control_panel.delete_voice_session",
                 new_callable=AsyncMock,
             ),
+            patch("src.ui.control_panel.asyncio.sleep", new_callable=AsyncMock),
         ):
             await view.confirm_button.callback(interaction)
 
@@ -4263,3 +4294,26 @@ class TestDissolveConfirmView:
         channel = MagicMock(spec=discord.VoiceChannel)
         view = DissolveConfirmView(channel)
         assert view.timeout == 30
+
+
+class TestDissolveCancelView:
+    """Tests for DissolveCancelView."""
+
+    async def test_cancel_sets_flag(self) -> None:
+        """キャンセルボタンで cancelled フラグが True になる。"""
+        view = DissolveCancelView()
+        assert view.cancelled is False
+
+        interaction = _make_interaction(user_id=1)
+        await view.cancel_button.callback(interaction)
+
+        assert view.cancelled is True
+        interaction.response.edit_message.assert_awaited_once()
+        call_kwargs = interaction.response.edit_message.call_args[1]
+        assert "キャンセル" in call_kwargs["content"]
+        assert call_kwargs["view"] is None
+
+    async def test_timeout_is_15(self) -> None:
+        """タイムアウトは15秒。"""
+        view = DissolveCancelView()
+        assert view.timeout == 15
