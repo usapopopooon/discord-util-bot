@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3] - 2026-03-31
+
+### Added
+- Role panel excluded roles: panel-level setting to block users with specific roles from acquiring roles.
+  - New `excluded_role_ids` field on `RolePanel` model + migration.
+  - Enforcement in both button and reaction handlers.
+  - API create/update/copy support + frontend UI (detail & new pages).
+- Voice channel dissolve button: owner can disband the channel with a 10-second countdown.
+  - Countdown message with cancel button in channel chat.
+  - Deletes DB session before channel to prevent race conditions with auto-cleanup.
+
+### Fixed
+- Fixed dissolve/auto-cleanup race condition: DB record is now deleted before channel deletion so `_handle_channel_leave` and `on_guild_channel_delete` skip already-cleaned sessions.
+
 ## [0.1.2] - 2026-03-28
 
 ### Added
