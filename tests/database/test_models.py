@@ -2286,7 +2286,7 @@ class TestModelValidatorsEdgeCases:
         assert item.style == style
 
     @pytest.mark.parametrize(
-        "rule_type", ["username_match", "account_age", "no_avatar"]
+        "rule_type", ["username_match", "account_age", "no_avatar", "role_count"]
     )
     async def test_automod_all_valid_rule_types(self, rule_type: str) -> None:
         """AutoModRule の全ての有効な rule_type が受け入れられる。"""

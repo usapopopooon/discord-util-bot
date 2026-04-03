@@ -1108,7 +1108,7 @@ class AutoModRule(Base):
         guild_id (str): Discord サーバーの ID。インデックス付き。
         rule_type (str): ルールの種類。
             "username_match", "account_age", "no_avatar",
-            "role_acquired", "vc_join", "message_post"
+            "role_acquired", "vc_join", "message_post", "role_count"
         is_enabled (bool): ルールが有効かどうか (デフォルト True)。
         action (str): アクション ("ban", "kick", "timeout")。
         pattern (str | None): ユーザー名マッチング用パターン (username_match のみ)。
@@ -1158,6 +1158,7 @@ class AutoModRule(Base):
             "message_post",
             "vc_without_intro",
             "msg_without_intro",
+            "role_count",
         )
         if value not in allowed:
             msg = f"rule_type must be one of {allowed}, got: {value!r}"
