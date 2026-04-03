@@ -26,6 +26,7 @@ const RULE_TYPE_LABELS: Record<string, string> = {
   message_post: 'Message Post',
   vc_without_intro: 'VC Without Intro',
   msg_without_intro: 'Message Without Intro',
+  role_count: 'Role Count',
 }
 
 const ACTIONS = [
@@ -94,6 +95,7 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
   const showPattern = rule.rule_type === 'username_match'
   const showAccountAge = rule.rule_type === 'account_age'
   const showThreshold = ['role_acquired', 'vc_join', 'message_post'].includes(rule.rule_type)
+  const showRoleCount = rule.rule_type === 'role_count'
   const showRequiredChannel = ['vc_without_intro', 'msg_without_intro'].includes(rule.rule_type)
   const showTimeoutDuration = action === 'timeout'
 
@@ -106,6 +108,8 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
       if (showAccountAge && thresholdValue) {
         thresholdSeconds = parseInt(thresholdValue, 10) * 60
       } else if (showThreshold && thresholdValue) {
+        thresholdSeconds = parseInt(thresholdValue, 10)
+      } else if (showRoleCount && thresholdValue) {
         thresholdSeconds = parseInt(thresholdValue, 10)
       }
 
@@ -224,6 +228,21 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
                   type="number"
                   min={1}
                   max={3600}
+                  value={thresholdValue}
+                  onChange={(e) => setThresholdValue(e.target.value)}
+                />
+              </div>
+            )}
+
+            {showRoleCount && (
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">
+                  Role Count (1-100, @everyone excluded)
+                </label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={100}
                   value={thresholdValue}
                   onChange={(e) => setThresholdValue(e.target.value)}
                 />

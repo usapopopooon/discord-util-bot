@@ -56,6 +56,10 @@ def automod_list_page(
                 if rule.threshold_seconds
                 else "-"
             )
+        elif rule.rule_type == "role_count":
+            details = (
+                f">= {rule.threshold_seconds} roles" if rule.threshold_seconds else "-"
+            )
         elif rule.rule_type in ("vc_without_intro", "msg_without_intro"):
             if rule.required_channel_id:
                 ch_name = None
@@ -256,6 +260,11 @@ def automod_create_page(
                                    onchange="updateRuleFields()">
                             <span>Message without Intro Post</span>
                         </label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="rule_type" value="role_count"
+                                   onchange="updateRuleFields()">
+                            <span>Role Count (N種以上ロール保持)</span>
+                        </label>
                     </div>
                 </div>
 
@@ -312,6 +321,15 @@ def automod_create_page(
                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                 </div>
 
+                <div id="roleCountFields" class="hidden">
+                    <label class="block text-sm font-medium mb-1">
+                        Role Count (1-100, @everyone excluded)
+                    </label>
+                    <input type="number" name="role_count"
+                           min="1" max="100" placeholder="e.g. 5"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                </div>
+
                 <div id="requiredChannelFields" class="hidden">
                     <label class="block text-sm font-medium mb-1">
                         Required Channel (must post here first)
@@ -337,6 +355,7 @@ def automod_create_page(
         const usernameFields = document.getElementById('usernameFields');
         const accountAgeFields = document.getElementById('accountAgeFields');
         const thresholdSecondsFields = document.getElementById('thresholdSecondsFields');
+        const roleCountFields = document.getElementById('roleCountFields');
         const requiredChannelFields = document.getElementById('requiredChannelFields');
         const introTypes = ['vc_without_intro', 'msg_without_intro'];
 
@@ -344,6 +363,7 @@ def automod_create_page(
         accountAgeFields.classList.toggle('hidden', ruleType !== 'account_age');
         thresholdSecondsFields.classList.toggle('hidden',
             ruleType !== 'role_acquired' && ruleType !== 'vc_join' && ruleType !== 'message_post');
+        roleCountFields.classList.toggle('hidden', ruleType !== 'role_count');
         requiredChannelFields.classList.toggle('hidden', !introTypes.includes(ruleType));
     }}
     function updateRequiredChannel() {{
@@ -434,6 +454,18 @@ def automod_edit_page(
                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                 </div>
         """
+    elif rule.rule_type == "role_count":
+        val = rule.threshold_seconds or ""
+        type_fields = f"""
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Role Count (1-100, @everyone excluded)
+                    </label>
+                    <input type="number" name="role_count"
+                           min="1" max="100" value="{val}"
+                           class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
+                </div>
+        """
     elif rule.rule_type in ("vc_without_intro", "msg_without_intro"):
         guild_channels = channels_map.get(rule.guild_id, [])
         ch_options = ""
@@ -465,6 +497,7 @@ def automod_edit_page(
         "message_post": "Message Post (after join)",
         "vc_without_intro": "VC Join without Intro Post",
         "msg_without_intro": "Message without Intro Post",
+        "role_count": "Role Count (N種以上ロール保持)",
     }
     rule_type_label = type_labels.get(rule.rule_type, rule.rule_type)
 

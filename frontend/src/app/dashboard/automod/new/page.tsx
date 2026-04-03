@@ -26,6 +26,7 @@ const RULE_TYPES = [
   { value: 'message_post', label: 'Message Post' },
   { value: 'vc_without_intro', label: 'VC Without Intro' },
   { value: 'msg_without_intro', label: 'Message Without Intro' },
+  { value: 'role_count', label: 'Role Count' },
 ]
 
 const ACTIONS = [
@@ -64,6 +65,7 @@ export default function AutoModNewPage() {
   const showPattern = ruleType === 'username_match'
   const showAccountAge = ruleType === 'account_age'
   const showThreshold = ['role_acquired', 'vc_join', 'message_post'].includes(ruleType)
+  const showRoleCount = ruleType === 'role_count'
   const showRequiredChannel = ['vc_without_intro', 'msg_without_intro'].includes(ruleType)
   const showTimeoutDuration = action === 'timeout'
 
@@ -76,6 +78,8 @@ export default function AutoModNewPage() {
       if (showAccountAge && thresholdMinutes) {
         thresholdSeconds = parseInt(thresholdMinutes, 10) * 60
       } else if (showThreshold && thresholdMinutes) {
+        thresholdSeconds = parseInt(thresholdMinutes, 10)
+      } else if (showRoleCount && thresholdMinutes) {
         thresholdSeconds = parseInt(thresholdMinutes, 10)
       }
 
@@ -228,6 +232,22 @@ export default function AutoModNewPage() {
                   value={thresholdMinutes}
                   onChange={(e) => setThresholdMinutes(e.target.value)}
                   placeholder="e.g. 300"
+                />
+              </div>
+            )}
+
+            {showRoleCount && (
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">
+                  Role Count (1-100, @everyone excluded)
+                </label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={thresholdMinutes}
+                  onChange={(e) => setThresholdMinutes(e.target.value)}
+                  placeholder="e.g. 5"
                 />
               </div>
             )}

@@ -18,6 +18,7 @@ const RULE_TYPE_LABELS: Record<string, string> = {
   message_post: 'Message Post',
   vc_without_intro: 'VC Without Intro',
   msg_without_intro: 'Message Without Intro',
+  role_count: 'Role Count',
 }
 
 const ACTION_LABELS: Record<string, string> = {
@@ -49,6 +50,8 @@ function formatDetails(rule: AutoModRule, channels: ChannelsMap): string {
     case 'vc_join':
     case 'message_post':
       return rule.threshold_seconds ? `Within ${rule.threshold_seconds}s` : '-'
+    case 'role_count':
+      return rule.threshold_seconds ? `>= ${rule.threshold_seconds} roles` : '-'
     case 'vc_without_intro':
     case 'msg_without_intro':
       return `Channel: ${resolveChannelName(channels, rule.guild_id, rule.required_channel_id)}`

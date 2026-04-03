@@ -3417,6 +3417,81 @@ class TestAutomodListPageRuleTypes:
         result = automod_list_page([rule])
         assert "60s after join" in result
 
+    def test_role_count_rule_shows_threshold(self) -> None:
+        rule = AutoModRule(
+            id=1,
+            guild_id="123",
+            rule_type="role_count",
+            action="ban",
+            threshold_seconds=5,
+            is_enabled=True,
+        )
+        result = automod_list_page([rule])
+        assert ">= 5 roles" in result
+
+
+class TestAutomodCreatePageRoleCount:
+    """automod_create_page の role_count 関連テスト。"""
+
+    def test_contains_role_count_radio(self) -> None:
+        """role_count のラジオボタンが含まれる。"""
+        result = automod_create_page()
+        assert 'value="role_count"' in result
+
+    def test_contains_role_count_field(self) -> None:
+        """role_count の入力フィールドが含まれる。"""
+        result = automod_create_page()
+        assert 'name="role_count"' in result
+        assert "roleCountFields" in result
+
+    def test_js_toggles_role_count_field(self) -> None:
+        """JS が role_count フィールドの表示切替を行う。"""
+        result = automod_create_page()
+        assert "roleCountFields" in result
+        assert "'role_count'" in result
+
+
+class TestAutomodEditPageRoleCount:
+    """automod_edit_page の role_count 関連テスト。"""
+
+    def test_role_count_page(self) -> None:
+        """role_count ルールの編集ページに role_count 入力がある。"""
+        from unittest.mock import MagicMock
+
+        rule = MagicMock()
+        rule.id = 1
+        rule.guild_id = "123456789012345678"
+        rule.rule_type = "role_count"
+        rule.action = "ban"
+        rule.pattern = None
+        rule.use_wildcard = False
+        rule.threshold_seconds = 10
+        rule.required_channel_id = None
+        rule.is_enabled = True
+        rule.timeout_duration_seconds = None
+        result = automod_edit_page(rule)
+        assert "Role Count" in result
+        assert 'name="role_count"' in result
+        assert "10" in result
+
+    def test_role_count_type_label(self) -> None:
+        """role_count のタイプラベルが表示される。"""
+        from unittest.mock import MagicMock
+
+        rule = MagicMock()
+        rule.id = 1
+        rule.guild_id = "123456789012345678"
+        rule.rule_type = "role_count"
+        rule.action = "ban"
+        rule.pattern = None
+        rule.use_wildcard = False
+        rule.threshold_seconds = 5
+        rule.required_channel_id = None
+        rule.is_enabled = True
+        rule.timeout_duration_seconds = None
+        result = automod_edit_page(rule)
+        assert "Role Count" in result
+
 
 # ===========================================================================
 # Ticket detail transcript テスト (lines 3767-3852, 3922)

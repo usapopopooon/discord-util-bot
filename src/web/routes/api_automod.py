@@ -32,6 +32,7 @@ _VALID_RULE_TYPES = (
     "message_post",
     "vc_without_intro",
     "msg_without_intro",
+    "role_count",
 )
 _VALID_ACTIONS = ("ban", "kick", "timeout")
 _MAX_TIMEOUT_MINUTES = 40320
@@ -125,6 +126,15 @@ def _validate_rule_body(body: dict[str, Any]) -> tuple[dict[str, Any] | None, st
             return None, "threshold_seconds is required for this rule_type"
         if threshold_seconds < 1 or threshold_seconds > _MAX_THRESHOLD_SECONDS:
             return None, f"threshold_seconds must be 1-{_MAX_THRESHOLD_SECONDS}"
+
+    # threshold_seconds for role_count (stores role count, 1-100)
+    if rule_type == "role_count":
+        try:
+            threshold_seconds = int(body.get("threshold_seconds", ""))
+        except (ValueError, TypeError):
+            return None, "threshold_seconds (role count) is required for role_count"
+        if threshold_seconds < 1 or threshold_seconds > 100:
+            return None, "threshold_seconds (role count) must be 1-100"
 
     # required_channel_id for intro rules
     required_channel_id: str | None = None
@@ -291,6 +301,7 @@ async def api_automod_rules_update(
             "role_acquired",
             "vc_join",
             "message_post",
+            "role_count",
         ):
             rule.threshold_seconds = fields["threshold_seconds"]
         elif rule.rule_type in ("vc_without_intro", "msg_without_intro"):

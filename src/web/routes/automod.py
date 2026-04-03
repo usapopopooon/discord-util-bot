@@ -84,6 +84,7 @@ async def automod_create_post(
     use_wildcard: Annotated[str, Form()] = "",
     account_age_minutes: Annotated[str, Form()] = "",
     threshold_seconds: Annotated[str, Form()] = "",
+    role_count: Annotated[str, Form()] = "",
     required_channel_id: Annotated[str, Form()] = "",
     timeout_duration_minutes: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(_app.get_current_user),
@@ -113,6 +114,7 @@ async def automod_create_post(
         "message_post",
         "vc_without_intro",
         "msg_without_intro",
+        "role_count",
     )
     if rule_type not in valid_rule_types:
         return RedirectResponse(url="/automod/new", status_code=302)
@@ -154,6 +156,15 @@ async def automod_create_post(
             return RedirectResponse(url="/automod/new", status_code=302)
         if threshold_seconds_int < 1 or threshold_seconds_int > 3600:
             return RedirectResponse(url="/automod/new", status_code=302)
+
+    if rule_type == "role_count":
+        try:
+            role_count_int = int(role_count)
+        except (ValueError, TypeError):
+            return RedirectResponse(url="/automod/new", status_code=302)
+        if role_count_int < 1 or role_count_int > 100:
+            return RedirectResponse(url="/automod/new", status_code=302)
+        threshold_seconds_int = role_count_int
 
     required_channel_id_str: str | None = None
     if rule_type in ("vc_without_intro", "msg_without_intro"):
@@ -218,6 +229,7 @@ async def automod_edit_post(
     use_wildcard: Annotated[str, Form()] = "",
     account_age_minutes: Annotated[str, Form()] = "",
     threshold_seconds: Annotated[str, Form()] = "",
+    role_count: Annotated[str, Form()] = "",
     required_channel_id: Annotated[str, Form()] = "",
     timeout_duration_minutes: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(_app.get_current_user),
@@ -285,6 +297,15 @@ async def automod_edit_post(
             if seconds_int < 1 or seconds_int > 3600:
                 return RedirectResponse(url=edit_url, status_code=302)
             rule.threshold_seconds = seconds_int
+
+        elif rule.rule_type == "role_count":
+            try:
+                role_count_int = int(role_count)
+            except (ValueError, TypeError):
+                return RedirectResponse(url=edit_url, status_code=302)
+            if role_count_int < 1 or role_count_int > 100:
+                return RedirectResponse(url=edit_url, status_code=302)
+            rule.threshold_seconds = role_count_int
 
         elif rule.rule_type in ("vc_without_intro", "msg_without_intro"):
             if not required_channel_id.strip():
