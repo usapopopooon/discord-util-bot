@@ -143,8 +143,8 @@ class TestMigrationChain:
     def test_revision_count(self, script_directory: ScriptDirectory) -> None:
         """マイグレーションの数を確認する。"""
         revisions = list(script_directory.walk_revisions())
-        # 37 個のマイグレーションファイルがあることを確認
-        expected = 37
+        # 38 個のマイグレーションファイルがあることを確認
+        expected = 38
         assert len(revisions) == expected, f"リビジョン数: {len(revisions)}"
 
 
