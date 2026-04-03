@@ -96,6 +96,7 @@ async def create_automod_rule(
     pattern: str | None = None,
     use_wildcard: bool = False,
     threshold_seconds: int | None = None,
+    target_role_ids: str | None = None,
     timeout_duration_seconds: int | None = None,
 ) -> AutoModRule:
     """新しい automod ルールを作成する。"""
@@ -106,6 +107,7 @@ async def create_automod_rule(
         pattern=pattern,
         use_wildcard=use_wildcard,
         threshold_seconds=threshold_seconds,
+        target_role_ids=target_role_ids,
         timeout_duration_seconds=timeout_duration_seconds,
     )
     session.add(rule)

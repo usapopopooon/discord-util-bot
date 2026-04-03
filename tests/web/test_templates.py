@@ -3423,11 +3423,12 @@ class TestAutomodListPageRuleTypes:
             guild_id="123",
             rule_type="role_count",
             action="ban",
-            threshold_seconds=5,
+            threshold_seconds=3,
+            target_role_ids="100,200,300,400,500",
             is_enabled=True,
         )
         result = automod_list_page([rule])
-        assert ">= 5 roles" in result
+        assert "5個中3個以上で発動" in result
 
 
 class TestAutomodCreatePageRoleCount:
@@ -3455,7 +3456,7 @@ class TestAutomodEditPageRoleCount:
     """automod_edit_page の role_count 関連テスト。"""
 
     def test_role_count_page(self) -> None:
-        """role_count ルールの編集ページに role_count 入力がある。"""
+        """role_count ルールの編集ページに role_count 入力とロール選択がある。"""
         from unittest.mock import MagicMock
 
         rule = MagicMock()
@@ -3467,12 +3468,17 @@ class TestAutomodEditPageRoleCount:
         rule.use_wildcard = False
         rule.threshold_seconds = 10
         rule.required_channel_id = None
+        rule.target_role_ids = "100,200"
         rule.is_enabled = True
         rule.timeout_duration_seconds = None
-        result = automod_edit_page(rule)
+        roles = {"123456789012345678": [("100", "RoleA", 0), ("200", "RoleB", 0)]}
+        result = automod_edit_page(rule, roles_map=roles)
         assert "Role Count" in result
         assert 'name="role_count"' in result
         assert "10" in result
+        assert 'name="target_role_ids"' in result
+        assert "RoleA" in result
+        assert "RoleB" in result
 
     def test_role_count_type_label(self) -> None:
         """role_count のタイプラベルが表示される。"""
@@ -3487,6 +3493,7 @@ class TestAutomodEditPageRoleCount:
         rule.use_wildcard = False
         rule.threshold_seconds = 5
         rule.required_channel_id = None
+        rule.target_role_ids = "100"
         rule.is_enabled = True
         rule.timeout_duration_seconds = None
         result = automod_edit_page(rule)

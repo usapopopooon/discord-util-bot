@@ -67,6 +67,7 @@ def _make_rule(
     use_wildcard: bool = False,
     threshold_seconds: int | None = None,
     required_channel_id: str | None = None,
+    target_role_ids: str | None = None,
     timeout_duration_seconds: int | None = None,
     created_at: datetime | None = None,
 ) -> MagicMock:
@@ -81,6 +82,7 @@ def _make_rule(
     rule.use_wildcard = use_wildcard
     rule.threshold_seconds = threshold_seconds
     rule.required_channel_id = required_channel_id
+    rule.target_role_ids = target_role_ids
     rule.timeout_duration_seconds = timeout_duration_seconds
     rule.created_at = created_at or datetime.now(UTC) - timedelta(days=1)
     return rule
@@ -2795,37 +2797,40 @@ class TestAutomodListTimingRuleDisplay:
 class TestCheckRoleCount:
     """_check_role_count のテスト。"""
 
+    def _role(self, role_id: int, name: str) -> MagicMock:
+        r = MagicMock(spec=discord.Role)
+        r.id = role_id
+        r.name = name
+        return r
+
     def test_matches_when_role_count_reaches_threshold(self) -> None:
         cog = _make_cog()
-        rule = _make_rule(rule_type="role_count", pattern=None, threshold_seconds=3)
+        rule = _make_rule(
+            rule_type="role_count",
+            pattern=None,
+            threshold_seconds=3,
+            target_role_ids="100,200,300",
+        )
         member = _make_member()
-        # @everyone (is_default=True) + 3つの通常ロール
-        everyone = MagicMock(spec=discord.Role)
-        everyone.is_default.return_value = True
-        everyone.name = "@everyone"
-        role1 = MagicMock(spec=discord.Role)
-        role1.is_default.return_value = False
-        role1.name = "Role1"
-        role2 = MagicMock(spec=discord.Role)
-        role2.is_default.return_value = False
-        role2.name = "Role2"
-        role3 = MagicMock(spec=discord.Role)
-        role3.is_default.return_value = False
-        role3.name = "Role3"
-        member.roles = [everyone, role1, role2, role3]
+        member.roles = [
+            self._role(100, "A"),
+            self._role(200, "B"),
+            self._role(300, "C"),
+        ]
         matched, reason = cog._check_role_count(rule, member)
         assert matched is True
         assert "3" in reason
 
     def test_no_match_when_below_threshold(self) -> None:
         cog = _make_cog()
-        rule = _make_rule(rule_type="role_count", pattern=None, threshold_seconds=5)
+        rule = _make_rule(
+            rule_type="role_count",
+            pattern=None,
+            threshold_seconds=3,
+            target_role_ids="100,200,300",
+        )
         member = _make_member()
-        everyone = MagicMock(spec=discord.Role)
-        everyone.is_default.return_value = True
-        role1 = MagicMock(spec=discord.Role)
-        role1.is_default.return_value = False
-        member.roles = [everyone, role1]
+        member.roles = [self._role(100, "A")]
         matched, _ = cog._check_role_count(rule, member)
         assert matched is False
 
@@ -2836,65 +2841,79 @@ class TestCheckRoleCount:
         matched, _ = cog._check_role_count(rule, member)
         assert matched is False
 
-    def test_exact_boundary_matches(self) -> None:
-        """threshold=3, ロール数ちょうど3 → マッチ。"""
+    def test_no_target_role_ids_returns_false(self) -> None:
+        """target_role_ids 未設定 → マッチしない。"""
         cog = _make_cog()
-        rule = _make_rule(rule_type="role_count", pattern=None, threshold_seconds=3)
+        rule = _make_rule(
+            rule_type="role_count",
+            pattern=None,
+            threshold_seconds=1,
+            target_role_ids=None,
+        )
         member = _make_member()
-        everyone = MagicMock(spec=discord.Role)
-        everyone.is_default.return_value = True
-        roles = []
-        for i in range(3):
-            r = MagicMock(spec=discord.Role)
-            r.is_default.return_value = False
-            r.name = f"Role{i}"
-            roles.append(r)
-        member.roles = [everyone, *roles]
+        member.roles = [self._role(100, "A")]
+        matched, _ = cog._check_role_count(rule, member)
+        assert matched is False
+
+    def test_exact_boundary_matches(self) -> None:
+        """threshold=3, 指定ロールちょうど3つ保持 → マッチ。"""
+        cog = _make_cog()
+        rule = _make_rule(
+            rule_type="role_count",
+            pattern=None,
+            threshold_seconds=3,
+            target_role_ids="100,200,300",
+        )
+        member = _make_member()
+        member.roles = [
+            self._role(100, "A"),
+            self._role(200, "B"),
+            self._role(300, "C"),
+        ]
         matched, _ = cog._check_role_count(rule, member)
         assert matched is True
 
     def test_one_below_boundary_no_match(self) -> None:
-        """threshold=3, ロール数2 → マッチしない。"""
+        """threshold=3, 指定ロール2つ保持 → マッチしない。"""
         cog = _make_cog()
-        rule = _make_rule(rule_type="role_count", pattern=None, threshold_seconds=3)
+        rule = _make_rule(
+            rule_type="role_count",
+            pattern=None,
+            threshold_seconds=3,
+            target_role_ids="100,200,300",
+        )
         member = _make_member()
-        everyone = MagicMock(spec=discord.Role)
-        everyone.is_default.return_value = True
-        role1 = MagicMock(spec=discord.Role)
-        role1.is_default.return_value = False
-        role1.name = "Role1"
-        role2 = MagicMock(spec=discord.Role)
-        role2.is_default.return_value = False
-        role2.name = "Role2"
-        member.roles = [everyone, role1, role2]
+        member.roles = [self._role(100, "A"), self._role(200, "B")]
         matched, _ = cog._check_role_count(rule, member)
         assert matched is False
 
     def test_reason_includes_role_names(self) -> None:
-        """reason にロール名が含まれる。"""
+        """reason にマッチしたロール名が含まれる。"""
         cog = _make_cog()
-        rule = _make_rule(rule_type="role_count", pattern=None, threshold_seconds=1)
+        rule = _make_rule(
+            rule_type="role_count",
+            pattern=None,
+            threshold_seconds=1,
+            target_role_ids="100",
+        )
         member = _make_member()
-        everyone = MagicMock(spec=discord.Role)
-        everyone.is_default.return_value = True
-        everyone.name = "@everyone"
-        role = MagicMock(spec=discord.Role)
-        role.is_default.return_value = False
-        role.name = "VIP"
-        member.roles = [everyone, role]
+        member.roles = [self._role(100, "VIP"), self._role(999, "Other")]
         matched, reason = cog._check_role_count(rule, member)
         assert matched is True
         assert "VIP" in reason
-        assert "@everyone" not in reason
 
-    def test_only_everyone_no_match(self) -> None:
-        """@everyone のみ → 0ロール、マッチしない。"""
+    def test_non_target_roles_ignored(self) -> None:
+        """target に含まれないロールはカウントしない。"""
         cog = _make_cog()
-        rule = _make_rule(rule_type="role_count", pattern=None, threshold_seconds=1)
+        rule = _make_rule(
+            rule_type="role_count",
+            pattern=None,
+            threshold_seconds=2,
+            target_role_ids="100,200",
+        )
         member = _make_member()
-        everyone = MagicMock(spec=discord.Role)
-        everyone.is_default.return_value = True
-        member.roles = [everyone]
+        # target外のロール999を持っていてもカウントされない
+        member.roles = [self._role(100, "A"), self._role(999, "X")]
         matched, _ = cog._check_role_count(rule, member)
         assert matched is False
 
@@ -2907,28 +2926,29 @@ class TestCheckRoleCount:
 class TestOnMemberUpdateRoleCount:
     """on_member_update の role_count ルールテスト。"""
 
+    @staticmethod
+    def _role(role_id: int, name: str) -> MagicMock:
+        r = MagicMock(spec=discord.Role)
+        r.id = role_id
+        r.name = name
+        return r
+
     @pytest.mark.asyncio
     async def test_matching_role_count_bans(self) -> None:
         cog = _make_cog()
-        everyone = MagicMock(spec=discord.Role)
-        everyone.is_default.return_value = True
-        everyone.name = "@everyone"
-        role1 = MagicMock(spec=discord.Role)
-        role1.is_default.return_value = False
-        role1.name = "Role1"
-        role2 = MagicMock(spec=discord.Role)
-        role2.is_default.return_value = False
-        role2.name = "Role2"
+        role1 = self._role(100, "Role1")
+        role2 = self._role(200, "Role2")
 
         before = _make_member()
-        before.roles = [everyone, role1]
+        before.roles = [role1]
         after = _make_member()
-        after.roles = [everyone, role1, role2]
+        after.roles = [role1, role2]
 
         rule = _make_rule(
             rule_type="role_count",
             pattern=None,
             threshold_seconds=2,
+            target_role_ids="100,200",
         )
         with (
             patch(
@@ -2944,20 +2964,18 @@ class TestOnMemberUpdateRoleCount:
     @pytest.mark.asyncio
     async def test_below_threshold_no_action(self) -> None:
         cog = _make_cog()
-        everyone = MagicMock(spec=discord.Role)
-        everyone.is_default.return_value = True
-        role1 = MagicMock(spec=discord.Role)
-        role1.is_default.return_value = False
+        role1 = self._role(100, "Role1")
 
         before = _make_member()
-        before.roles = [everyone]
+        before.roles = []
         after = _make_member()
-        after.roles = [everyone, role1]
+        after.roles = [role1]
 
         rule = _make_rule(
             rule_type="role_count",
             pattern=None,
             threshold_seconds=5,
+            target_role_ids="100,200,300,400,500",
         )
         with (
             patch(
@@ -2974,19 +2992,13 @@ class TestOnMemberUpdateRoleCount:
     async def test_role_acquired_and_role_count_coexist(self) -> None:
         """role_acquired が先にマッチした場合、role_count は実行されない。"""
         cog = _make_cog()
-        everyone = MagicMock(spec=discord.Role)
-        everyone.is_default.return_value = True
-        role1 = MagicMock(spec=discord.Role)
-        role1.is_default.return_value = False
-        role1.name = "Role1"
-        role2 = MagicMock(spec=discord.Role)
-        role2.is_default.return_value = False
-        role2.name = "Role2"
+        role1 = self._role(100, "Role1")
+        role2 = self._role(200, "Role2")
 
         before = _make_member()
-        before.roles = [everyone, role1]
+        before.roles = [role1]
         after = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=5))
-        after.roles = [everyone, role1, role2]
+        after.roles = [role1, role2]
 
         # role_acquired を先に配置
         rule_timing = _make_rule(
@@ -3000,6 +3012,7 @@ class TestOnMemberUpdateRoleCount:
             rule_type="role_count",
             pattern=None,
             threshold_seconds=2,
+            target_role_ids="100,200",
         )
         with (
             patch(
@@ -3018,20 +3031,14 @@ class TestOnMemberUpdateRoleCount:
     async def test_role_count_fires_when_role_acquired_not_matched(self) -> None:
         """role_acquired が閾値外で role_count がマッチ → role_count が発火。"""
         cog = _make_cog()
-        everyone = MagicMock(spec=discord.Role)
-        everyone.is_default.return_value = True
-        role1 = MagicMock(spec=discord.Role)
-        role1.is_default.return_value = False
-        role1.name = "Role1"
-        role2 = MagicMock(spec=discord.Role)
-        role2.is_default.return_value = False
-        role2.name = "Role2"
+        role1 = self._role(100, "Role1")
+        role2 = self._role(200, "Role2")
 
         before = _make_member()
-        before.roles = [everyone, role1]
+        before.roles = [role1]
         # joined_at を十分前にして role_acquired の閾値外にする
         after = _make_member(joined_at=datetime.now(UTC) - timedelta(seconds=9999))
-        after.roles = [everyone, role1, role2]
+        after.roles = [role1, role2]
 
         rule_timing = _make_rule(
             rule_id=1,
@@ -3044,6 +3051,7 @@ class TestOnMemberUpdateRoleCount:
             rule_type="role_count",
             pattern=None,
             threshold_seconds=2,
+            target_role_ids="100,200",
         )
         with (
             patch(
@@ -3071,7 +3079,11 @@ class TestAutomodAddRoleCount:
         cog = _make_cog()
         interaction = _make_interaction()
         await cog.automod_add.callback(
-            cog, interaction, rule_type="role_count", role_count=None
+            cog,
+            interaction,
+            rule_type="role_count",
+            role_count=None,
+            target_roles="100,200",
         )
         call_args = interaction.response.send_message.call_args
         assert "role_count" in call_args.args[0]
@@ -3081,7 +3093,11 @@ class TestAutomodAddRoleCount:
         cog = _make_cog()
         interaction = _make_interaction()
         await cog.automod_add.callback(
-            cog, interaction, rule_type="role_count", role_count=0
+            cog,
+            interaction,
+            rule_type="role_count",
+            role_count=0,
+            target_roles="100,200",
         )
         call_args = interaction.response.send_message.call_args
         assert "role_count" in call_args.args[0]
@@ -3091,16 +3107,39 @@ class TestAutomodAddRoleCount:
         cog = _make_cog()
         interaction = _make_interaction()
         await cog.automod_add.callback(
-            cog, interaction, rule_type="role_count", role_count=200
+            cog,
+            interaction,
+            rule_type="role_count",
+            role_count=200,
+            target_roles="100,200",
         )
         call_args = interaction.response.send_message.call_args
         assert "100" in call_args.args[0]
 
     @pytest.mark.asyncio
+    async def test_role_count_without_target_roles(self) -> None:
+        cog = _make_cog()
+        interaction = _make_interaction()
+        await cog.automod_add.callback(
+            cog,
+            interaction,
+            rule_type="role_count",
+            role_count=2,
+            target_roles=None,
+        )
+        call_args = interaction.response.send_message.call_args
+        assert "target_roles" in call_args.args[0]
+
+    @pytest.mark.asyncio
     async def test_successful_add_role_count(self) -> None:
         cog = _make_cog()
         interaction = _make_interaction()
-        mock_rule = _make_rule(rule_id=50, rule_type="role_count", threshold_seconds=3)
+        mock_rule = _make_rule(
+            rule_id=50,
+            rule_type="role_count",
+            threshold_seconds=3,
+            target_role_ids="100,200,300",
+        )
         with patch(
             "src.cogs.automod.create_automod_rule",
             new_callable=AsyncMock,
@@ -3111,13 +3150,14 @@ class TestAutomodAddRoleCount:
                 interaction,
                 rule_type="role_count",
                 role_count=3,
+                target_roles="100,200,300",
             )
             call_args = interaction.response.send_message.call_args
             assert "#50" in call_args.args[0]
             assert "Role Count: 3" in call_args.args[0]
-            # threshold_seconds に role_count の値が渡されることを検証
             create_kwargs = mock_create.call_args.kwargs
             assert create_kwargs["threshold_seconds"] == 3
+            assert create_kwargs["target_role_ids"] == "100,200,300"
 
 
 # ---------------------------------------------------------------------------
@@ -3138,6 +3178,7 @@ class TestAutomodListRoleCountDisplay:
                 rule_type="role_count",
                 threshold_seconds=5,
                 pattern=None,
+                target_role_ids="100,200,300,400,500",
             ),
         ]
         with patch(
@@ -3149,4 +3190,5 @@ class TestAutomodListRoleCountDisplay:
             call_kwargs = interaction.response.send_message.call_args.kwargs
             embed = call_kwargs["embed"]
             field_values = [f.value for f in embed.fields]
-            assert any("5種以上" in v for v in field_values)
+            assert any("5個以上" in v for v in field_values)
+            assert any("5ロール" in v for v in field_values)

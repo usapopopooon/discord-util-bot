@@ -51,6 +51,9 @@ function formatDetails(rule: AutoModRule, channels: ChannelsMap): string {
     case 'message_post':
       return rule.threshold_seconds ? `Within ${rule.threshold_seconds}s` : '-'
     case 'role_count':
+      if (rule.threshold_seconds && rule.target_role_ids?.length) {
+        return `${rule.target_role_ids.length}個中${rule.threshold_seconds}個以上で発動`
+      }
       return rule.threshold_seconds ? `>= ${rule.threshold_seconds} roles` : '-'
     case 'vc_without_intro':
     case 'msg_without_intro':

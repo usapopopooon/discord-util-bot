@@ -52,6 +52,9 @@ def _serialize_rule(rule: AutoModRule) -> dict[str, Any]:
         "threshold_seconds": rule.threshold_seconds,
         "timeout_duration_seconds": rule.timeout_duration_seconds,
         "required_channel_id": rule.required_channel_id,
+        "target_role_ids": rule.target_role_ids.split(",")
+        if rule.target_role_ids
+        else [],
         "is_enabled": rule.is_enabled,
         "created_at": rule.created_at.isoformat() if rule.created_at else None,
     }
@@ -128,6 +131,7 @@ def _validate_rule_body(body: dict[str, Any]) -> tuple[dict[str, Any] | None, st
             return None, f"threshold_seconds must be 1-{_MAX_THRESHOLD_SECONDS}"
 
     # threshold_seconds for role_count (stores role count, 1-100)
+    target_role_ids: str | None = None
     if rule_type == "role_count":
         try:
             threshold_seconds = int(body.get("threshold_seconds", ""))
@@ -135,6 +139,18 @@ def _validate_rule_body(body: dict[str, Any]) -> tuple[dict[str, Any] | None, st
             return None, "threshold_seconds (role count) is required for role_count"
         if threshold_seconds < 1 or threshold_seconds > 100:
             return None, "threshold_seconds (role count) must be 1-100"
+        raw_ids = body.get("target_role_ids", [])
+        if isinstance(raw_ids, str):
+            raw_ids = [rid.strip() for rid in raw_ids.split(",") if rid.strip()]
+        valid_ids = [rid for rid in raw_ids if str(rid).strip().isdigit()]
+        if not valid_ids:
+            return None, "target_role_ids is required for role_count"
+        if len(valid_ids) < threshold_seconds:
+            return None, (
+                f"target_role_ids count ({len(valid_ids)}) must be >= "
+                f"threshold ({threshold_seconds})"
+            )
+        target_role_ids = ",".join(str(rid).strip() for rid in valid_ids)
 
     # required_channel_id for intro rules
     required_channel_id: str | None = None
@@ -154,6 +170,7 @@ def _validate_rule_body(body: dict[str, Any]) -> tuple[dict[str, Any] | None, st
         "threshold_seconds": threshold_seconds,
         "timeout_duration_seconds": timeout_duration_seconds,
         "required_channel_id": required_channel_id,
+        "target_role_ids": target_role_ids,
     }, ""
 
 
@@ -176,12 +193,17 @@ async def api_automod_rules_list(
     )
     rules = list(result.scalars().all())
     guilds_map, channels_map = await _db._get_discord_guilds_and_channels(db)
+    roles_map = await _db._get_discord_roles_by_guild(db)
 
     return JSONResponse(
         {
             "rules": [_serialize_rule(r) for r in rules],
             "guilds": guilds_map,
             "channels": _channels_to_json(channels_map),
+            "roles": {
+                gid: [{"id": rid, "name": rname} for rid, rname, _c in rlist]
+                for gid, rlist in roles_map.items()
+            },
         }
     )
 
@@ -202,12 +224,17 @@ async def api_automod_rules_get(
         return JSONResponse({"error": "Not found"}, status_code=404)
 
     guilds_map, channels_map = await _db._get_discord_guilds_and_channels(db)
+    roles_map = await _db._get_discord_roles_by_guild(db)
 
     return JSONResponse(
         {
             "rule": _serialize_rule(rule),
             "guilds": guilds_map,
             "channels": _channels_to_json(channels_map),
+            "roles": {
+                gid: [{"id": rid, "name": rname} for rid, rname, _c in rlist]
+                for gid, rlist in roles_map.items()
+            },
         }
     )
 
@@ -246,6 +273,7 @@ async def api_automod_rules_create(
             use_wildcard=fields["use_wildcard"],
             threshold_seconds=fields["threshold_seconds"],
             required_channel_id=fields["required_channel_id"],
+            target_role_ids=fields["target_role_ids"],
             timeout_duration_seconds=fields["timeout_duration_seconds"],
         )
         db.add(rule)
@@ -301,9 +329,11 @@ async def api_automod_rules_update(
             "role_acquired",
             "vc_join",
             "message_post",
-            "role_count",
         ):
             rule.threshold_seconds = fields["threshold_seconds"]
+        elif rule.rule_type == "role_count":
+            rule.threshold_seconds = fields["threshold_seconds"]
+            rule.target_role_ids = fields["target_role_ids"]
         elif rule.rule_type in ("vc_without_intro", "msg_without_intro"):
             rule.required_channel_id = fields["required_channel_id"]
 
@@ -392,11 +422,16 @@ async def api_automod_form_data(
         return JSONResponse({"error": "Not authenticated"}, status_code=401)
 
     guilds_map, channels_map = await _db._get_discord_guilds_and_channels(db)
+    roles_map = await _db._get_discord_roles_by_guild(db)
 
     return JSONResponse(
         {
             "guilds": guilds_map,
             "channels": _channels_to_json(channels_map),
+            "roles": {
+                gid: [{"id": rid, "name": rname} for rid, rname, _c in rlist]
+                for gid, rlist in roles_map.items()
+            },
         }
     )
 

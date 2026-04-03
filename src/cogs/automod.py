@@ -341,19 +341,24 @@ class AutoModCog(commands.Cog):
     def _check_role_count(
         self, rule: AutoModRule, member: discord.Member
     ) -> tuple[bool, str]:
-        """メンバーのロール数が閾値以上かチェック (@everyone を除く)。"""
-        if not rule.threshold_seconds:
+        """指定ロールのうち閾値以上を保持しているかチェック。"""
+        if not rule.threshold_seconds or not rule.target_role_ids:
             return False, ""
 
-        # @everyone ロールを除外してカウント
-        role_count = len([r for r in member.roles if not r.is_default()])
+        target_ids = {
+            rid.strip() for rid in rule.target_role_ids.split(",") if rid.strip()
+        }
+        if not target_ids:
+            return False, ""
+
+        matched_roles = [r for r in member.roles if str(r.id) in target_ids]
         threshold = rule.threshold_seconds
 
-        if role_count >= threshold:
-            role_names = ", ".join(r.name for r in member.roles if not r.is_default())
+        if len(matched_roles) >= threshold:
+            role_names = ", ".join(r.name for r in matched_roles)
             return True, (
-                f"Role count ({role_count}) >= threshold ({threshold}). "
-                f"Roles: {role_names}"
+                f"Matched {len(matched_roles)} of target roles "
+                f">= threshold ({threshold}). Roles: {role_names}"
             )
         return False, ""
 
@@ -725,7 +730,8 @@ class AutoModCog(commands.Cog):
         account_age_minutes="アカウント年齢の閾値 (分、account_age のみ、最大 20160)",
         threshold_seconds="JOIN後の閾値 (秒、role_acquired/vc_join のみ、最大 3600)",
         timeout_duration_minutes="タイムアウト時間 (分、timeout のみ、最大 40320)",
-        role_count="ロール数の閾値 (role_count のみ、@everyone除外、最大 100)",
+        role_count="発動に必要なロール数 (role_count のみ、最大 100)",
+        target_roles="監視対象のロールID (カンマ区切り、role_count のみ)",
     )
     @app_commands.choices(
         rule_type=[
@@ -738,7 +744,7 @@ class AutoModCog(commands.Cog):
             app_commands.Choice(name="VC Join (after join)", value="vc_join"),
             app_commands.Choice(name="Message Post (after join)", value="message_post"),
             app_commands.Choice(
-                name="Role Count (N種ロール保持でBAN)", value="role_count"
+                name="Role Count (指定ロールN個以上で発動)", value="role_count"
             ),
         ],
         action=[
@@ -758,6 +764,7 @@ class AutoModCog(commands.Cog):
         threshold_seconds: int | None = None,
         timeout_duration_minutes: int | None = None,
         role_count: int | None = None,
+        target_roles: str | None = None,
     ) -> None:
         """AutoMod ルールを追加する。"""
         if not interaction.guild:
@@ -803,6 +810,7 @@ class AutoModCog(commands.Cog):
                 )
                 return
 
+        target_role_ids_str: str | None = None
         if rule_type == "role_count":
             if not role_count or role_count < 1:
                 await interaction.response.send_message(
@@ -816,6 +824,30 @@ class AutoModCog(commands.Cog):
                     ephemeral=True,
                 )
                 return
+            if not target_roles or not target_roles.strip():
+                await interaction.response.send_message(
+                    "role_count ルールには target_roles "
+                    "(カンマ区切りロールID) が必要です。",
+                    ephemeral=True,
+                )
+                return
+            # 各IDが数値であることを検証
+            ids = [rid.strip() for rid in target_roles.split(",") if rid.strip()]
+            if not all(rid.isdigit() for rid in ids):
+                await interaction.response.send_message(
+                    "target_roles の各値は数値の"
+                    " Discord ロール ID である必要があります。",
+                    ephemeral=True,
+                )
+                return
+            if len(ids) < role_count:
+                await interaction.response.send_message(
+                    f"target_roles の数 ({len(ids)}) が "
+                    f"role_count ({role_count}) より少ないです。",
+                    ephemeral=True,
+                )
+                return
+            target_role_ids_str = ",".join(ids)
             # role_count を threshold_seconds フィールドに格納
             threshold_seconds = role_count
 
@@ -848,6 +880,7 @@ class AutoModCog(commands.Cog):
                 pattern=pattern,
                 use_wildcard=use_wildcard,
                 threshold_seconds=threshold_seconds,
+                target_role_ids=target_role_ids_str,
                 timeout_duration_seconds=timeout_duration_seconds,
             )
 
@@ -860,6 +893,8 @@ class AutoModCog(commands.Cog):
             desc_parts.append(f"Threshold: {account_age_minutes}min")
         elif rule_type == "role_count" and role_count:
             desc_parts.append(f"Role Count: {role_count}")
+            if target_role_ids_str:
+                desc_parts.append(f"Target Roles: {target_role_ids_str}")
         elif threshold_seconds:
             desc_parts.append(f"Threshold: {threshold_seconds}s")
         if action == "timeout" and timeout_duration_minutes:
@@ -926,7 +961,10 @@ class AutoModCog(commands.Cog):
             elif rule.rule_type in ("role_acquired", "vc_join", "message_post"):
                 desc += f"\nThreshold: {rule.threshold_seconds}s after join"
             elif rule.rule_type == "role_count":
-                desc += f"\nRole Count: {rule.threshold_seconds}種以上"
+                desc += f"\nRole Count: {rule.threshold_seconds}個以上"
+                if rule.target_role_ids:
+                    ids = rule.target_role_ids.split(",")
+                    desc += f" (対象: {len(ids)}ロール)"
             embed.add_field(
                 name=f"#{rule.id} - {rule.rule_type}",
                 value=desc,

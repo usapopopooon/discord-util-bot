@@ -57,9 +57,13 @@ def automod_list_page(
                 else "-"
             )
         elif rule.rule_type == "role_count":
-            details = (
-                f">= {rule.threshold_seconds} roles" if rule.threshold_seconds else "-"
-            )
+            if rule.threshold_seconds and rule.target_role_ids:
+                n_targets = len(rule.target_role_ids.split(","))
+                details = f"{n_targets}個中{rule.threshold_seconds}個以上で発動"
+            elif rule.threshold_seconds:
+                details = f">= {rule.threshold_seconds} roles"
+            else:
+                details = "-"
         elif rule.rule_type in ("vc_without_intro", "msg_without_intro"):
             if rule.required_channel_id:
                 ch_name = None
@@ -170,6 +174,7 @@ def automod_list_page(
 def automod_create_page(
     guilds_map: dict[str, str] | None = None,
     channels_map: dict[str, list[tuple[str, str]]] | None = None,
+    roles_map: dict[str, list[tuple[str, str, int]]] | None = None,
     csrf_token: str = "",
 ) -> str:
     """AutoMod rule create page template."""
@@ -179,6 +184,8 @@ def automod_create_page(
         guilds_map = {}
     if channels_map is None:
         channels_map = {}
+    if roles_map is None:
+        roles_map = {}
 
     guild_options = ""
     for gid, gname in sorted(guilds_map.items(), key=lambda x: x[1]):
@@ -190,6 +197,11 @@ def automod_create_page(
     for gid, ch_list in channels_map.items():
         channels_data[gid] = [{"id": cid, "name": cname} for cid, cname in ch_list]
     channels_json = json_mod.dumps(channels_data)
+
+    roles_data: dict[str, list[dict[str, str]]] = {}
+    for gid, r_list in roles_map.items():
+        roles_data[gid] = [{"id": rid, "name": rname} for rid, rname, _c in r_list]
+    roles_json = json_mod.dumps(roles_data)
 
     content = f"""
     <div class="p-6">
@@ -210,7 +222,7 @@ def automod_create_page(
                 <div>
                     <label class="block text-sm font-medium mb-1">Server</label>
                     <select name="guild_id" required id="guildSelect"
-                            onchange="updateRequiredChannel()"
+                            onchange="updateRequiredChannel(); updateTargetRoles()"
                             class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                         <option value="">Select server...</option>
                         {guild_options}
@@ -263,7 +275,7 @@ def automod_create_page(
                         <label class="flex items-center gap-2 cursor-pointer">
                             <input type="radio" name="rule_type" value="role_count"
                                    onchange="updateRuleFields()">
-                            <span>Role Count (N種以上ロール保持)</span>
+                            <span>Role Count (任意のロールをN個以上取得で発動)</span>
                         </label>
                     </div>
                 </div>
@@ -322,11 +334,20 @@ def automod_create_page(
                 </div>
 
                 <div id="roleCountFields" class="hidden">
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium mb-1">
+                            監視対象ロール (チェックしたロールのうちN個以上で発動)
+                        </label>
+                        <div id="targetRolesContainer"
+                             class="max-h-48 overflow-y-auto bg-gray-700 border border-gray-600 rounded p-2 space-y-1">
+                            <p class="text-gray-400 text-sm">サーバーを選択してください</p>
+                        </div>
+                    </div>
                     <label class="block text-sm font-medium mb-1">
-                        Role Count (1-100, @everyone excluded)
+                        何個以上取得したら発動するか (1-100)
                     </label>
                     <input type="number" name="role_count"
-                           min="1" max="100" placeholder="e.g. 5"
+                           min="1" max="100" placeholder="e.g. 3"
                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                 </div>
 
@@ -350,6 +371,7 @@ def automod_create_page(
 
     <script>
     const channelsData = {channels_json};
+    const rolesData = {roles_json};
     function updateRuleFields() {{
         const ruleType = document.querySelector('input[name="rule_type"]:checked').value;
         const usernameFields = document.getElementById('usernameFields');
@@ -379,6 +401,29 @@ def automod_create_page(
             }});
         }}
     }}
+    function updateTargetRoles() {{
+        const guildId = document.getElementById('guildSelect').value;
+        const container = document.getElementById('targetRolesContainer');
+        container.innerHTML = '';
+        if (rolesData[guildId]) {{
+            rolesData[guildId].forEach(role => {{
+                const label = document.createElement('label');
+                label.className = 'flex items-center gap-2 cursor-pointer text-sm';
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.name = 'target_role_ids';
+                cb.value = role.id;
+                cb.className = 'rounded bg-gray-600 border-gray-500';
+                const span = document.createElement('span');
+                span.textContent = role.name;
+                label.appendChild(cb);
+                label.appendChild(span);
+                container.appendChild(label);
+            }});
+        }} else {{
+            container.innerHTML = '<p class="text-gray-400 text-sm">サーバーを選択してください</p>';
+        }}
+    }}
     function updateTimeoutField() {{
         const action = document.getElementById('actionSelect').value;
         document.getElementById('timeoutDurationFields').classList.toggle('hidden', action !== 'timeout');
@@ -392,6 +437,7 @@ def automod_edit_page(
     rule: "AutoModRule",
     guilds_map: dict[str, str] | None = None,
     channels_map: dict[str, list[tuple[str, str]]] | None = None,
+    roles_map: dict[str, list[tuple[str, str, int]]] | None = None,
     csrf_token: str = "",
 ) -> str:
     """AutoMod rule edit page template."""
@@ -456,10 +502,33 @@ def automod_edit_page(
         """
     elif rule.rule_type == "role_count":
         val = rule.threshold_seconds or ""
+        existing_ids = set((rule.target_role_ids or "").split(","))
+        guild_roles = (roles_map or {}).get(rule.guild_id, [])
+        role_checkboxes = ""
+        for rid, rname, _c in guild_roles:
+            checked = " checked" if rid in existing_ids else ""
+            role_checkboxes += (
+                f'<label class="flex items-center gap-2 cursor-pointer text-sm">'
+                f'<input type="checkbox" name="target_role_ids" value="{escape(rid)}"{checked}'
+                f' class="rounded bg-gray-600 border-gray-500">'
+                f"<span>{escape(rname)}</span></label>"
+            )
+        if not role_checkboxes:
+            role_checkboxes = (
+                '<p class="text-gray-400 text-sm">ロールが見つかりません</p>'
+            )
         type_fields = f"""
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-1">
+                        監視対象ロール (チェックしたロールのうちN個以上で発動)
+                    </label>
+                    <div class="max-h-48 overflow-y-auto bg-gray-700 border border-gray-600 rounded p-2 space-y-1">
+                        {role_checkboxes}
+                    </div>
+                </div>
                 <div>
                     <label class="block text-sm font-medium mb-1">
-                        Role Count (1-100, @everyone excluded)
+                        何個以上取得したら発動するか (1-100)
                     </label>
                     <input type="number" name="role_count"
                            min="1" max="100" value="{val}"
@@ -497,7 +566,7 @@ def automod_edit_page(
         "message_post": "Message Post (after join)",
         "vc_without_intro": "VC Join without Intro Post",
         "msg_without_intro": "Message without Intro Post",
-        "role_count": "Role Count (N種以上ロール保持)",
+        "role_count": "Role Count (任意のロールをN個以上取得で発動)",
     }
     rule_type_label = type_labels.get(rule.rule_type, rule.rule_type)
 

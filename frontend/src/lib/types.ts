@@ -88,6 +88,7 @@ export interface AutoModRule {
   threshold_seconds: number | null
   timeout_duration_seconds: number | null
   required_channel_id: string | null
+  target_role_ids: string[]
   is_enabled: boolean
   created_at: string
 }

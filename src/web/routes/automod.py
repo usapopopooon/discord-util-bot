@@ -64,11 +64,13 @@ async def automod_create_get(
         return RedirectResponse(url="/login", status_code=302)
 
     guilds_map, channels_map = await _app._get_discord_guilds_and_channels(db)
+    roles_map = await _app._get_discord_roles_by_guild(db)
 
     return HTMLResponse(
         content=automod_create_page(
             guilds_map=guilds_map,
             channels_map=channels_map,
+            roles_map=roles_map,
             csrf_token=_app.generate_csrf_token(),
         )
     )
@@ -85,6 +87,7 @@ async def automod_create_post(
     account_age_minutes: Annotated[str, Form()] = "",
     threshold_seconds: Annotated[str, Form()] = "",
     role_count: Annotated[str, Form()] = "",
+    target_role_ids: Annotated[list[str] | None, Form()] = None,
     required_channel_id: Annotated[str, Form()] = "",
     timeout_duration_minutes: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(_app.get_current_user),
@@ -157,6 +160,7 @@ async def automod_create_post(
         if threshold_seconds_int < 1 or threshold_seconds_int > 3600:
             return RedirectResponse(url="/automod/new", status_code=302)
 
+    target_role_ids_str: str | None = None
     if rule_type == "role_count":
         try:
             role_count_int = int(role_count)
@@ -165,6 +169,14 @@ async def automod_create_post(
         if role_count_int < 1 or role_count_int > 100:
             return RedirectResponse(url="/automod/new", status_code=302)
         threshold_seconds_int = role_count_int
+        # target_role_ids バリデーション
+        ids_list = target_role_ids or []
+        valid_ids = [rid for rid in ids_list if rid.strip() and rid.strip().isdigit()]
+        if not valid_ids:
+            return RedirectResponse(url="/automod/new", status_code=302)
+        if len(valid_ids) < role_count_int:
+            return RedirectResponse(url="/automod/new", status_code=302)
+        target_role_ids_str = ",".join(rid.strip() for rid in valid_ids)
 
     required_channel_id_str: str | None = None
     if rule_type in ("vc_without_intro", "msg_without_intro"):
@@ -183,6 +195,7 @@ async def automod_create_post(
             use_wildcard=bool(use_wildcard) if rule_type == "username_match" else False,
             threshold_seconds=threshold_seconds_int,
             required_channel_id=required_channel_id_str,
+            target_role_ids=target_role_ids_str,
             timeout_duration_seconds=timeout_duration_seconds,
         )
         db.add(rule)
@@ -209,12 +222,14 @@ async def automod_edit_get(
         return RedirectResponse(url="/automod", status_code=302)
 
     guilds_map, channels_map = await _app._get_discord_guilds_and_channels(db)
+    roles_map = await _app._get_discord_roles_by_guild(db)
 
     return HTMLResponse(
         content=automod_edit_page(
             rule=rule,
             guilds_map=guilds_map,
             channels_map=channels_map,
+            roles_map=roles_map,
             csrf_token=_app.generate_csrf_token(),
         )
     )
@@ -230,6 +245,7 @@ async def automod_edit_post(
     account_age_minutes: Annotated[str, Form()] = "",
     threshold_seconds: Annotated[str, Form()] = "",
     role_count: Annotated[str, Form()] = "",
+    target_role_ids: Annotated[list[str] | None, Form()] = None,
     required_channel_id: Annotated[str, Form()] = "",
     timeout_duration_minutes: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(_app.get_current_user),
@@ -305,7 +321,14 @@ async def automod_edit_post(
                 return RedirectResponse(url=edit_url, status_code=302)
             if role_count_int < 1 or role_count_int > 100:
                 return RedirectResponse(url=edit_url, status_code=302)
+            ids_list = target_role_ids or []
+            valid_ids = [
+                rid for rid in ids_list if rid.strip() and rid.strip().isdigit()
+            ]
+            if not valid_ids or len(valid_ids) < role_count_int:
+                return RedirectResponse(url=edit_url, status_code=302)
             rule.threshold_seconds = role_count_int
+            rule.target_role_ids = ",".join(rid.strip() for rid in valid_ids)
 
         elif rule.rule_type in ("vc_without_intro", "msg_without_intro"):
             if not required_channel_id.strip():

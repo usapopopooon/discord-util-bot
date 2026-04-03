@@ -3,7 +3,7 @@
 import { useEffect, useState, use } from 'react'
 import { useRouter } from 'next/navigation'
 import { API_BASE } from '@/lib/constants'
-import type { AutoModRule, GuildsMap, ChannelsMap } from '@/lib/types'
+import type { AutoModRule, GuildsMap, ChannelsMap, RolesMap } from '@/lib/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -40,6 +40,7 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
   const router = useRouter()
   const [guilds, setGuilds] = useState<GuildsMap>({})
   const [channels, setChannels] = useState<ChannelsMap>({})
+  const [roles, setRoles] = useState<RolesMap>({})
   const [rule, setRule] = useState<AutoModRule | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -51,6 +52,7 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
   const [thresholdValue, setThresholdValue] = useState('')
   const [timeoutDurationMinutes, setTimeoutDurationMinutes] = useState('')
   const [requiredChannelId, setRequiredChannelId] = useState('')
+  const [targetRoleIds, setTargetRoleIds] = useState<string[]>([])
 
   useEffect(() => {
     async function fetchData() {
@@ -59,12 +61,14 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
       setRule(ruleRes)
       setGuilds(res?.guilds ?? {})
       setChannels(res?.channels ?? {})
+      setRoles(res?.roles ?? {})
 
       if (ruleRes) {
         setAction(ruleRes.action ?? '')
         setPattern(ruleRes.pattern ?? '')
         setUseWildcard(ruleRes.use_wildcard ?? false)
         setRequiredChannelId(ruleRes.required_channel_id ?? '')
+        setTargetRoleIds(ruleRes.target_role_ids ?? [])
 
         if (ruleRes.rule_type === 'account_age' && ruleRes.threshold_seconds) {
           setThresholdValue(String(Math.round(ruleRes.threshold_seconds / 60)))
@@ -91,6 +95,7 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
   }
 
   const filteredChannels = rule.guild_id ? (channels[rule.guild_id] ?? []) : []
+  const filteredRoles = rule.guild_id ? (roles[rule.guild_id] ?? []) : []
 
   const showPattern = rule.rule_type === 'username_match'
   const showAccountAge = rule.rule_type === 'account_age'
@@ -125,6 +130,7 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
         threshold_seconds: thresholdSeconds,
         timeout_duration_seconds: timeoutSeconds,
         required_channel_id: showRequiredChannel ? requiredChannelId || null : null,
+        target_role_ids: showRoleCount ? targetRoleIds : [],
       }
 
       await fetch(`${API_BASE}/automod/rules/${id}`, {
@@ -235,18 +241,47 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
             )}
 
             {showRoleCount && (
-              <div>
-                <label className="text-sm font-medium mb-1.5 block">
-                  Role Count (1-100, @everyone excluded)
-                </label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={thresholdValue}
-                  onChange={(e) => setThresholdValue(e.target.value)}
-                />
-              </div>
+              <>
+                <div>
+                  <label className="text-sm font-medium mb-1.5 block">
+                    監視対象ロール (チェックしたロールのうちN個以上で発動)
+                  </label>
+                  <div className="max-h-48 overflow-y-auto border rounded p-2 space-y-1">
+                    {filteredRoles.length > 0 ? (
+                      filteredRoles.map((role) => (
+                        <label
+                          key={role.id}
+                          className="flex items-center gap-2 text-sm cursor-pointer"
+                        >
+                          <Checkbox
+                            checked={targetRoleIds.includes(role.id)}
+                            onCheckedChange={(checked) => {
+                              setTargetRoleIds((prev) =>
+                                checked ? [...prev, role.id] : prev.filter((rid) => rid !== role.id)
+                              )
+                            }}
+                          />
+                          <span>{role.name}</span>
+                        </label>
+                      ))
+                    ) : (
+                      <p className="text-muted-foreground text-sm">ロールが見つかりません</p>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1.5 block">
+                    何個以上取得したら発動するか (1-100)
+                  </label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={thresholdValue}
+                    onChange={(e) => setThresholdValue(e.target.value)}
+                  />
+                </div>
+              </>
             )}
 
             {showRequiredChannel && (

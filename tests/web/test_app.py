@@ -13174,7 +13174,8 @@ class TestAutomodRoleCountValidation:
                 "guild_id": "123456789012345678",
                 "rule_type": "role_count",
                 "action": "ban",
-                "role_count": "5",
+                "role_count": "3",
+                "target_role_ids": ["111", "222", "333", "444", "555"],
             },
             follow_redirects=False,
         )
@@ -13185,7 +13186,26 @@ class TestAutomodRoleCountValidation:
         rules = list(result.scalars().all())
         assert len(rules) == 1
         assert rules[0].rule_type == "role_count"
-        assert rules[0].threshold_seconds == 5
+        assert rules[0].threshold_seconds == 3
+        assert rules[0].target_role_ids == "111,222,333,444,555"
+
+    @pytest.mark.asyncio
+    async def test_role_count_create_no_target_roles(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """target_role_ids なしはリダイレクトされる。"""
+        response = await authenticated_client.post(
+            "/automod/new",
+            data={
+                "guild_id": "123456",
+                "rule_type": "role_count",
+                "action": "ban",
+                "role_count": "3",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/automod/new" in response.headers["location"]
 
     @pytest.mark.asyncio
     async def test_role_count_create_invalid(
@@ -13253,6 +13273,7 @@ class TestAutomodRoleCountValidation:
             rule_type="role_count",
             action="ban",
             threshold_seconds=5,
+            target_role_ids="111,222,333,444,555",
         )
         db_session.add(rule)
         await db_session.commit()
@@ -13260,14 +13281,19 @@ class TestAutomodRoleCountValidation:
 
         response = await authenticated_client.post(
             f"/automod/{rule.id}/edit",
-            data={"action": "kick", "role_count": "10"},
+            data={
+                "action": "kick",
+                "role_count": "2",
+                "target_role_ids": ["111", "222", "333"],
+            },
             follow_redirects=False,
         )
         assert response.status_code == 302
 
         await db_session.refresh(rule)
         assert rule.action == "kick"
-        assert rule.threshold_seconds == 10
+        assert rule.threshold_seconds == 2
+        assert rule.target_role_ids == "111,222,333"
 
     @pytest.mark.asyncio
     async def test_role_count_edit_invalid(
@@ -13281,6 +13307,7 @@ class TestAutomodRoleCountValidation:
             rule_type="role_count",
             action="ban",
             threshold_seconds=5,
+            target_role_ids="111,222,333,444,555",
         )
         db_session.add(rule)
         await db_session.commit()
@@ -13298,7 +13325,7 @@ class TestAutomodRoleCountValidation:
     async def test_role_count_boundary_max(
         self, authenticated_client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        """role_count=100 は成功する。"""
+        """role_count=100 は成功する (target_role_ids が100個以上)。"""
         response = await authenticated_client.post(
             "/automod/new",
             data={
@@ -13306,6 +13333,7 @@ class TestAutomodRoleCountValidation:
                 "rule_type": "role_count",
                 "action": "ban",
                 "role_count": "100",
+                "target_role_ids": [str(1000 + i) for i in range(100)],
             },
             follow_redirects=False,
         )

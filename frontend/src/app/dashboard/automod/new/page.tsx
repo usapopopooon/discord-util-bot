@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { API_BASE } from '@/lib/constants'
-import type { GuildsMap, ChannelsMap } from '@/lib/types'
+import type { GuildsMap, ChannelsMap, RolesMap } from '@/lib/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -39,6 +39,7 @@ export default function AutoModNewPage() {
   const router = useRouter()
   const [guilds, setGuilds] = useState<GuildsMap>({})
   const [channels, setChannels] = useState<ChannelsMap>({})
+  const [roles, setRoles] = useState<RolesMap>({})
   const [submitting, setSubmitting] = useState(false)
 
   // Form state
@@ -50,17 +51,20 @@ export default function AutoModNewPage() {
   const [thresholdMinutes, setThresholdMinutes] = useState('')
   const [timeoutDurationMinutes, setTimeoutDurationMinutes] = useState('')
   const [requiredChannelId, setRequiredChannelId] = useState('')
+  const [targetRoleIds, setTargetRoleIds] = useState<string[]>([])
 
   useEffect(() => {
     async function fetchData() {
       const res = await fetch(`${API_BASE}/automod/form-data`).then((r) => r.json())
       setGuilds(res?.guilds ?? {})
       setChannels(res?.channels ?? {})
+      setRoles(res?.roles ?? {})
     }
     fetchData()
   }, [])
 
   const filteredChannels = selectedGuild ? (channels[selectedGuild] ?? []) : []
+  const filteredRoles = selectedGuild ? (roles[selectedGuild] ?? []) : []
 
   const showPattern = ruleType === 'username_match'
   const showAccountAge = ruleType === 'account_age'
@@ -97,6 +101,7 @@ export default function AutoModNewPage() {
         threshold_seconds: thresholdSeconds,
         timeout_duration_seconds: timeoutSeconds,
         required_channel_id: showRequiredChannel ? requiredChannelId || null : null,
+        target_role_ids: showRoleCount ? targetRoleIds : [],
       }
 
       await fetch(`${API_BASE}/automod/rules`, {
@@ -237,19 +242,48 @@ export default function AutoModNewPage() {
             )}
 
             {showRoleCount && (
-              <div>
-                <label className="text-sm font-medium mb-1.5 block">
-                  Role Count (1-100, @everyone excluded)
-                </label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={thresholdMinutes}
-                  onChange={(e) => setThresholdMinutes(e.target.value)}
-                  placeholder="e.g. 5"
-                />
-              </div>
+              <>
+                <div>
+                  <label className="text-sm font-medium mb-1.5 block">
+                    監視対象ロール (チェックしたロールのうちN個以上で発動)
+                  </label>
+                  <div className="max-h-48 overflow-y-auto border rounded p-2 space-y-1">
+                    {filteredRoles.length > 0 ? (
+                      filteredRoles.map((role) => (
+                        <label
+                          key={role.id}
+                          className="flex items-center gap-2 text-sm cursor-pointer"
+                        >
+                          <Checkbox
+                            checked={targetRoleIds.includes(role.id)}
+                            onCheckedChange={(checked) => {
+                              setTargetRoleIds((prev) =>
+                                checked ? [...prev, role.id] : prev.filter((id) => id !== role.id)
+                              )
+                            }}
+                          />
+                          <span>{role.name}</span>
+                        </label>
+                      ))
+                    ) : (
+                      <p className="text-muted-foreground text-sm">サーバーを選択してください</p>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1.5 block">
+                    何個以上取得したら発動するか (1-100)
+                  </label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={thresholdMinutes}
+                    onChange={(e) => setThresholdMinutes(e.target.value)}
+                    placeholder="e.g. 3"
+                  />
+                </div>
+              </>
             )}
 
             {showRequiredChannel && (
