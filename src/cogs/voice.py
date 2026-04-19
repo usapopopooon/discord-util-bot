@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import time
@@ -120,6 +121,16 @@ def clear_vc_create_cooldown_cache() -> None:
     global _vc_last_cleanup_time
     _vc_create_cooldown_cache.clear()
     _vc_last_cleanup_time = 0.0
+
+
+def _copy_overwrite(
+    overwrite: discord.PermissionOverwrite | None,
+) -> discord.PermissionOverwrite:
+    """PermissionOverwrite を複製する。"""
+    if overwrite is None:
+        return discord.PermissionOverwrite()
+    allow, deny = overwrite.pair()
+    return discord.PermissionOverwrite.from_pair(allow, deny)
 
 
 class VoiceCog(commands.Cog):
@@ -457,7 +468,7 @@ class VoiceCog(commands.Cog):
           2. クールダウンチェック (連続作成防止)
           3. ロビーなら新しい VC を作成
           4. DB にセッション情報を記録
-          5. テキストチャット権限を設定 (オーナーのみ閲覧可)
+          5. VC 作成時にテキストチャット権限を付与 (オーナーのみ閲覧可)
           6. メンバーを新しい VC に移動
           7. コントロールパネル (Embed + ボタン) を送信
 
@@ -543,13 +554,25 @@ class VoiceCog(commands.Cog):
             # チャンネル名は「ユーザー名's channel」形式
             # ロビーチャンネルの権限設定をコピーして
             # @everyone の接続拒否などを引き継ぐ
+            # 高速化のため set_permissions() の追加 API 呼び出しを避け、
+            # 作成時の overwrites に read_message_history の設定を織り込む。
             channel_name = f"{member.display_name}'s channel"
+            overwrites = dict(channel.overwrites)
+
+            default_ow = _copy_overwrite(overwrites.get(guild.default_role))
+            default_ow.update(read_message_history=False)
+            overwrites[guild.default_role] = default_ow
+
+            owner_ow = _copy_overwrite(overwrites.get(member))
+            owner_ow.update(read_message_history=True)
+            overwrites[member] = owner_ow
+
             new_channel = await guild.create_voice_channel(
                 name=channel_name,
                 category=category,
                 user_limit=lobby.default_user_limit,
                 rtc_region=DEFAULT_RTC_REGION,  # リージョンを日本に固定
-                overwrites=channel.overwrites,  # ロビーの権限設定をコピー
+                overwrites=overwrites,  # ロビー権限 + オーナー閲覧権限
             )
 
             # --- DB にセッション記録 ---
@@ -576,18 +599,46 @@ class VoiceCog(commands.Cog):
 
             # --- チャンネル初期化 ---
             # DB セッション作成後の全操作をまとめてエラーハンドリングする。
-            # set_permissions, move_to, send のいずれかが失敗した場合、
+            # move_to, send のいずれかが失敗した場合、
             # 不完全なチャンネルと DB レコードを両方クリーンアップする。
             try:
-                # テキストチャット権限の設定
-                # VC 内のテキストチャットはデフォルトでオーナーのみ閲覧可にする
-                await new_channel.set_permissions(
-                    guild.default_role, read_message_history=False
-                )
-                await new_channel.set_permissions(member, read_message_history=True)
+                # ロビーにいる人間メンバーを一括移動する。
+                # スナップショットを作り、移動中の members 変化の影響を避ける。
+                lobby_members = [
+                    m
+                    for m in list(channel.members)
+                    if not m.bot and m.voice and m.voice.channel == channel
+                ]
+                # キャッシュ更新タイミングなどで members に載らないケースに備え、
+                # トリガーした本人は必ず移動対象に含める。
+                if (
+                    member not in lobby_members
+                    and member.voice
+                    and member.voice.channel == channel
+                ):
+                    lobby_members.append(member)
 
-                # メンバーをロビーから新しい VC に移動
-                await member.move_to(new_channel)
+                # 並列移動で待ち時間を短縮
+                move_results = await asyncio.gather(
+                    *(m.move_to(new_channel) for m in lobby_members),
+                    return_exceptions=True,
+                )
+                move_errors = [
+                    err for err in move_results if isinstance(err, discord.HTTPException)
+                ]
+                if move_errors:
+                    logger.warning(
+                        "Some members failed to move to channel %s: %d/%d failed",
+                        new_channel.id,
+                        len(move_errors),
+                        len(lobby_members),
+                    )
+                    # オーナー移動に失敗した場合は初期化失敗として扱い、
+                    # 既存挙動どおりチャンネル/DBをクリーンアップする。
+                    owner_idx = lobby_members.index(member)
+                    owner_result = move_results[owner_idx]
+                    if isinstance(owner_result, discord.HTTPException):
+                        raise owner_result
 
                 # コントロールパネル (Embed + ボタン) を送信
                 embed = create_control_panel_embed(voice_session, member)

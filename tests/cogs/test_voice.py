@@ -602,9 +602,15 @@ class TestHandleLobbyJoin:
             member.voice.channel = channel
             await cog._handle_lobby_join(member, channel)
 
-            # VC 作成時にロビーの overwrites が渡される
+            # VC 作成時にロビーの overwrites が維持され、
+            # さらに read_message_history の初期権限が付与される
             call_kwargs = guild.create_voice_channel.call_args[1]
-            assert call_kwargs["overwrites"] == lobby_overwrites
+            created_overwrites = call_kwargs["overwrites"]
+            for target, overwrite in lobby_overwrites.items():
+                assert target in created_overwrites
+                assert created_overwrites[target] == overwrite
+            assert created_overwrites[guild.default_role].read_message_history is False
+            assert created_overwrites[member].read_message_history is True
 
     async def test_cleanup_on_move_failure(self) -> None:
         """move_to 失敗時にチャンネルと DB レコードをクリーンアップする。"""
@@ -619,16 +625,15 @@ class TestHandleLobbyJoin:
         lobby.default_user_limit = 0
 
         new_channel = _make_channel(200)
-        new_channel.set_permissions = AsyncMock(
-            side_effect=discord.HTTPException(MagicMock(status=500), "error")
-        )
         new_channel.delete = AsyncMock()
 
         guild = MagicMock(spec=discord.Guild)
         guild.create_voice_channel = AsyncMock(return_value=new_channel)
         guild.default_role = MagicMock()
         member.guild = guild
-        member.move_to = AsyncMock()
+        member.move_to = AsyncMock(
+            side_effect=discord.HTTPException(MagicMock(status=500), "error")
+        )
 
         voice_session = _make_voice_session(channel_id="200")
 
@@ -660,6 +665,67 @@ class TestHandleLobbyJoin:
             # クリーンアップ: チャンネル削除 + DB レコード削除
             new_channel.delete.assert_awaited_once()
             mock_delete.assert_awaited_once_with(mock_session, "200")
+
+    async def test_bulk_moves_all_lobby_members(self) -> None:
+        """ロビーにいる全メンバーを新VCに一括移動する。"""
+        cog = _make_cog()
+        owner = _make_member(1)
+        peer = _make_member(2)
+        channel = _make_channel(100, [owner, peer])
+        channel.category = MagicMock(spec=discord.CategoryChannel)
+
+        lobby = MagicMock()
+        lobby.id = 10
+        lobby.category_id = None
+        lobby.default_user_limit = 5
+
+        new_channel = _make_channel(200)
+        new_channel.send = AsyncMock(return_value=MagicMock(pin=AsyncMock()))
+
+        guild = MagicMock(spec=discord.Guild)
+        guild.create_voice_channel = AsyncMock(return_value=new_channel)
+        guild.default_role = MagicMock()
+        owner.guild = guild
+        peer.guild = guild
+        owner.move_to = AsyncMock()
+        peer.move_to = AsyncMock()
+
+        # 両者とも現在ロビーにいる状態
+        owner.voice.channel = channel
+        peer.voice.channel = channel
+
+        voice_session = _make_voice_session(channel_id="200", owner_id="1")
+
+        mock_factory, _ = _mock_async_session()
+        with (
+            patch("src.cogs.voice.async_session", mock_factory),
+            patch(
+                "src.cogs.voice.get_lobby_by_channel_id",
+                new_callable=AsyncMock,
+                return_value=lobby,
+            ),
+            patch(
+                "src.cogs.voice.create_voice_session",
+                new_callable=AsyncMock,
+                return_value=voice_session,
+            ),
+            patch(
+                "src.cogs.voice.add_voice_session_member",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.cogs.voice.create_control_panel_embed",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "src.cogs.voice.ControlPanelView",
+                return_value=MagicMock(),
+            ),
+        ):
+            await cog._handle_lobby_join(owner, channel)
+
+        owner.move_to.assert_awaited_once_with(new_channel)
+        peer.move_to.assert_awaited_once_with(new_channel)
 
 
 # ===========================================================================
