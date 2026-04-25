@@ -9,22 +9,22 @@ Create Date: 2026-02-26 21:10:20.951449
 
 """
 
+import re
 import unicodedata
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import emoji
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "38657dc9ba11"
-down_revision: Union[str, None] = "y5z6a7b8c9d0"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "y5z6a7b8c9d0"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 # Discord カスタム絵文字パターン (<:name:id> or <a:name:id>)
-import re
-
 _CUSTOM_EMOJI_RE = re.compile(r"^<a?:\w+:\d+>$")
 
 

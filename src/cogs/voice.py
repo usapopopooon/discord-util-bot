@@ -624,7 +624,9 @@ class VoiceCog(commands.Cog):
                     return_exceptions=True,
                 )
                 move_errors = [
-                    err for err in move_results if isinstance(err, discord.HTTPException)
+                    err
+                    for err in move_results
+                    if isinstance(err, discord.HTTPException)
                 ]
                 if move_errors:
                     logger.warning(
