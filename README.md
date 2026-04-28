@@ -28,6 +28,7 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 - **AutoMod**: 8種類のルール (ユーザー名、アカウント年齢、アバター、タイミング系、自己紹介必須) + BANリスト
 - **イベントログ**: 25種類のサーバーイベントを記録 (Carl-bot 風カラー)
 - **入室時ロール**: メンバー参加時に時限ロール自動付与
+- **チャットロール**: 指定チャンネルに累計 N 回投稿でロール付与 (任意で期限付き)
 - **Web 管理画面**: 全機能の設定・管理・ログ閲覧
 
 ## プロジェクト構成
@@ -39,7 +40,7 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 │   ├── config.py                 # 設定管理
 │   ├── constants.py              # 定数
 │   ├── utils.py                  # ユーティリティ
-│   ├── cogs/                     # Discord Bot 機能 (10 cogs)
+│   ├── cogs/                     # Discord Bot 機能 (11 cogs)
 │   ├── database/                 # SQLAlchemy モデル + エンジン
 │   ├── services/                 # DB 操作 (ドメイン別 9 サービス + ファサード)
 │   ├── ui/                       # Discord UI コンポーネント
@@ -59,6 +60,7 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 │       │   ├── api_automod.py    # /api/v1/automod
 │       │   ├── api_ticket.py     # /api/v1/tickets
 │       │   ├── api_joinrole.py   # /api/v1/joinrole
+│       │   ├── api_chatrole.py   # /api/v1/chatrole
 │       │   ├── api_eventlog.py   # /api/v1/eventlog
 │       │   ├── api_settings.py   # /api/v1/settings
 │       │   ├── api_misc.py       # /api/v1/health, activity
@@ -66,12 +68,12 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 │       └── templates/            # 旧 HTML テンプレート (廃止予定)
 ├── frontend/                     # Next.js フロントエンド
 │   ├── src/
-│   │   ├── app/                  # App Router ページ (25 ページ)
+│   │   ├── app/                  # App Router ページ (26 ページ)
 │   │   ├── components/           # UI コンポーネント
 │   │   └── lib/                  # API クライアント・型定義
 │   ├── Dockerfile                # 本番用
 │   └── Dockerfile.dev            # 開発用
-├── alembic/                      # DB マイグレーション (36 リビジョン)
+├── alembic/                      # DB マイグレーション (39 リビジョン)
 ├── tests/                        # Python テスト (3580 テスト)
 ├── scripts/
 │   └── ci_check.py               # ローカル CI (12 チェック)

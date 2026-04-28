@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- ChatRole feature: grant a role automatically when a member posts a cumulative N times in a designated channel.
+  - New `ChatRoleConfig` (guild_id, channel_id, role_id, threshold, optional duration_hours) and `ChatRoleProgress` (count + granted state) models.
+  - `chatrole` cog: counts posts via `on_message`, grants role on threshold, removes role after `duration_hours` via per-minute background task; resets count on expiry so the role can be re-earned.
+  - Posts authored before `config.created_at` are not counted.
+  - Web admin (FastAPI HTML + JSON API at `/api/v1/chatrole`) and Next.js dashboard page.
+  - Atomic `granted=False → True` claim via SQL UPDATE so multi-instance deployments avoid double-grants.
+
 ## [0.1.3] - 2026-03-31
 
 ### Added

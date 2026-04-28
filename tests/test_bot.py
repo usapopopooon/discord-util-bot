@@ -81,7 +81,7 @@ class TestSetupHook:
         ):
             await bot.setup_hook()
 
-        assert bot.load_extension.await_count == 10
+        assert bot.load_extension.await_count == 11
         bot.load_extension.assert_any_await("src.cogs.voice")
         bot.load_extension.assert_any_await("src.cogs.admin")
         bot.load_extension.assert_any_await("src.cogs.health")
@@ -91,6 +91,7 @@ class TestSetupHook:
         bot.load_extension.assert_any_await("src.cogs.automod")
         bot.load_extension.assert_any_await("src.cogs.ticket")
         bot.load_extension.assert_any_await("src.cogs.join_role")
+        bot.load_extension.assert_any_await("src.cogs.chatrole")
         bot.load_extension.assert_any_await("src.cogs.eventlog")
 
     @patch("src.bot.async_session")

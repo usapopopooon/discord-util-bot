@@ -1701,6 +1701,84 @@ class JoinRoleAssignment(Base):
         )
 
 
+# =============================================================================
+# Chat Role (チャット投稿ロール付与)
+# =============================================================================
+
+
+class ChatRoleConfig(Base):
+    """指定チャンネルへの累計投稿数で自動ロール付与する設定。
+
+    1サーバーで (channel_id, role_id) ペアを複数登録可能。
+    duration_hours が NULL なら永続付与、整数なら付与から N 時間後に自動削除。
+    config.created_at より前の投稿はカウント対象外。
+    """
+
+    __tablename__ = "chat_role_configs"
+    __table_args__ = (
+        UniqueConstraint(
+            "guild_id", "channel_id", "role_id", name="uq_chat_role_guild_ch_role"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    channel_id: Mapped[str] = mapped_column(String, nullable=False)
+    role_id: Mapped[str] = mapped_column(String, nullable=False)
+    threshold: Mapped[int] = mapped_column(Integer, nullable=False)
+    duration_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ChatRoleConfig(id={self.id}, guild_id={self.guild_id}, "
+            f"channel_id={self.channel_id}, role_id={self.role_id}, "
+            f"threshold={self.threshold})>"
+        )
+
+
+class ChatRoleProgress(Base):
+    """ChatRoleConfig ごとのユーザー投稿カウントと付与状態。
+
+    投稿のたびに count++ し、threshold に達した瞬間にロール付与 + granted=True。
+    duration_hours が指定されていれば expires_at に削除予定時刻を記録し、
+    バックグラウンドタスクで期限切れロールを削除する。
+    """
+
+    __tablename__ = "chat_role_progress"
+    __table_args__ = (
+        UniqueConstraint(
+            "config_id", "user_id", name="uq_chat_role_progress_config_user"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    config_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("chat_role_configs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    granted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    granted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ChatRoleProgress(id={self.id}, config_id={self.config_id}, "
+            f"user_id={self.user_id}, count={self.count}, granted={self.granted})>"
+        )
+
+
 class EventLogConfig(Base):
     """イベントログのルーティング設定テーブル。
 

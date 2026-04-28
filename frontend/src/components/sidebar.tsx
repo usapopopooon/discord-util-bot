@@ -17,6 +17,7 @@ const navItems = [
   { href: '/dashboard/tickets', label: 'Tickets' },
   { href: '/dashboard/roles', label: 'Role Panels' },
   { href: '/dashboard/joinrole', label: 'Join Roles' },
+  { href: '/dashboard/chatrole', label: 'Chat Roles' },
   { href: '/dashboard/eventlog', label: 'Event Log' },
   { href: '/dashboard/activity', label: 'Bot Activity' },
   { href: '/dashboard/health', label: 'Health Check' },

@@ -53,6 +53,17 @@ export interface JoinRoleConfig {
   enabled: boolean
 }
 
+// ChatRole
+export interface ChatRoleConfig {
+  id: number
+  guild_id: string
+  channel_id: string
+  role_id: string
+  threshold: number
+  duration_hours: number | null
+  enabled: boolean
+}
+
 // EventLog
 export interface EventLogConfig {
   id: number

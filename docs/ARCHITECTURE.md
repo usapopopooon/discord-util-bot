@@ -48,7 +48,7 @@ src/
 ├── config.py                  # 設定管理
 ├── constants.py               # 定数
 ├── utils.py                   # ユーティリティ
-├── cogs/                      # Bot 機能 (10 cogs)
+├── cogs/                      # Bot 機能 (11 cogs)
 │   ├── admin.py               # 管理コマンド
 │   ├── voice.py               # 一時 VC
 │   ├── bump.py                # Bump リマインダー
@@ -59,6 +59,7 @@ src/
 │   ├── eventlog.py            # イベントログ (25 種類)
 │   ├── _eventlog_helpers.py   # ログ Embed ヘルパー
 │   ├── join_role.py           # 入室時ロール
+│   ├── chatrole.py            # チャットロール (累計投稿で付与)
 │   └── health.py              # ヘルスチェック
 ├── core/                      # コア機能
 ├── database/
@@ -82,6 +83,7 @@ src/
         ├── api_automod.py     # /api/v1/automod
         ├── api_ticket.py      # /api/v1/tickets
         ├── api_joinrole.py    # /api/v1/joinrole
+        ├── api_chatrole.py    # /api/v1/chatrole
         ├── api_eventlog.py    # /api/v1/eventlog
         ├── api_settings.py    # /api/v1/settings
         ├── api_misc.py        # /api/v1/health, activity
@@ -89,7 +91,7 @@ src/
 
 frontend/
 ├── src/
-│   ├── app/                   # Next.js ページ (25 ページ)
+│   ├── app/                   # Next.js ページ (26 ページ)
 │   │   ├── login/
 │   │   └── dashboard/
 │   │       ├── lobbies/
@@ -99,6 +101,7 @@ frontend/
 │   │       ├── roles/         # list, new, detail
 │   │       ├── tickets/       # list, detail, panels/*
 │   │       ├── joinrole/
+│   │       ├── chatrole/
 │   │       ├── eventlog/
 │   │       ├── activity/
 │   │       ├── health/
@@ -141,6 +144,7 @@ frontend/
 | `/api/v1/automod` | ルール CRUD + ログ + 設定 + BANリスト |
 | `/api/v1/tickets` | チケット + パネル + カテゴリ |
 | `/api/v1/joinrole` | 入室時ロール |
+| `/api/v1/chatrole` | チャットロール (累計投稿で付与、任意で期限付き) |
 | `/api/v1/eventlog` | イベントログ設定 |
 | `/api/v1/settings` | ダッシュボード + 設定 + メンテナンス |
 | `/api/v1/health` | ヘルスチェック + モニタリング設定 |
@@ -164,6 +168,7 @@ frontend/
 - `BanLog` — BAN ログ
 - `TicketCategory` / `TicketPanel` / `TicketPanelCategory` / `Ticket` — チケット
 - `JoinRoleConfig` / `JoinRoleAssignment` — 入室時ロール
+- `ChatRoleConfig` / `ChatRoleProgress` — チャットロール (累計投稿カウント + 付与状態)
 - `EventLogConfig` — イベントログ
 - `DiscordGuild` / `DiscordChannel` / `DiscordRole` — Discord キャッシュ
 - `SiteSettings` — サイト設定 (タイムゾーン)

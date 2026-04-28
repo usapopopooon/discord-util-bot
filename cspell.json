@@ -103,6 +103,7 @@
     "XDIST",
     "datname",
     "joinrole",
+    "chatrole",
     "unban",
     "Unban",
     "eventlog",

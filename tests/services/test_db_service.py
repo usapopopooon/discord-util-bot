@@ -27,6 +27,7 @@ from src.services.db_service import (
     create_automod_log,
     create_automod_rule,
     create_ban_log,
+    create_chat_role_config,
     create_join_role_assignment,
     create_join_role_config,
     create_lobby,
@@ -36,6 +37,7 @@ from src.services.db_service import (
     delete_automod_rule,
     delete_bump_config,
     delete_bump_reminders_by_guild,
+    delete_chat_role_config,
     delete_discord_channel,
     delete_discord_channels_by_guild,
     delete_discord_guild,
@@ -71,11 +73,15 @@ from src.services.db_service import (
     get_bot_activity,
     get_bump_config,
     get_bump_reminder,
+    get_chat_role_configs,
     get_discord_channels_by_guild,
     get_discord_roles_by_guild,
     get_due_bump_reminders,
     get_enabled_automod_rules_by_guild,
+    get_enabled_chat_role_channel_ids,
+    get_enabled_chat_role_configs_for_channel,
     get_enabled_join_role_configs,
+    get_expired_chat_role_progress,
     get_expired_join_role_assignments,
     get_join_role_configs,
     get_lobbies_by_guild,
@@ -90,11 +96,15 @@ from src.services.db_service import (
     get_voice_session,
     get_voice_session_members_ordered,
     has_intro_post,
+    increment_chat_role_progress,
+    mark_chat_role_progress_expired,
+    mark_chat_role_progress_granted,
     record_intro_post,
     remove_role_panel_item,
     remove_voice_session_member,
     toggle_automod_rule,
     toggle_bump_reminder,
+    toggle_chat_role_config,
     toggle_join_role_config,
     update_automod_rule,
     update_bump_reminder_role,
@@ -5946,3 +5956,226 @@ class TestUpsertBotActivity:
         assert fetched is not None
         assert fetched.activity_type == "watching"
         assert fetched.activity_text == "動画"
+
+
+class TestChatRoleDbService:
+    """Tests for chat role CRUD and progress tracking."""
+
+    async def test_create_chat_role_config(self, db_session: AsyncSession) -> None:
+        config = await create_chat_role_config(
+            db_session,
+            guild_id="g1",
+            channel_id="c1",
+            role_id="r1",
+            threshold=5,
+            duration_hours=24,
+        )
+        assert config.id is not None
+        assert config.threshold == 5
+        assert config.duration_hours == 24
+        assert config.enabled is True
+
+    async def test_create_chat_role_config_permanent(
+        self, db_session: AsyncSession
+    ) -> None:
+        config = await create_chat_role_config(
+            db_session, "g1", "c1", "r1", threshold=3, duration_hours=None
+        )
+        assert config.duration_hours is None
+
+    async def test_get_chat_role_configs_filter_by_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        await create_chat_role_config(db_session, "g1", "c1", "r1", 5, 24)
+        await create_chat_role_config(db_session, "g2", "c2", "r2", 5, None)
+
+        configs = await get_chat_role_configs(db_session, guild_id="g1")
+        assert len(configs) == 1
+        assert configs[0].guild_id == "g1"
+
+    async def test_get_enabled_chat_role_configs_for_channel(
+        self, db_session: AsyncSession
+    ) -> None:
+        c1 = await create_chat_role_config(db_session, "g1", "c1", "r1", 5, 24)
+        await create_chat_role_config(db_session, "g1", "c1", "r2", 10, None)
+        await create_chat_role_config(db_session, "g1", "c2", "r3", 5, 24)
+
+        await toggle_chat_role_config(db_session, c1.id)
+
+        result = await get_enabled_chat_role_configs_for_channel(db_session, "g1", "c1")
+        assert len(result) == 1
+        assert result[0].role_id == "r2"
+
+    async def test_delete_chat_role_config(self, db_session: AsyncSession) -> None:
+        config = await create_chat_role_config(db_session, "g1", "c1", "r1", 5, 24)
+        result = await delete_chat_role_config(db_session, config.id)
+        assert result is True
+
+        configs = await get_chat_role_configs(db_session)
+        assert len(configs) == 0
+
+    async def test_delete_chat_role_config_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        result = await delete_chat_role_config(db_session, 999)
+        assert result is False
+
+    async def test_toggle_chat_role_config(self, db_session: AsyncSession) -> None:
+        config = await create_chat_role_config(db_session, "g1", "c1", "r1", 5, 24)
+        toggled = await toggle_chat_role_config(db_session, config.id)
+        assert toggled is not None
+        assert toggled.enabled is False
+
+    async def test_toggle_chat_role_config_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        result = await toggle_chat_role_config(db_session, 999)
+        assert result is None
+
+    async def test_create_duplicate_raises(self, db_session: AsyncSession) -> None:
+        from sqlalchemy.exc import IntegrityError
+
+        await create_chat_role_config(db_session, "g1", "c1", "r1", 5, 24)
+        with pytest.raises(IntegrityError):
+            await create_chat_role_config(db_session, "g1", "c1", "r1", 10, None)
+
+    async def test_increment_progress_creates_record(
+        self, db_session: AsyncSession
+    ) -> None:
+        config = await create_chat_role_config(db_session, "g1", "c1", "r1", 5, 24)
+        progress = await increment_chat_role_progress(db_session, config.id, "u1")
+        assert progress is not None
+        assert progress.id is not None
+        assert progress.count == 1
+        assert progress.granted is False
+
+    async def test_increment_progress_increments_existing(
+        self, db_session: AsyncSession
+    ) -> None:
+        config = await create_chat_role_config(db_session, "g1", "c1", "r1", 5, 24)
+        await increment_chat_role_progress(db_session, config.id, "u1")
+        progress = await increment_chat_role_progress(db_session, config.id, "u1")
+        assert progress is not None
+        assert progress.count == 2
+
+    async def test_increment_progress_returns_none_when_granted(
+        self, db_session: AsyncSession
+    ) -> None:
+        """granted=True のレコードに対する increment は None を返し更新もしない。"""
+        from datetime import UTC, datetime, timedelta
+
+        config = await create_chat_role_config(db_session, "g1", "c1", "r1", 1, 24)
+        progress = await increment_chat_role_progress(db_session, config.id, "u1")
+        assert progress is not None
+        now = datetime.now(UTC)
+        await mark_chat_role_progress_granted(
+            db_session, progress.id, now, now + timedelta(hours=24)
+        )
+
+        result = await increment_chat_role_progress(db_session, config.id, "u1")
+        assert result is None
+
+    async def test_mark_progress_granted_succeeds_once(
+        self, db_session: AsyncSession
+    ) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        config = await create_chat_role_config(db_session, "g1", "c1", "r1", 1, 24)
+        progress = await increment_chat_role_progress(db_session, config.id, "u1")
+        assert progress is not None
+
+        now = datetime.now(UTC)
+        ok = await mark_chat_role_progress_granted(
+            db_session, progress.id, now, now + timedelta(hours=24)
+        )
+        assert ok is True
+
+        # 二度目は失敗 (既に granted=True)
+        ok2 = await mark_chat_role_progress_granted(
+            db_session, progress.id, now, now + timedelta(hours=24)
+        )
+        assert ok2 is False
+
+    async def test_get_expired_chat_role_progress(
+        self, db_session: AsyncSession
+    ) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        config = await create_chat_role_config(db_session, "g1", "c1", "r1", 1, 1)
+        progress = await increment_chat_role_progress(db_session, config.id, "u1")
+        assert progress is not None
+        now = datetime.now(UTC)
+
+        # 期限切れにマーク
+        await mark_chat_role_progress_granted(
+            db_session, progress.id, now - timedelta(hours=2), now - timedelta(hours=1)
+        )
+
+        expired = await get_expired_chat_role_progress(db_session, now)
+        assert len(expired) == 1
+        p, c = expired[0]
+        assert p.id == progress.id
+        assert c.id == config.id
+
+    async def test_mark_progress_expired_resets_state(
+        self, db_session: AsyncSession
+    ) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        config = await create_chat_role_config(db_session, "g1", "c1", "r1", 1, 1)
+        progress = await increment_chat_role_progress(db_session, config.id, "u1")
+        assert progress is not None
+        now = datetime.now(UTC)
+        await mark_chat_role_progress_granted(
+            db_session, progress.id, now, now - timedelta(hours=1)
+        )
+
+        ok = await mark_chat_role_progress_expired(db_session, progress.id)
+        assert ok is True
+
+        # 二度目は失敗 (既に granted=False)
+        ok2 = await mark_chat_role_progress_expired(db_session, progress.id)
+        assert ok2 is False
+
+    async def test_permanent_grant_not_in_expired_list(
+        self, db_session: AsyncSession
+    ) -> None:
+        from datetime import UTC, datetime
+
+        config = await create_chat_role_config(db_session, "g1", "c1", "r1", 1, None)
+        progress = await increment_chat_role_progress(db_session, config.id, "u1")
+        assert progress is not None
+        now = datetime.now(UTC)
+        await mark_chat_role_progress_granted(
+            db_session, progress.id, now, expires_at=None
+        )
+
+        expired = await get_expired_chat_role_progress(db_session, now)
+        assert len(expired) == 0
+
+    async def test_get_enabled_chat_role_channel_ids(
+        self, db_session: AsyncSession
+    ) -> None:
+        """有効な ChatRoleConfig のチャンネル ID 集合を取得する。"""
+        c1 = await create_chat_role_config(db_session, "g1", "c1", "r1", 5, 24)
+        await create_chat_role_config(db_session, "g1", "c2", "r2", 5, None)
+        await create_chat_role_config(db_session, "g2", "c1", "r3", 5, 24)
+        # disabled は除外
+        c4 = await create_chat_role_config(db_session, "g3", "c3", "r4", 5, 24)
+        await toggle_chat_role_config(db_session, c4.id)
+        _ = c1
+
+        ids = await get_enabled_chat_role_channel_ids(db_session)
+        assert ids == {"c1", "c2"}
+
+    async def test_delete_config_cascades_progress(
+        self, db_session: AsyncSession
+    ) -> None:
+        config = await create_chat_role_config(db_session, "g1", "c1", "r1", 5, 24)
+        await increment_chat_role_progress(db_session, config.id, "u1")
+
+        await delete_chat_role_config(db_session, config.id)
+
+        # Progress should also be deleted via CASCADE
+        configs = await get_chat_role_configs(db_session)
+        assert len(configs) == 0
