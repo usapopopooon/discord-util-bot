@@ -64,6 +64,15 @@ export interface ChatRoleConfig {
   enabled: boolean
 }
 
+// AutoReaction
+export interface AutoReactionConfig {
+  id: number
+  guild_id: string
+  channel_id: string
+  emojis: string[]
+  enabled: boolean
+}
+
 // EventLog
 export interface EventLogConfig {
   id: number

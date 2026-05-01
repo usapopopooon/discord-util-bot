@@ -39,6 +39,9 @@ from src.web.templates.auth import (
 from src.web.templates.auth import (
     reset_password_page as reset_password_page,
 )
+from src.web.templates.auto_reaction import (  # noqa: F401
+    auto_reaction_page as auto_reaction_page,
+)
 from src.web.templates.automod import (  # noqa: F401
     automod_banlist_page as automod_banlist_page,
 )

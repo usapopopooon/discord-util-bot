@@ -24,6 +24,7 @@ from src.services.db_service import (
     claim_join_role_assignment,
     cleanup_expired_events,
     clear_bump_reminder,
+    create_auto_reaction_config,
     create_automod_log,
     create_automod_rule,
     create_ban_log,
@@ -34,6 +35,8 @@ from src.services.db_service import (
     create_role_panel,
     create_sticky_message,
     create_voice_session,
+    decode_auto_reaction_emojis,
+    delete_auto_reaction_config,
     delete_automod_rule,
     delete_bump_config,
     delete_bump_reminders_by_guild,
@@ -65,6 +68,7 @@ from src.services.db_service import (
     get_all_role_panels,
     get_all_sticky_messages,
     get_all_voice_sessions,
+    get_auto_reaction_configs,
     get_automod_config,
     get_automod_logs_by_guild,
     get_automod_rule,
@@ -77,6 +81,8 @@ from src.services.db_service import (
     get_discord_channels_by_guild,
     get_discord_roles_by_guild,
     get_due_bump_reminders,
+    get_enabled_auto_reaction_config_for_channel,
+    get_enabled_auto_reaction_emoji_map,
     get_enabled_automod_rules_by_guild,
     get_enabled_chat_role_channel_ids,
     get_enabled_chat_role_configs_for_channel,
@@ -102,10 +108,12 @@ from src.services.db_service import (
     record_intro_post,
     remove_role_panel_item,
     remove_voice_session_member,
+    toggle_auto_reaction_config,
     toggle_automod_rule,
     toggle_bump_reminder,
     toggle_chat_role_config,
     toggle_join_role_config,
+    update_auto_reaction_emojis,
     update_automod_rule,
     update_bump_reminder_role,
     update_role_panel,
@@ -6179,3 +6187,150 @@ class TestChatRoleDbService:
         # Progress should also be deleted via CASCADE
         configs = await get_chat_role_configs(db_session)
         assert len(configs) == 0
+
+
+class TestAutoReactionDbService:
+    """Tests for auto reaction CRUD."""
+
+    async def test_create_auto_reaction_config(self, db_session: AsyncSession) -> None:
+        config = await create_auto_reaction_config(
+            db_session,
+            guild_id="g1",
+            channel_id="c1",
+            emojis=["👍", "❤️"],
+        )
+        assert config.id is not None
+        assert config.guild_id == "g1"
+        assert config.channel_id == "c1"
+        assert config.enabled is True
+        assert decode_auto_reaction_emojis(config.emojis) == ["👍", "❤️"]
+
+    async def test_create_preserves_unicode_in_storage(
+        self, db_session: AsyncSession
+    ) -> None:
+        """ensure_ascii=False で絵文字は escape されず保存される。"""
+        config = await create_auto_reaction_config(db_session, "g1", "c1", ["👍"])
+        assert "👍" in config.emojis
+
+    async def test_get_auto_reaction_configs_filter_by_guild(
+        self, db_session: AsyncSession
+    ) -> None:
+        await create_auto_reaction_config(db_session, "g1", "c1", ["👍"])
+        await create_auto_reaction_config(db_session, "g2", "c2", ["❤️"])
+
+        configs = await get_auto_reaction_configs(db_session, guild_id="g1")
+        assert len(configs) == 1
+        assert configs[0].guild_id == "g1"
+
+    async def test_get_auto_reaction_configs_no_filter_returns_all(
+        self, db_session: AsyncSession
+    ) -> None:
+        await create_auto_reaction_config(db_session, "g1", "c1", ["👍"])
+        await create_auto_reaction_config(db_session, "g2", "c2", ["❤️"])
+
+        configs = await get_auto_reaction_configs(db_session)
+        assert len(configs) == 2
+
+    async def test_get_enabled_auto_reaction_config_for_channel(
+        self, db_session: AsyncSession
+    ) -> None:
+        c1 = await create_auto_reaction_config(db_session, "g1", "c1", ["👍"])
+        await toggle_auto_reaction_config(db_session, c1.id)
+
+        # disabled なので None
+        result = await get_enabled_auto_reaction_config_for_channel(
+            db_session, "g1", "c1"
+        )
+        assert result is None
+
+        # enable に戻すと取得できる
+        await toggle_auto_reaction_config(db_session, c1.id)
+        result = await get_enabled_auto_reaction_config_for_channel(
+            db_session, "g1", "c1"
+        )
+        assert result is not None
+        assert result.id == c1.id
+
+    async def test_get_enabled_auto_reaction_config_other_channel_not_returned(
+        self, db_session: AsyncSession
+    ) -> None:
+        await create_auto_reaction_config(db_session, "g1", "c1", ["👍"])
+        result = await get_enabled_auto_reaction_config_for_channel(
+            db_session, "g1", "c2"
+        )
+        assert result is None
+
+    async def test_get_enabled_auto_reaction_emoji_map(
+        self, db_session: AsyncSession
+    ) -> None:
+        await create_auto_reaction_config(db_session, "g1", "c1", ["👍", "❤️"])
+        await create_auto_reaction_config(db_session, "g2", "c2", ["🎉"])
+        # disabled は除外
+        c3 = await create_auto_reaction_config(db_session, "g3", "c3", ["😀"])
+        await toggle_auto_reaction_config(db_session, c3.id)
+
+        result = await get_enabled_auto_reaction_emoji_map(db_session)
+        assert result == {"c1": ["👍", "❤️"], "c2": ["🎉"]}
+
+    async def test_update_auto_reaction_emojis(self, db_session: AsyncSession) -> None:
+        config = await create_auto_reaction_config(db_session, "g1", "c1", ["👍"])
+        updated = await update_auto_reaction_emojis(db_session, config.id, ["❤️", "🎉"])
+        assert updated is not None
+        assert decode_auto_reaction_emojis(updated.emojis) == ["❤️", "🎉"]
+
+    async def test_update_auto_reaction_emojis_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        result = await update_auto_reaction_emojis(db_session, 999, ["👍"])
+        assert result is None
+
+    async def test_toggle_auto_reaction_config(self, db_session: AsyncSession) -> None:
+        config = await create_auto_reaction_config(db_session, "g1", "c1", ["👍"])
+        toggled = await toggle_auto_reaction_config(db_session, config.id)
+        assert toggled is not None
+        assert toggled.enabled is False
+
+        toggled_again = await toggle_auto_reaction_config(db_session, config.id)
+        assert toggled_again is not None
+        assert toggled_again.enabled is True
+
+    async def test_toggle_auto_reaction_config_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        result = await toggle_auto_reaction_config(db_session, 999)
+        assert result is None
+
+    async def test_delete_auto_reaction_config(self, db_session: AsyncSession) -> None:
+        config = await create_auto_reaction_config(db_session, "g1", "c1", ["👍"])
+        result = await delete_auto_reaction_config(db_session, config.id)
+        assert result is True
+
+        configs = await get_auto_reaction_configs(db_session)
+        assert len(configs) == 0
+
+    async def test_delete_auto_reaction_config_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        result = await delete_auto_reaction_config(db_session, 999)
+        assert result is False
+
+    async def test_create_duplicate_raises(self, db_session: AsyncSession) -> None:
+        """同一 (guild_id, channel_id) は UniqueConstraint で弾かれる。"""
+        from sqlalchemy.exc import IntegrityError
+
+        await create_auto_reaction_config(db_session, "g1", "c1", ["👍"])
+        with pytest.raises(IntegrityError):
+            await create_auto_reaction_config(db_session, "g1", "c1", ["❤️"])
+
+    async def test_decode_handles_malformed_json(self) -> None:
+        assert decode_auto_reaction_emojis("{not json") == []
+
+    async def test_decode_handles_non_list(self) -> None:
+        assert decode_auto_reaction_emojis('"a string"') == []
+        assert decode_auto_reaction_emojis('{"k": "v"}') == []
+
+    async def test_decode_filters_empty_and_non_string_elements(self) -> None:
+        assert decode_auto_reaction_emojis('["👍", "", null, 42, "❤️"]') == [
+            "👍",
+            "❤️",
+        ]

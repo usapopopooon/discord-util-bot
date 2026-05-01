@@ -18,6 +18,7 @@ const navItems = [
   { href: '/dashboard/roles', label: 'Role Panels' },
   { href: '/dashboard/joinrole', label: 'Join Roles' },
   { href: '/dashboard/chatrole', label: 'Chat Roles' },
+  { href: '/dashboard/auto-reaction', label: 'Auto Reaction' },
   { href: '/dashboard/eventlog', label: 'Event Log' },
   { href: '/dashboard/activity', label: 'Bot Activity' },
   { href: '/dashboard/health', label: 'Health Check' },

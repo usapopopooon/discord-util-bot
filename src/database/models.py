@@ -1779,6 +1779,38 @@ class ChatRoleProgress(Base):
         )
 
 
+class AutoReactionConfig(Base):
+    """指定チャンネルへの新規メッセージに自動でリアクションを付与する設定。
+
+    1ギルド内で複数チャンネルに別個の設定を持てる (channel_id ユニーク)。
+    emojis は JSON 配列文字列で複数の絵文字を保持する。
+    Unicode 絵文字とカスタム絵文字 (例: ``<:name:123>`` / ``<a:name:123>``) の
+    両方をそのまま要素として扱える。
+    """
+
+    __tablename__ = "auto_reaction_configs"
+    __table_args__ = (
+        UniqueConstraint(
+            "guild_id", "channel_id", name="uq_auto_reaction_guild_channel"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    channel_id: Mapped[str] = mapped_column(String, nullable=False)
+    emojis: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<AutoReactionConfig(id={self.id}, guild_id={self.guild_id}, "
+            f"channel_id={self.channel_id}, enabled={self.enabled})>"
+        )
+
+
 class EventLogConfig(Base):
     """イベントログのルーティング設定テーブル。
 
