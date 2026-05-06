@@ -115,7 +115,8 @@
     "rlist",
     "rname",
     "rcolor",
-    "assocs"
+    "assocs",
+    "kickable"
   ],
   "ignorePaths": [
     ".venv",
