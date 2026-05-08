@@ -614,6 +614,7 @@ class TestMigrationConstraints:
         }
         engine.dispose()
 
+
 class TestAlembicIniConfiguration:
     """alembic.ini の設定テスト。"""
 

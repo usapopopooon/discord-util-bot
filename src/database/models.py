@@ -172,7 +172,6 @@ class AdminUser(Base):
         return f"<AdminUser(id={self.id}, email={self.email})>"
 
 
-
 class BumpReminder(Base):
     """bump リマインダーテーブル。
 

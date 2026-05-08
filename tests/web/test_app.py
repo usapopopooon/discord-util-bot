@@ -6521,6 +6521,7 @@ class TestMaintenanceRoutes:
         assert response.status_code == 302
         assert "Please+wait" in response.headers["location"]
 
+
 class TestCleanupModalEdgeCases:
     """クリーンアップモーダルのエッジケーステスト。"""
 
@@ -6552,6 +6553,7 @@ class TestCleanupModalEdgeCases:
         )
         assert response.status_code == 302
         assert "/settings/maintenance" in response.headers["location"]
+
 
 class TestGuildChannelNameDisplayIntegration:
     """ギルド・チャンネル名表示の統合テスト。"""
@@ -6629,6 +6631,7 @@ class TestGuildChannelNameDisplayIntegration:
         assert response.status_code == 200
         assert "日本語サーバー" in response.text
         assert "#一般チャット" in response.text
+
 
 class TestPasswordUtilities:
     """hash_password / verify_password のテスト。"""

@@ -64,9 +64,7 @@ def downgrade() -> None:
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("user_limit", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("is_locked", sa.Boolean(), nullable=False, server_default="0"),
-        sa.Column(
-            "is_hidden", sa.Boolean(), nullable=False, server_default="0"
-        ),
+        sa.Column("is_hidden", sa.Boolean(), nullable=False, server_default="0"),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["lobby_id"], ["lobbies.id"]),
         sa.PrimaryKeyConstraint("id"),

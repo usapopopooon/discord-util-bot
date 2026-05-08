@@ -634,8 +634,7 @@ class TestTableColumnEdgeCases:
             async with engine.connect() as conn:
                 bump_config_cols = await conn.run_sync(
                     lambda c: [
-                        col["name"]
-                        for col in sa_inspect(c).get_columns("bump_configs")
+                        col["name"] for col in sa_inspect(c).get_columns("bump_configs")
                     ]
                 )
                 bump_reminder_cols = await conn.run_sync(

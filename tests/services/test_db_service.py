@@ -5274,9 +5274,7 @@ class TestClaimEventSessionRecovery:
         assert result is False
 
         # rollback 後に bump 設定の upsert が成功することを確認
-        config = await upsert_bump_config(
-            db_session, guild_id="111", channel_id="222"
-        )
+        config = await upsert_bump_config(db_session, guild_id="111", channel_id="222")
         assert config.guild_id == "111"
 
     @pytest.mark.asyncio
@@ -5288,9 +5286,7 @@ class TestClaimEventSessionRecovery:
         await claim_event(db_session, "ops:after:rollback")  # False + rollback
 
         # rollback 後に bump 設定の upsert → 更にイベント claim → 両方成功
-        config = await upsert_bump_config(
-            db_session, guild_id="333", channel_id="444"
-        )
+        config = await upsert_bump_config(db_session, guild_id="333", channel_id="444")
         assert config.guild_id == "333"
 
         result = await claim_event(db_session, "ops:after:rollback:2")

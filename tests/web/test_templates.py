@@ -1463,6 +1463,7 @@ class TestGuildChannelNameDisplayEdgeCases:
         result = role_panels_list_page([panel], {}, guilds_map=guilds_map)
         assert "&lt;script&gt;" in result
 
+
 class TestMaintenancePage:
     """maintenance_page テンプレートのテスト。"""
 
@@ -1478,17 +1479,13 @@ class TestMaintenancePage:
 
     def test_success_message_displayed(self) -> None:
         """成功メッセージが表示される。"""
-        result = maintenance_page(
-            0, 0, 0, 0, 0, 0, 0, success="Cleanup completed"
-        )
+        result = maintenance_page(0, 0, 0, 0, 0, 0, 0, success="Cleanup completed")
         assert "Cleanup completed" in result
         assert "bg-green-500" in result
 
     def test_success_message_escaped(self) -> None:
         """成功メッセージがエスケープされる。"""
-        result = maintenance_page(
-            0, 0, 0, 0, 0, 0, 0, success="<script>xss</script>"
-        )
+        result = maintenance_page(0, 0, 0, 0, 0, 0, 0, success="<script>xss</script>")
         assert "&lt;script&gt;" in result
         assert "<script>xss" not in result
 
