@@ -207,6 +207,7 @@ class EphemeralVCBot(commands.Bot):
             "src.cogs.chatrole",
             "src.cogs.auto_reaction",
             "src.cogs.eventlog",
+            "src.cogs.watchdog",
         ]
         for ext in extensions:
             try:
