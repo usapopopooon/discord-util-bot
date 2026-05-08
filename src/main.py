@@ -35,9 +35,26 @@ import signal
 import sys
 from types import FrameType
 
+import discord.client
+
 from src.bot import EphemeralVCBot
 from src.config import settings
 from src.database.engine import check_database_connection_with_retry
+
+# Gateway 切断時の再接続バックオフ上限を引き下げる (デフォルト: _max=10 で最大 ~1024s)。
+# Railway の egress 一時不調で 800s 以上待つと体感ダウンタイムが長すぎるため、
+# サブクラスで _max=7 (最大 ~128s) に縮め、Client.connect() が参照する
+# discord.client.ExponentialBackoff を差し替える。
+_OriginalExponentialBackoff = discord.client.ExponentialBackoff  # type: ignore[attr-defined]
+
+
+class _CappedExponentialBackoff(_OriginalExponentialBackoff):  # type: ignore[valid-type, misc]
+    def __init__(self, base: int = 1, *, integral: bool = False) -> None:
+        super().__init__(base, integral=integral)
+        self._max = 7
+
+
+discord.client.ExponentialBackoff = _CappedExponentialBackoff  # type: ignore[attr-defined]
 
 
 def _setup_logging() -> None:
