@@ -66,6 +66,10 @@ class HealthCog(commands.Cog):
         self._start_time = time.monotonic()
         # Boot 時刻を JST で記録 (Embed のフッターに表示)
         self._boot_jst = datetime.now(_JST)
+        # 最後に change_presence で適用した (activity_type, activity_text)。
+        # discord.py の Client.activity プロパティは「ログイン時のアクティビティ」
+        # しか返さず change_presence で更新されないため、自前で追跡する。
+        self._last_applied_activity: tuple[str, str] | None = None
 
     async def cog_load(self) -> None:
         """Cog が読み込まれたときに呼ばれる。ハートビートループを開始する。"""
@@ -218,28 +222,14 @@ class HealthCog(commands.Cog):
             async with async_session() as session:
                 bot_activity = await get_bot_activity(session)
             if bot_activity:
-                current = self.bot.activity
-                current_name = getattr(current, "name", None)
-                current_type = getattr(current, "type", None)
-                type_map = {
-                    "playing": discord.ActivityType.playing,
-                    "listening": discord.ActivityType.listening,
-                    "watching": discord.ActivityType.watching,
-                    "competing": discord.ActivityType.competing,
-                }
-                expected_type = type_map.get(
-                    bot_activity.activity_type,
-                    discord.ActivityType.playing,
-                )
-                if (
-                    current_name != bot_activity.activity_text
-                    or current_type != expected_type
-                ):
+                desired = (bot_activity.activity_type, bot_activity.activity_text)
+                if self._last_applied_activity != desired:
                     activity = make_activity(
                         bot_activity.activity_type,
                         bot_activity.activity_text,
                     )
                     await self.bot.change_presence(activity=activity)
+                    self._last_applied_activity = desired
                     logger.info(
                         "Bot activity synced: type=%s, text=%s",
                         bot_activity.activity_type,

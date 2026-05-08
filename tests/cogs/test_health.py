@@ -860,12 +860,11 @@ class TestHeartbeatActivitySync:
         cog.bot.change_presence.assert_awaited_once_with(activity=mock_new_activity)
 
     async def test_skips_sync_when_activity_matches(self) -> None:
-        """DB のアクティビティが現在と同じ場合は同期しない。"""
+        """前回適用済みのアクティビティと DB が一致する場合は同期しない。"""
         cog = _make_cog()
         cog.bot.change_presence = AsyncMock()
-        cog.bot.activity = MagicMock()
-        cog.bot.activity.name = "テスト"
-        cog.bot.activity.type = discord.ActivityType.playing
+        # 前回適用したものと同一値が DB にある状態をシミュレート
+        cog._last_applied_activity = ("playing", "テスト")
 
         mock_bot_activity = MagicMock()
         mock_bot_activity.activity_type = "playing"
@@ -984,6 +983,47 @@ class TestHeartbeatActivitySync:
             ),
             patch("src.cogs.health.make_activity", return_value=MagicMock()),
         ):
+            await cog._heartbeat()
+
+        cog.bot.change_presence.assert_awaited_once()
+
+    async def test_does_not_sync_repeatedly_when_db_unchanged(self) -> None:
+        """連続したハートビートで DB が変わらなければ change_presence は 1 回だけ。
+
+        Regression: discord.py の Client.activity は change_presence で更新
+        されないため、self.bot.activity を比較すると毎回不一致になり
+        change_presence を呼び続ける問題があった。
+        """
+        cog = _make_cog()
+        cog.bot.change_presence = AsyncMock()
+
+        mock_bot_activity = MagicMock()
+        mock_bot_activity.activity_type = "playing"
+        mock_bot_activity.activity_text = "紅茶を飲んでいます"
+
+        mock_factory, _mock_session = _mock_session_factory()
+
+        with (
+            patch("src.cogs.health.async_session", mock_factory),
+            patch(
+                "src.cogs.health.get_all_health_configs",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "src.cogs.health.cleanup_expired_events",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "src.cogs.health.get_bot_activity",
+                new_callable=AsyncMock,
+                return_value=mock_bot_activity,
+            ),
+            patch("src.cogs.health.make_activity", return_value=MagicMock()),
+        ):
+            await cog._heartbeat()
+            await cog._heartbeat()
             await cog._heartbeat()
 
         cog.bot.change_presence.assert_awaited_once()
