@@ -111,7 +111,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from src.constants import DEFAULT_TEST_DATABASE_URL_SYNC
-from src.database.models import Base, Lobby
+from src.database.models import Base
 
 logger = logging.getLogger(__name__)
 
@@ -164,8 +164,4 @@ def db_session() -> Session:
         _schema_created = True
 
     with Session(_sync_engine) as session:
-        # テスト用ロビーを作成
-        lobby = Lobby(guild_id="123456789", lobby_channel_id="987654321")
-        session.add(lobby)
-        session.commit()
         yield session

@@ -243,8 +243,7 @@ class TestInitDb:
                     lambda sync_conn: sa_inspect(sync_conn).get_table_names()
                 )
 
-            assert "lobbies" in tables
-            assert "voice_sessions" in tables
+            assert "admin_users" in tables
         finally:
             await engine.dispose()
 

@@ -59,14 +59,6 @@ def _make_mock_session() -> MagicMock:
     return mock_session_ctx
 
 
-def _make_lobby(guild_id: str, channel_id: str = "100") -> MagicMock:
-    """Create a mock Lobby."""
-    lobby = MagicMock()
-    lobby.guild_id = guild_id
-    lobby.channel_id = channel_id
-    return lobby
-
-
 def _make_bump_config(guild_id: str, channel_id: str = "100") -> MagicMock:
     """Create a mock BumpConfig."""
     config = MagicMock()
@@ -122,11 +114,9 @@ class TestCleanupCommand:
     """Tests for /admin cleanup command."""
 
     @patch("src.cogs.admin.async_session")
-    @patch("src.cogs.admin.get_all_lobbies")
     @patch("src.cogs.admin.get_all_bump_configs")
     @patch("src.cogs.admin.get_all_sticky_messages")
     @patch("src.cogs.admin.get_all_role_panels")
-    @patch("src.cogs.admin.delete_lobbies_by_guild")
     @patch("src.cogs.admin.delete_bump_config")
     @patch("src.cogs.admin.delete_bump_reminders_by_guild")
     @patch("src.cogs.admin.delete_sticky_messages_by_guild")
@@ -137,19 +127,15 @@ class TestCleanupCommand:
         mock_delete_stickies: AsyncMock,
         mock_delete_reminders: AsyncMock,
         mock_delete_bump: AsyncMock,
-        mock_delete_lobbies: AsyncMock,
         mock_get_panels: AsyncMock,
         mock_get_stickies: AsyncMock,
         mock_get_bumps: AsyncMock,
-        mock_get_lobbies: AsyncMock,
         mock_session: MagicMock,
     ) -> None:
         """孤立データがない場合のクリーンアップ。"""
         cog = _make_cog()
         cog.bot.guilds = [_make_mock_guild(12345)]
 
-        # 全データが現在のギルドに属している
-        mock_get_lobbies.return_value = [_make_lobby("12345")]
         mock_get_bumps.return_value = [_make_bump_config("12345", "100")]
         mock_get_stickies.return_value = [_make_sticky_message("12345")]
         mock_get_panels.return_value = [_make_role_panel("12345")]
@@ -164,66 +150,14 @@ class TestCleanupCommand:
         msg = interaction.followup.send.call_args[0][0]
         assert "ありませんでした" in msg
 
-        # 削除関数が呼ばれていない
-        mock_delete_lobbies.assert_not_awaited()
         mock_delete_bump.assert_not_awaited()
         mock_delete_stickies.assert_not_awaited()
         mock_delete_panels.assert_not_awaited()
 
     @patch("src.cogs.admin.async_session")
-    @patch("src.cogs.admin.get_all_lobbies")
     @patch("src.cogs.admin.get_all_bump_configs")
     @patch("src.cogs.admin.get_all_sticky_messages")
     @patch("src.cogs.admin.get_all_role_panels")
-    @patch("src.cogs.admin.delete_lobbies_by_guild")
-    @patch("src.cogs.admin.delete_bump_config")
-    @patch("src.cogs.admin.delete_bump_reminders_by_guild")
-    @patch("src.cogs.admin.delete_sticky_messages_by_guild")
-    @patch("src.cogs.admin.delete_role_panels_by_guild")
-    async def test_cleanup_orphaned_lobbies(
-        self,
-        mock_delete_panels: AsyncMock,
-        mock_delete_stickies: AsyncMock,
-        mock_delete_reminders: AsyncMock,
-        mock_delete_bump: AsyncMock,
-        mock_delete_lobbies: AsyncMock,
-        mock_get_panels: AsyncMock,
-        mock_get_stickies: AsyncMock,
-        mock_get_bumps: AsyncMock,
-        mock_get_lobbies: AsyncMock,
-        mock_session: MagicMock,
-    ) -> None:
-        """孤立したロビーを削除する。"""
-        cog = _make_cog()
-        cog.bot.guilds = [_make_mock_guild(12345)]
-
-        # 存在しないギルドのデータ
-        mock_get_lobbies.return_value = [
-            _make_lobby("12345"),
-            _make_lobby("99999"),  # orphaned
-        ]
-        mock_get_bumps.return_value = []
-        mock_get_stickies.return_value = []
-        mock_get_panels.return_value = []
-
-        mock_delete_lobbies.return_value = 2
-
-        mock_session.return_value = _make_mock_session()
-
-        interaction = _make_interaction()
-        await cog.cleanup.callback(cog, interaction)
-
-        mock_delete_lobbies.assert_awaited_once()
-        msg = interaction.followup.send.call_args[0][0]
-        assert "ロビー" in msg
-        assert "99999" in msg
-
-    @patch("src.cogs.admin.async_session")
-    @patch("src.cogs.admin.get_all_lobbies")
-    @patch("src.cogs.admin.get_all_bump_configs")
-    @patch("src.cogs.admin.get_all_sticky_messages")
-    @patch("src.cogs.admin.get_all_role_panels")
-    @patch("src.cogs.admin.delete_lobbies_by_guild")
     @patch("src.cogs.admin.delete_bump_config")
     @patch("src.cogs.admin.delete_bump_reminders_by_guild")
     @patch("src.cogs.admin.delete_sticky_messages_by_guild")
@@ -234,18 +168,15 @@ class TestCleanupCommand:
         mock_delete_stickies: AsyncMock,
         mock_delete_reminders: AsyncMock,
         mock_delete_bump: AsyncMock,
-        mock_delete_lobbies: AsyncMock,
         mock_get_panels: AsyncMock,
         mock_get_stickies: AsyncMock,
         mock_get_bumps: AsyncMock,
-        mock_get_lobbies: AsyncMock,
         mock_session: MagicMock,
     ) -> None:
         """存在しないギルドのBump設定を削除する。"""
         cog = _make_cog()
         cog.bot.guilds = [_make_mock_guild(12345)]
 
-        mock_get_lobbies.return_value = []
         mock_get_bumps.return_value = [
             _make_bump_config("99999", "100"),  # orphaned guild
         ]
@@ -264,11 +195,9 @@ class TestCleanupCommand:
         assert "99999" in msg
 
     @patch("src.cogs.admin.async_session")
-    @patch("src.cogs.admin.get_all_lobbies")
     @patch("src.cogs.admin.get_all_bump_configs")
     @patch("src.cogs.admin.get_all_sticky_messages")
     @patch("src.cogs.admin.get_all_role_panels")
-    @patch("src.cogs.admin.delete_lobbies_by_guild")
     @patch("src.cogs.admin.delete_bump_config")
     @patch("src.cogs.admin.delete_bump_reminders_by_guild")
     @patch("src.cogs.admin.delete_sticky_messages_by_guild")
@@ -279,18 +208,15 @@ class TestCleanupCommand:
         mock_delete_stickies: AsyncMock,
         mock_delete_reminders: AsyncMock,
         mock_delete_bump: AsyncMock,
-        mock_delete_lobbies: AsyncMock,
         mock_get_panels: AsyncMock,
         mock_get_stickies: AsyncMock,
         mock_get_bumps: AsyncMock,
-        mock_get_lobbies: AsyncMock,
         mock_session: MagicMock,
     ) -> None:
         """削除されたチャンネルのBump設定を削除する。"""
         cog = _make_cog()
         cog.bot.guilds = [_make_mock_guild(12345, channel_ids=[100, 200])]
 
-        mock_get_lobbies.return_value = []
         mock_get_bumps.return_value = [
             _make_bump_config("12345", "999"),  # deleted channel
         ]
@@ -309,11 +235,9 @@ class TestCleanupCommand:
         assert "CH削除" in msg
 
     @patch("src.cogs.admin.async_session")
-    @patch("src.cogs.admin.get_all_lobbies")
     @patch("src.cogs.admin.get_all_bump_configs")
     @patch("src.cogs.admin.get_all_sticky_messages")
     @patch("src.cogs.admin.get_all_role_panels")
-    @patch("src.cogs.admin.delete_lobbies_by_guild")
     @patch("src.cogs.admin.delete_bump_config")
     @patch("src.cogs.admin.delete_bump_reminders_by_guild")
     @patch("src.cogs.admin.delete_sticky_messages_by_guild")
@@ -324,18 +248,15 @@ class TestCleanupCommand:
         mock_delete_stickies: AsyncMock,
         mock_delete_reminders: AsyncMock,
         mock_delete_bump: AsyncMock,
-        mock_delete_lobbies: AsyncMock,
         mock_get_panels: AsyncMock,
         mock_get_stickies: AsyncMock,
         mock_get_bumps: AsyncMock,
-        mock_get_lobbies: AsyncMock,
         mock_session: MagicMock,
     ) -> None:
         """孤立したStickyメッセージを削除する。"""
         cog = _make_cog()
         cog.bot.guilds = [_make_mock_guild(12345)]
 
-        mock_get_lobbies.return_value = []
         mock_get_bumps.return_value = []
         mock_get_stickies.return_value = [
             _make_sticky_message("99999"),  # orphaned
@@ -354,11 +275,9 @@ class TestCleanupCommand:
         assert "Sticky" in msg
 
     @patch("src.cogs.admin.async_session")
-    @patch("src.cogs.admin.get_all_lobbies")
     @patch("src.cogs.admin.get_all_bump_configs")
     @patch("src.cogs.admin.get_all_sticky_messages")
     @patch("src.cogs.admin.get_all_role_panels")
-    @patch("src.cogs.admin.delete_lobbies_by_guild")
     @patch("src.cogs.admin.delete_bump_config")
     @patch("src.cogs.admin.delete_bump_reminders_by_guild")
     @patch("src.cogs.admin.delete_sticky_messages_by_guild")
@@ -369,18 +288,15 @@ class TestCleanupCommand:
         mock_delete_stickies: AsyncMock,
         mock_delete_reminders: AsyncMock,
         mock_delete_bump: AsyncMock,
-        mock_delete_lobbies: AsyncMock,
         mock_get_panels: AsyncMock,
         mock_get_stickies: AsyncMock,
         mock_get_bumps: AsyncMock,
-        mock_get_lobbies: AsyncMock,
         mock_session: MagicMock,
     ) -> None:
         """孤立したロールパネルを削除する。"""
         cog = _make_cog()
         cog.bot.guilds = [_make_mock_guild(12345)]
 
-        mock_get_lobbies.return_value = []
         mock_get_bumps.return_value = []
         mock_get_stickies.return_value = []
         mock_get_panels.return_value = [
@@ -399,11 +315,9 @@ class TestCleanupCommand:
         assert "パネル" in msg
 
     @patch("src.cogs.admin.async_session")
-    @patch("src.cogs.admin.get_all_lobbies")
     @patch("src.cogs.admin.get_all_bump_configs")
     @patch("src.cogs.admin.get_all_sticky_messages")
     @patch("src.cogs.admin.get_all_role_panels")
-    @patch("src.cogs.admin.delete_lobbies_by_guild")
     @patch("src.cogs.admin.delete_bump_config")
     @patch("src.cogs.admin.delete_bump_reminders_by_guild")
     @patch("src.cogs.admin.delete_sticky_messages_by_guild")
@@ -414,23 +328,19 @@ class TestCleanupCommand:
         mock_delete_stickies: AsyncMock,
         mock_delete_reminders: AsyncMock,
         mock_delete_bump: AsyncMock,
-        mock_delete_lobbies: AsyncMock,
         mock_get_panels: AsyncMock,
         mock_get_stickies: AsyncMock,
         mock_get_bumps: AsyncMock,
-        mock_get_lobbies: AsyncMock,
         mock_session: MagicMock,
     ) -> None:
         """複数種類の孤立データを一度に削除する。"""
         cog = _make_cog()
         cog.bot.guilds = [_make_mock_guild(12345)]
 
-        mock_get_lobbies.return_value = [_make_lobby("99998")]
         mock_get_bumps.return_value = [_make_bump_config("99999", "100")]
         mock_get_stickies.return_value = [_make_sticky_message("88888")]
         mock_get_panels.return_value = [_make_role_panel("77777")]
 
-        mock_delete_lobbies.return_value = 1
         mock_delete_stickies.return_value = 1
         mock_delete_panels.return_value = 1
 
@@ -439,8 +349,6 @@ class TestCleanupCommand:
         interaction = _make_interaction()
         await cog.cleanup.callback(cog, interaction)
 
-        # 全ての削除関数が呼ばれる
-        mock_delete_lobbies.assert_awaited()
         mock_delete_bump.assert_awaited()
         mock_delete_stickies.assert_awaited()
         mock_delete_panels.assert_awaited()
@@ -458,7 +366,6 @@ class TestStatsCommand:
     """Tests for /admin stats command."""
 
     @patch("src.cogs.admin.async_session")
-    @patch("src.cogs.admin.get_all_lobbies")
     @patch("src.cogs.admin.get_all_bump_configs")
     @patch("src.cogs.admin.get_all_sticky_messages")
     @patch("src.cogs.admin.get_all_role_panels")
@@ -467,14 +374,12 @@ class TestStatsCommand:
         mock_get_panels: AsyncMock,
         mock_get_stickies: AsyncMock,
         mock_get_bumps: AsyncMock,
-        mock_get_lobbies: AsyncMock,
         mock_session: MagicMock,
     ) -> None:
         """データがない場合の統計表示。"""
         cog = _make_cog()
         cog.bot.guilds = []
 
-        mock_get_lobbies.return_value = []
         mock_get_bumps.return_value = []
         mock_get_stickies.return_value = []
         mock_get_panels.return_value = []
@@ -487,14 +392,12 @@ class TestStatsCommand:
         interaction.response.defer.assert_awaited_once_with(ephemeral=True)
         interaction.followup.send.assert_awaited_once()
 
-        # Embed が送信されていることを確認
         call_kwargs = interaction.followup.send.call_args[1]
         assert "embed" in call_kwargs
         embed = call_kwargs["embed"]
         assert embed.title == "DB統計情報"
 
     @patch("src.cogs.admin.async_session")
-    @patch("src.cogs.admin.get_all_lobbies")
     @patch("src.cogs.admin.get_all_bump_configs")
     @patch("src.cogs.admin.get_all_sticky_messages")
     @patch("src.cogs.admin.get_all_role_panels")
@@ -503,17 +406,12 @@ class TestStatsCommand:
         mock_get_panels: AsyncMock,
         mock_get_stickies: AsyncMock,
         mock_get_bumps: AsyncMock,
-        mock_get_lobbies: AsyncMock,
         mock_session: MagicMock,
     ) -> None:
         """データがある場合の統計表示。"""
         cog = _make_cog()
         cog.bot.guilds = [_make_mock_guild(12345), _make_mock_guild(67890)]
 
-        mock_get_lobbies.return_value = [
-            _make_lobby("12345"),
-            _make_lobby("12345"),
-        ]
         mock_get_bumps.return_value = [
             _make_bump_config("12345", "100"),
             _make_bump_config("67890", "200"),
@@ -535,17 +433,14 @@ class TestStatsCommand:
         call_kwargs = interaction.followup.send.call_args[1]
         embed = call_kwargs["embed"]
 
-        # フィールドが正しく設定されていることを確認
-        assert len(embed.fields) == 5
+        assert len(embed.fields) == 4
         field_names = [f.name for f in embed.fields]
-        assert "ロビー" in field_names
         assert "Bump設定" in field_names
         assert "Sticky" in field_names
         assert "ロールパネル" in field_names
         assert "参加ギルド数" in field_names
 
     @patch("src.cogs.admin.async_session")
-    @patch("src.cogs.admin.get_all_lobbies")
     @patch("src.cogs.admin.get_all_bump_configs")
     @patch("src.cogs.admin.get_all_sticky_messages")
     @patch("src.cogs.admin.get_all_role_panels")
@@ -554,17 +449,12 @@ class TestStatsCommand:
         mock_get_panels: AsyncMock,
         mock_get_stickies: AsyncMock,
         mock_get_bumps: AsyncMock,
-        mock_get_lobbies: AsyncMock,
         mock_session: MagicMock,
     ) -> None:
         """孤立データがある場合の統計表示。"""
         cog = _make_cog()
         cog.bot.guilds = [_make_mock_guild(12345)]
 
-        mock_get_lobbies.return_value = [
-            _make_lobby("12345"),
-            _make_lobby("99999"),  # orphaned
-        ]
         mock_get_bumps.return_value = [
             _make_bump_config("12345", "100"),
             _make_bump_config("99999", "100"),  # orphaned
@@ -585,11 +475,6 @@ class TestStatsCommand:
 
         call_kwargs = interaction.followup.send.call_args[1]
         embed = call_kwargs["embed"]
-
-        # 孤立データの数が正しく表示されている
-        lobby_field = next(f for f in embed.fields if f.name == "ロビー")
-        assert "総数: 2" in lobby_field.value
-        assert "孤立: 1" in lobby_field.value
 
         bump_field = next(f for f in embed.fields if f.name == "Bump設定")
         assert "総数: 2" in bump_field.value

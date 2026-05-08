@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -10,17 +9,13 @@ from faker import Faker
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models import Lobby
 from src.services.db_service import (
     add_role_panel_item,
-    add_voice_session_member,
     clear_bump_reminder,
-    create_lobby,
     create_role_panel,
     create_sticky_message,
     create_ticket,
     create_ticket_category,
-    create_voice_session,
     delete_bump_config,
     delete_bump_reminders_by_guild,
     delete_discord_channel,
@@ -28,23 +23,16 @@ from src.services.db_service import (
     delete_discord_guild,
     delete_discord_role,
     delete_discord_roles_by_guild,
-    delete_lobbies_by_guild,
-    delete_lobby,
     delete_role_panel,
     delete_sticky_message,
     delete_sticky_messages_by_guild,
-    delete_voice_session,
-    delete_voice_sessions_by_guild,
     get_all_discord_guilds,
     get_all_sticky_messages,
-    get_all_voice_sessions,
     get_bump_config,
     get_bump_reminder,
     get_discord_channels_by_guild,
     get_discord_roles_by_guild,
     get_due_bump_reminders,
-    get_lobbies_by_guild,
-    get_lobby_by_channel_id,
     get_next_ticket_number,
     get_role_panel,
     get_role_panel_by_message_id,
@@ -54,14 +42,10 @@ from src.services.db_service import (
     get_role_panels_by_guild,
     get_sticky_message,
     get_ticket,
-    get_voice_session,
-    get_voice_session_members_ordered,
     remove_role_panel_item,
-    remove_voice_session_member,
     toggle_bump_reminder,
     update_role_panel,
     update_ticket_status,
-    update_voice_session,
     upsert_bump_config,
     upsert_bump_reminder,
     upsert_discord_channel,
@@ -73,256 +57,6 @@ from src.utils import normalize_emoji
 from .conftest import snowflake
 
 fake = Faker()
-
-
-class TestLobbySessionLifecycle:
-    """ロビー → セッション作成 → 更新 → 削除の一連フローテスト。"""
-
-    async def test_full_lifecycle(self, db_session: AsyncSession) -> None:
-        """ロビー作成 → セッション作成 → 更新 → セッション削除 → ロビー削除。"""
-        # ロビー作成
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-            default_user_limit=10,
-        )
-        assert lobby.id is not None
-
-        # セッション作成
-        ch_id = snowflake()
-        vs = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=ch_id,
-            owner_id=snowflake(),
-            name="initial",
-        )
-        assert vs.id is not None
-        assert vs.name == "initial"
-
-        # セッション更新
-        updated = await update_voice_session(
-            db_session, vs, name="renamed", is_locked=True
-        )
-        assert updated.name == "renamed"
-        assert updated.is_locked is True
-
-        # セッション削除
-        assert await delete_voice_session(db_session, ch_id) is True
-        assert await get_voice_session(db_session, ch_id) is None
-
-        # ロビー削除
-        assert await delete_lobby(db_session, lobby.id) is True
-
-    async def test_multiple_lobbies_multiple_sessions(
-        self, db_session: AsyncSession
-    ) -> None:
-        """複数ロビーにそれぞれセッションを作成し、独立して管理できる。"""
-        guild_id = snowflake()
-        lobbies = []
-        for _ in range(3):
-            lobby = await create_lobby(
-                db_session,
-                guild_id=guild_id,
-                lobby_channel_id=snowflake(),
-            )
-            lobbies.append(lobby)
-
-        # 各ロビーに2セッションずつ作成
-        all_channels: dict[int, list[str]] = {}
-        for lobby in lobbies:
-            channels = []
-            for _ in range(2):
-                cid = snowflake()
-                channels.append(cid)
-                await create_voice_session(
-                    db_session,
-                    lobby_id=lobby.id,
-                    channel_id=cid,
-                    owner_id=snowflake(),
-                    name=fake.word(),
-                )
-            all_channels[lobby.id] = channels
-
-        # 全6セッション存在
-        all_sessions = await get_all_voice_sessions(db_session)
-        assert len(all_sessions) == 6
-
-        # ロビー1つ削除 → そのセッションのみ消える
-        deleted_lobby = lobbies[0]
-        await delete_lobby(db_session, deleted_lobby.id)
-
-        remaining = await get_all_voice_sessions(db_session)
-        assert len(remaining) == 4
-
-        # 削除されたロビーのセッションは存在しない
-        for cid in all_channels[deleted_lobby.id]:
-            assert await get_voice_session(db_session, cid) is None
-
-        # 残りのロビーのセッションは存在する
-        for lobby in lobbies[1:]:
-            for cid in all_channels[lobby.id]:
-                assert await get_voice_session(db_session, cid) is not None
-
-    async def test_owner_transfer_and_verify(self, db_session: AsyncSession) -> None:
-        """オーナー譲渡後にセッションを再取得して反映を確認。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-        original_owner = snowflake()
-        ch_id = snowflake()
-        vs = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=ch_id,
-            owner_id=original_owner,
-            name="test",
-        )
-
-        new_owner = snowflake()
-        await update_voice_session(db_session, vs, owner_id=new_owner)
-
-        # DB から再取得して確認
-        reloaded = await get_voice_session(db_session, ch_id)
-        assert reloaded is not None
-        assert reloaded.owner_id == new_owner
-        assert reloaded.owner_id != original_owner
-
-
-class TestDataIsolation:
-    """データ分離・整合性テスト。"""
-
-    async def test_guild_lobby_isolation(self, db_session: AsyncSession) -> None:
-        """異なるギルドのロビーは完全に分離されている。"""
-        g1, g2 = snowflake(), snowflake()
-        l1 = await create_lobby(db_session, guild_id=g1, lobby_channel_id=snowflake())
-        l2 = await create_lobby(db_session, guild_id=g2, lobby_channel_id=snowflake())
-
-        g1_lobbies = await get_lobbies_by_guild(db_session, g1)
-        g2_lobbies = await get_lobbies_by_guild(db_session, g2)
-
-        assert len(g1_lobbies) == 1
-        assert g1_lobbies[0].id == l1.id
-        assert len(g2_lobbies) == 1
-        assert g2_lobbies[0].id == l2.id
-
-    async def test_session_deletion_isolation(self, db_session: AsyncSession) -> None:
-        """セッション削除は同じロビーの他セッションに影響しない。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-        ch1, ch2, ch3 = snowflake(), snowflake(), snowflake()
-        for cid in [ch1, ch2, ch3]:
-            await create_voice_session(
-                db_session,
-                lobby_id=lobby.id,
-                channel_id=cid,
-                owner_id=snowflake(),
-                name=fake.word(),
-            )
-
-        # ch2 だけ削除
-        await delete_voice_session(db_session, ch2)
-
-        assert await get_voice_session(db_session, ch1) is not None
-        assert await get_voice_session(db_session, ch2) is None
-        assert await get_voice_session(db_session, ch3) is not None
-
-    async def test_lobby_lookup_by_channel_id(self, db_session: AsyncSession) -> None:
-        """channel_id でロビーを正しく取得できる。"""
-        target_cid = snowflake()
-        # ダミーロビーを先に作成
-        for _ in range(5):
-            await create_lobby(
-                db_session,
-                guild_id=snowflake(),
-                lobby_channel_id=snowflake(),
-            )
-        # ターゲットロビー
-        target = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=target_cid,
-        )
-
-        found = await get_lobby_by_channel_id(db_session, target_cid)
-        assert found is not None
-        assert found.id == target.id
-
-    async def test_session_count_after_bulk_operations(
-        self, db_session: AsyncSession
-    ) -> None:
-        """大量の作成・削除後にカウントが正確。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-
-        # 10セッション作成
-        channels = []
-        for _ in range(10):
-            cid = snowflake()
-            channels.append(cid)
-            await create_voice_session(
-                db_session,
-                lobby_id=lobby.id,
-                channel_id=cid,
-                owner_id=snowflake(),
-                name=fake.word(),
-            )
-        assert len(await get_all_voice_sessions(db_session)) == 10
-
-        # 偶数インデックスの5件削除
-        for i in range(0, 10, 2):
-            await delete_voice_session(db_session, channels[i])
-
-        remaining = await get_all_voice_sessions(db_session)
-        assert len(remaining) == 5
-
-    async def test_update_does_not_create_duplicate(
-        self, db_session: AsyncSession
-    ) -> None:
-        """update はレコードを増やさない。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-        vs = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=snowflake(),
-            owner_id=snowflake(),
-            name="original",
-        )
-
-        assert len(await get_all_voice_sessions(db_session)) == 1
-
-        await update_voice_session(db_session, vs, name="updated")
-        assert len(await get_all_voice_sessions(db_session)) == 1
-
-    async def test_lobby_with_category_id(self, db_session: AsyncSession) -> None:
-        """category_id 付きロビーの作成と取得。"""
-        cat_id = snowflake()
-        cid = snowflake()
-        await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=cid,
-            category_id=cat_id,
-            default_user_limit=25,
-        )
-
-        found = await get_lobby_by_channel_id(db_session, cid)
-        assert found is not None
-        assert found.category_id == cat_id
-        assert found.default_user_limit == 25
 
 
 class TestStickyMessageLifecycle:
@@ -703,397 +437,6 @@ class TestRolePanelCRUD:
         # アイテムも削除されている
         items = await get_role_panel_items(db_session, panel.id)
         assert len(items) == 0
-
-
-class TestVoiceSessionMemberManagement:
-    """VoiceSession メンバー管理テスト。"""
-
-    async def test_add_remove_members(self, db_session: AsyncSession) -> None:
-        """メンバーの追加と削除。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-        ch_id = snowflake()
-        owner_id = snowflake()
-
-        vs = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=ch_id,
-            owner_id=owner_id,
-            name="test",
-        )
-
-        # メンバー追加
-        m1, m2, m3 = snowflake(), snowflake(), snowflake()
-        await add_voice_session_member(db_session, vs.id, m1)
-        await add_voice_session_member(db_session, vs.id, m2)
-        await add_voice_session_member(db_session, vs.id, m3)
-
-        members = await get_voice_session_members_ordered(db_session, vs.id)
-        assert len(members) == 3
-
-        # メンバー削除
-        await remove_voice_session_member(db_session, vs.id, m2)
-        members = await get_voice_session_members_ordered(db_session, vs.id)
-        assert len(members) == 2
-        member_ids = [m.user_id for m in members]
-        assert m2 not in member_ids
-        assert m1 in member_ids
-        assert m3 in member_ids
-
-    async def test_member_join_order(self, db_session: AsyncSession) -> None:
-        """メンバーの参加順序が保持される。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-        vs = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=snowflake(),
-            owner_id=snowflake(),
-            name="order-test",
-        )
-
-        # 順番に追加
-        member_ids = [snowflake() for _ in range(5)]
-        for mid in member_ids:
-            await add_voice_session_member(db_session, vs.id, mid)
-            await asyncio.sleep(0.01)  # 順序を保証するための微小な待機
-
-        members = await get_voice_session_members_ordered(db_session, vs.id)
-        result_ids = [m.user_id for m in members]
-        assert result_ids == member_ids
-
-    async def test_cascade_delete_on_session_delete(
-        self, db_session: AsyncSession
-    ) -> None:
-        """セッション削除時にメンバーもカスケード削除。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-        ch_id = snowflake()
-        vs = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=ch_id,
-            owner_id=snowflake(),
-            name="cascade-test",
-        )
-
-        for _ in range(3):
-            await add_voice_session_member(db_session, vs.id, snowflake())
-
-        # セッション削除
-        await delete_voice_session(db_session, ch_id)
-
-        # メンバーも削除されている（セッションがないので空）
-        members = await get_voice_session_members_ordered(db_session, vs.id)
-        assert len(members) == 0
-
-
-class TestLockStateIntegration:
-    """ロック状態の統合テスト。"""
-
-    async def test_lock_state_isolation_between_sessions(
-        self, db_session: AsyncSession
-    ) -> None:
-        """異なるセッション間でロック状態が分離されている。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-
-        # 3つのセッションを作成
-        ch1, ch2, ch3 = snowflake(), snowflake(), snowflake()
-        _vs1 = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=ch1,
-            owner_id=snowflake(),
-            name="session1",
-        )
-        vs2 = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=ch2,
-            owner_id=snowflake(),
-            name="session2",
-        )
-        _vs3 = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=ch3,
-            owner_id=snowflake(),
-            name="session3",
-        )
-
-        # vs2 のみロック
-        await update_voice_session(db_session, vs2, is_locked=True)
-
-        # 各セッションのロック状態を確認
-        s1 = await get_voice_session(db_session, ch1)
-        s2 = await get_voice_session(db_session, ch2)
-        s3 = await get_voice_session(db_session, ch3)
-
-        assert s1 is not None and s1.is_locked is False
-        assert s2 is not None and s2.is_locked is True
-        assert s3 is not None and s3.is_locked is False
-
-    async def test_lock_persists_through_other_updates(
-        self, db_session: AsyncSession
-    ) -> None:
-        """ロック後に他のフィールドを更新してもロック状態が維持される。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-        ch_id = snowflake()
-        vs = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=ch_id,
-            owner_id=snowflake(),
-            name="original",
-        )
-
-        # ロック
-        await update_voice_session(db_session, vs, is_locked=True)
-
-        # 名前変更
-        reloaded = await get_voice_session(db_session, ch_id)
-        assert reloaded is not None
-        await update_voice_session(db_session, reloaded, name="renamed")
-
-        # ロック状態は維持
-        final = await get_voice_session(db_session, ch_id)
-        assert final is not None
-        assert final.name == "renamed"
-        assert final.is_locked is True
-
-    async def test_lock_unlock_with_member_operations(
-        self, db_session: AsyncSession
-    ) -> None:
-        """ロック/アンロック操作はメンバー管理に影響しない。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-        ch_id = snowflake()
-        vs = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=ch_id,
-            owner_id=snowflake(),
-            name="test",
-        )
-
-        # メンバー追加
-        m1, m2 = snowflake(), snowflake()
-        await add_voice_session_member(db_session, vs.id, m1)
-        await add_voice_session_member(db_session, vs.id, m2)
-
-        # ロック
-        reloaded = await get_voice_session(db_session, ch_id)
-        assert reloaded is not None
-        await update_voice_session(db_session, reloaded, is_locked=True)
-
-        # メンバーは影響を受けない
-        members = await get_voice_session_members_ordered(db_session, vs.id)
-        assert len(members) == 2
-
-        # アンロック後もメンバーは維持
-        reloaded2 = await get_voice_session(db_session, ch_id)
-        assert reloaded2 is not None
-        await update_voice_session(db_session, reloaded2, is_locked=False)
-
-        members = await get_voice_session_members_ordered(db_session, vs.id)
-        assert len(members) == 2
-
-    async def test_multiple_sessions_mixed_lock_hidden_states(
-        self, db_session: AsyncSession
-    ) -> None:
-        """異なるロック/非表示状態のセッションが共存できる。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-
-        sessions = []
-        for i in range(4):
-            ch_id = snowflake()
-            vs = await create_voice_session(
-                db_session,
-                lobby_id=lobby.id,
-                channel_id=ch_id,
-                owner_id=snowflake(),
-                name=f"session{i}",
-            )
-            sessions.append((ch_id, vs))
-
-        # 各セッションに異なる状態を設定
-        # session0: 通常
-        # session1: ロックのみ
-        await update_voice_session(db_session, sessions[1][1], is_locked=True)
-        # session2: 非表示のみ
-        await update_voice_session(db_session, sessions[2][1], is_hidden=True)
-        # session3: ロック＋非表示
-        await update_voice_session(
-            db_session, sessions[3][1], is_locked=True, is_hidden=True
-        )
-
-        # 各状態を確認
-        s0 = await get_voice_session(db_session, sessions[0][0])
-        s1 = await get_voice_session(db_session, sessions[1][0])
-        s2 = await get_voice_session(db_session, sessions[2][0])
-        s3 = await get_voice_session(db_session, sessions[3][0])
-
-        assert s0 is not None
-        assert s0.is_locked is False and s0.is_hidden is False
-        assert s1 is not None
-        assert s1.is_locked is True and s1.is_hidden is False
-        assert s2 is not None
-        assert s2.is_locked is False and s2.is_hidden is True
-        assert s3 is not None
-        assert s3.is_locked is True and s3.is_hidden is True
-
-    async def test_lock_state_after_owner_transfer(
-        self, db_session: AsyncSession
-    ) -> None:
-        """オーナー譲渡後もロック状態が維持される。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-        ch_id = snowflake()
-        original_owner = snowflake()
-        vs = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=ch_id,
-            owner_id=original_owner,
-            name="test",
-        )
-
-        # ロックしてからオーナー譲渡
-        await update_voice_session(db_session, vs, is_locked=True)
-
-        reloaded = await get_voice_session(db_session, ch_id)
-        assert reloaded is not None
-        new_owner = snowflake()
-        await update_voice_session(db_session, reloaded, owner_id=new_owner)
-
-        # ロック状態と新オーナーを確認
-        final = await get_voice_session(db_session, ch_id)
-        assert final is not None
-        assert final.is_locked is True
-        assert final.owner_id == new_owner
-
-    async def test_lobby_deletion_clears_locked_sessions(
-        self, db_session: AsyncSession
-    ) -> None:
-        """ロビー削除時にロック中のセッションも削除される。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-
-        ch1, ch2 = snowflake(), snowflake()
-        vs1 = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=ch1,
-            owner_id=snowflake(),
-            name="locked",
-        )
-        await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=ch2,
-            owner_id=snowflake(),
-            name="unlocked",
-        )
-
-        # vs1 をロック
-        await update_voice_session(db_session, vs1, is_locked=True)
-
-        # ロビー削除
-        await delete_lobby(db_session, lobby.id)
-
-        # 両方のセッションが削除されている
-        assert await get_voice_session(db_session, ch1) is None
-        assert await get_voice_session(db_session, ch2) is None
-
-
-class TestBulkOperations:
-    """一括操作テスト。"""
-
-    async def test_sequential_session_creation(self, db_session: AsyncSession) -> None:
-        """複数セッションの連続作成。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-
-        channel_ids = []
-        for i in range(10):
-            ch_id = snowflake()
-            channel_ids.append(ch_id)
-            await create_voice_session(
-                db_session,
-                lobby_id=lobby.id,
-                channel_id=ch_id,
-                owner_id=snowflake(),
-                name=f"sequential-{i}",
-            )
-
-        all_sessions = await get_all_voice_sessions(db_session)
-        assert len(all_sessions) == 10
-
-        # 全て取得可能
-        for ch_id in channel_ids:
-            assert await get_voice_session(db_session, ch_id) is not None
-
-    async def test_bulk_delete(self, db_session: AsyncSession) -> None:
-        """複数セッションの一括削除。"""
-        lobby = await create_lobby(
-            db_session,
-            guild_id=snowflake(),
-            lobby_channel_id=snowflake(),
-        )
-
-        channel_ids = []
-        for i in range(20):
-            ch_id = snowflake()
-            channel_ids.append(ch_id)
-            await create_voice_session(
-                db_session,
-                lobby_id=lobby.id,
-                channel_id=ch_id,
-                owner_id=snowflake(),
-                name=f"bulk-{i}",
-            )
-
-        assert len(await get_all_voice_sessions(db_session)) == 20
-
-        # 全て削除
-        for ch_id in channel_ids:
-            await delete_voice_session(db_session, ch_id)
-
-        assert len(await get_all_voice_sessions(db_session)) == 0
 
 
 class TestDiscordEntityManagement:
@@ -1568,29 +911,27 @@ class TestCrossEntityIntegrity:
         g1, g2 = snowflake(), snowflake()
 
         # 各ギルドにリソースを作成
+        panels_by_guild: dict[str, int] = {}
         for gid in [g1, g2]:
-            await create_lobby(db_session, guild_id=gid, lobby_channel_id=snowflake())
-            await create_role_panel(
+            panel = await create_role_panel(
                 db_session,
                 guild_id=gid,
                 channel_id=snowflake(),
                 panel_type="button",
                 title=f"Panel for {gid}",
             )
+            panels_by_guild[gid] = panel.id
             await upsert_bump_config(db_session, guild_id=gid, channel_id=snowflake())
 
         # 各ギルドのデータが分離されている
-        assert len(await get_lobbies_by_guild(db_session, g1)) == 1
-        assert len(await get_lobbies_by_guild(db_session, g2)) == 1
         assert len(await get_role_panels_by_guild(db_session, g1)) == 1
         assert len(await get_role_panels_by_guild(db_session, g2)) == 1
 
         # g1 のリソースを削除しても g2 に影響しない
-        lobbies = await get_lobbies_by_guild(db_session, g1)
-        await delete_lobby(db_session, lobbies[0].id)
+        await delete_role_panel(db_session, panels_by_guild[g1])
 
-        assert len(await get_lobbies_by_guild(db_session, g1)) == 0
-        assert len(await get_lobbies_by_guild(db_session, g2)) == 1
+        assert len(await get_role_panels_by_guild(db_session, g1)) == 0
+        assert len(await get_role_panels_by_guild(db_session, g2)) == 1
 
 
 class TestEdgeCasesAndBoundaries:
@@ -1636,40 +977,10 @@ class TestEdgeCasesAndBoundaries:
         result = await delete_role_panel(db_session, 999999)
         assert result is False
 
-        result = await delete_lobby(db_session, 999999)
-        assert result is False
-
-        result = await delete_voice_session(db_session, "nonexistent")
-        assert result is False
-
     async def test_get_nonexistent_returns_none(self, db_session: AsyncSession) -> None:
         """存在しないリソースの取得は None を返す。"""
         assert await get_role_panel(db_session, 999999) is None
-        assert await get_voice_session(db_session, "nonexistent") is None
-        assert await get_lobby_by_channel_id(db_session, "nonexistent") is None
         assert await get_role_panel_by_message_id(db_session, "nonexistent") is None
-
-    async def test_consecutive_updates(self, db_session: AsyncSession) -> None:
-        """連続した更新が正しく反映される。"""
-        lobby = await create_lobby(
-            db_session, guild_id=snowflake(), lobby_channel_id=snowflake()
-        )
-        vs = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=snowflake(),
-            owner_id=snowflake(),
-            name="original",
-        )
-
-        # 5回連続更新
-        for i in range(5):
-            await update_voice_session(db_session, vs, name=f"update-{i}")
-
-        # 最後の値が反映されている
-        fetched = await get_voice_session(db_session, vs.channel_id)
-        assert fetched is not None
-        assert fetched.name == "update-4"
 
     async def test_maximum_items_per_panel(self, db_session: AsyncSession) -> None:
         """パネルに多数のアイテムを追加できる。"""
@@ -1705,54 +1016,6 @@ class TestGuildRemovalCleanup:
 
     on_guild_remove イベントで呼ばれる削除関数の整合性をテスト。
     """
-
-    async def test_voice_cleanup_with_sessions(self, db_session: AsyncSession) -> None:
-        """VCセッションを持つギルドのクリーンアップ。
-
-        ロビー → セッション → メンバー の階層関係が正しく削除されることを確認。
-        """
-        guild_id = snowflake()
-
-        # ロビーを作成
-        lobby = await create_lobby(
-            db_session,
-            guild_id=guild_id,
-            lobby_channel_id=snowflake(),
-        )
-
-        # 複数のセッションを作成
-        vs1 = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=snowflake(),
-            owner_id=snowflake(),
-            name="Session 1",
-        )
-        vs2 = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=snowflake(),
-            owner_id=snowflake(),
-            name="Session 2",
-        )
-
-        # 各セッションにメンバーを追加
-        await add_voice_session_member(db_session, vs1.id, snowflake())
-        await add_voice_session_member(db_session, vs1.id, snowflake())
-        await add_voice_session_member(db_session, vs2.id, snowflake())
-
-        # ギルドのクリーンアップを実行
-        # 順序: セッション → ロビー (外部キー制約のため)
-        vs_count = await delete_voice_sessions_by_guild(db_session, guild_id)
-        lobby_count = await delete_lobbies_by_guild(db_session, guild_id)
-
-        assert vs_count == 2
-        assert lobby_count == 1
-
-        # 全て削除されていることを確認
-        assert await get_voice_session(db_session, vs1.channel_id) is None
-        assert await get_voice_session(db_session, vs2.channel_id) is None
-        assert await get_lobbies_by_guild(db_session, guild_id) == []
 
     async def test_bump_cleanup_with_multiple_services(
         self, db_session: AsyncSession
@@ -1847,21 +1110,6 @@ class TestGuildRemovalCleanup:
 
         # --- セットアップ: ギルドに様々なデータを作成 ---
 
-        # VC関連
-        lobby = await create_lobby(
-            db_session,
-            guild_id=guild_id,
-            lobby_channel_id=snowflake(),
-        )
-        vs = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=snowflake(),
-            owner_id=snowflake(),
-            name="Test Session",
-        )
-        await add_voice_session_member(db_session, vs.id, snowflake())
-
         # Bump関連
         bump_channel = snowflake()
         await upsert_bump_config(db_session, guild_id, bump_channel)
@@ -1886,10 +1134,6 @@ class TestGuildRemovalCleanup:
 
         # --- クリーンアップ実行 (on_guild_remove の処理をシミュレート) ---
 
-        # Voice (順序重要: セッション → ロビー)
-        vs_count = await delete_voice_sessions_by_guild(db_session, guild_id)
-        lobby_count = await delete_lobbies_by_guild(db_session, guild_id)
-
         # Bump
         await delete_bump_config(db_session, guild_id)
         bump_count = await delete_bump_reminders_by_guild(db_session, guild_id)
@@ -1898,13 +1142,10 @@ class TestGuildRemovalCleanup:
         sticky_count = await delete_sticky_messages_by_guild(db_session, guild_id)
 
         # --- 検証 ---
-        assert vs_count == 1
-        assert lobby_count == 1
         assert bump_count == 1
         assert sticky_count == 1
 
         # 全て削除されていることを確認
-        assert await get_lobbies_by_guild(db_session, guild_id) == []
         assert await get_bump_config(db_session, guild_id) is None
         all_stickies = await get_all_sticky_messages(db_session)
         assert all(s.guild_id != guild_id for s in all_stickies)
@@ -1918,16 +1159,6 @@ class TestGuildRemovalCleanup:
         remind_at = datetime.now(UTC) + timedelta(hours=2)
 
         # ギルドAにデータを作成
-        lobby_a = await create_lobby(
-            db_session, guild_id=guild_a, lobby_channel_id=snowflake()
-        )
-        await create_voice_session(
-            db_session,
-            lobby_id=lobby_a.id,
-            channel_id=snowflake(),
-            owner_id=snowflake(),
-            name="A Session",
-        )
         await upsert_bump_config(db_session, guild_a, snowflake())
         await upsert_bump_reminder(
             db_session,
@@ -1947,16 +1178,6 @@ class TestGuildRemovalCleanup:
         )
 
         # ギルドBにデータを作成
-        lobby_b = await create_lobby(
-            db_session, guild_id=guild_b, lobby_channel_id=snowflake()
-        )
-        await create_voice_session(
-            db_session,
-            lobby_id=lobby_b.id,
-            channel_id=snowflake(),
-            owner_id=snowflake(),
-            name="B Session",
-        )
         await upsert_bump_config(db_session, guild_b, snowflake())
         await upsert_bump_reminder(
             db_session,
@@ -1976,146 +1197,19 @@ class TestGuildRemovalCleanup:
         )
 
         # ギルドAのみクリーンアップ
-        await delete_voice_sessions_by_guild(db_session, guild_a)
-        await delete_lobbies_by_guild(db_session, guild_a)
         await delete_bump_config(db_session, guild_a)
         await delete_bump_reminders_by_guild(db_session, guild_a)
         await delete_sticky_messages_by_guild(db_session, guild_a)
 
         # ギルドAは空
-        assert await get_lobbies_by_guild(db_session, guild_a) == []
         assert await get_bump_config(db_session, guild_a) is None
 
         # ギルドBは残っている
-        assert len(await get_lobbies_by_guild(db_session, guild_b)) == 1
         assert await get_bump_config(db_session, guild_b) is not None
         assert await get_bump_reminder(db_session, guild_b, "DISBOARD") is not None
         all_stickies = await get_all_sticky_messages(db_session)
         guild_b_stickies = [s for s in all_stickies if s.guild_id == guild_b]
         assert len(guild_b_stickies) == 1
-
-
-# =============================================================================
-# セッションエラーリカバリテスト
-# =============================================================================
-
-
-class TestSessionRecoveryAfterError:
-    """セッションのエラーリカバリテスト。"""
-
-    async def test_session_usable_after_rollback(
-        self, db_session: AsyncSession
-    ) -> None:
-        """IntegrityError 発生後にロールバックしてからセッションを再利用できる。"""
-        guild_id = snowflake()
-        channel_id = snowflake()
-
-        # 正常にロビーを作成
-        await create_lobby(
-            db_session,
-            guild_id=guild_id,
-            lobby_channel_id=channel_id,
-        )
-
-        # 重複 lobby_channel_id で IntegrityError を発生させる
-        with pytest.raises(IntegrityError):
-            duplicate = Lobby(
-                guild_id=guild_id,
-                lobby_channel_id=channel_id,
-            )
-            db_session.add(duplicate)
-            await db_session.flush()
-
-        # ロールバック
-        await db_session.rollback()
-
-        # ロールバック後にセッションが再利用できることを確認
-        new_lobby = await create_lobby(
-            db_session,
-            guild_id=guild_id,
-            lobby_channel_id=snowflake(),
-        )
-        assert new_lobby.id is not None
-
-    async def test_rollback_does_not_persist_data(
-        self, db_session: AsyncSession
-    ) -> None:
-        """フラッシュ済みデータはロールバックで破棄される。"""
-        guild_id = snowflake()
-        channel_id_1 = snowflake()
-        channel_id_dup = snowflake()
-
-        # ロビーを追加してフラッシュ（まだコミットしない）
-        lobby = Lobby(
-            guild_id=guild_id,
-            lobby_channel_id=channel_id_1,
-        )
-        db_session.add(lobby)
-        await db_session.flush()
-
-        # 重複ロビーで IntegrityError を発生させる
-        # 同じ lobby_channel_id で重複させるために channel_id_dup を使う
-        lobby_ok = Lobby(
-            guild_id=guild_id,
-            lobby_channel_id=channel_id_dup,
-        )
-        db_session.add(lobby_ok)
-        await db_session.flush()
-
-        # 同じ channel で重複を狙う
-        with pytest.raises(IntegrityError):
-            dup = Lobby(
-                guild_id=guild_id,
-                lobby_channel_id=channel_id_dup,
-            )
-            db_session.add(dup)
-            await db_session.flush()
-
-        # ロールバック
-        await db_session.rollback()
-
-        # フラッシュ済みの lobby もロールバックで破棄されている
-        found = await get_lobby_by_channel_id(db_session, channel_id_1)
-        assert found is None
-
-    async def test_multiple_errors_same_session(self, db_session: AsyncSession) -> None:
-        """複数回エラー→ロールバックを繰り返した後も正常に操作できる。"""
-        guild_id = snowflake()
-        channel_1 = snowflake()
-        channel_2 = snowflake()
-
-        # 1回目のエラー: 同じ lobby_channel_id を2回 add → flush で重複
-        lobby1 = Lobby(guild_id=guild_id, lobby_channel_id=channel_1)
-        db_session.add(lobby1)
-        await db_session.flush()
-        with pytest.raises(IntegrityError):
-            dup1 = Lobby(guild_id=guild_id, lobby_channel_id=channel_1)
-            db_session.add(dup1)
-            await db_session.flush()
-        await db_session.rollback()
-
-        # 2回目のエラー: 別のチャンネルで同様の重複
-        lobby2 = Lobby(guild_id=guild_id, lobby_channel_id=channel_2)
-        db_session.add(lobby2)
-        await db_session.flush()
-        with pytest.raises(IntegrityError):
-            dup2 = Lobby(guild_id=guild_id, lobby_channel_id=channel_2)
-            db_session.add(dup2)
-            await db_session.flush()
-        await db_session.rollback()
-
-        # 2回のロールバック後に正常な挿入が成功する
-        new_lobby = await create_lobby(
-            db_session,
-            guild_id=guild_id,
-            lobby_channel_id=snowflake(),
-        )
-        assert new_lobby.id is not None
-
-
-# =============================================================================
-# チケットライフサイクルテスト
-# =============================================================================
 
 
 class TestTicketLifecycle:
@@ -2373,72 +1467,6 @@ class TestTicketNumberEdgeCases:
         assert next_num == 4
 
 
-class TestVoiceSessionMemberEdgeCases:
-    """VoiceSession メンバーのエッジケーステスト。"""
-
-    async def test_duplicate_member_returns_existing(
-        self, db_session: AsyncSession
-    ) -> None:
-        """同じメンバーを2回追加すると既存のレコードが返される。"""
-        lobby = await create_lobby(
-            db_session, guild_id=snowflake(), lobby_channel_id=snowflake()
-        )
-        vs = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=snowflake(),
-            owner_id=snowflake(),
-            name="test",
-        )
-
-        member_id = snowflake()
-        m1 = await add_voice_session_member(db_session, vs.id, member_id)
-        m2 = await add_voice_session_member(db_session, vs.id, member_id)
-
-        # 同じレコードが返される
-        assert m1.id == m2.id
-
-        # メンバーは1人だけ
-        members = await get_voice_session_members_ordered(db_session, vs.id)
-        assert len(members) == 1
-
-    async def test_remove_nonexistent_member_returns_false(
-        self, db_session: AsyncSession
-    ) -> None:
-        """存在しないメンバーの削除は False を返す。"""
-        lobby = await create_lobby(
-            db_session, guild_id=snowflake(), lobby_channel_id=snowflake()
-        )
-        vs = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=snowflake(),
-            owner_id=snowflake(),
-            name="test",
-        )
-
-        result = await remove_voice_session_member(db_session, vs.id, snowflake())
-        assert result is False
-
-    async def test_members_ordered_empty_session(
-        self, db_session: AsyncSession
-    ) -> None:
-        """メンバーのいないセッションで空リストが返る。"""
-        lobby = await create_lobby(
-            db_session, guild_id=snowflake(), lobby_channel_id=snowflake()
-        )
-        vs = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id=snowflake(),
-            owner_id=snowflake(),
-            name="test",
-        )
-
-        members = await get_voice_session_members_ordered(db_session, vs.id)
-        assert members == []
-
-
 class TestBumpReminderEdgeCases:
     """Bump リマインダーのエッジケーステスト。"""
 
@@ -2633,8 +1661,6 @@ class TestBulkDeletionEdgeCases:
         """データのないギルドの一括削除は 0 を返す。"""
         empty_guild = snowflake()
 
-        assert await delete_voice_sessions_by_guild(db_session, empty_guild) == 0
-        assert await delete_lobbies_by_guild(db_session, empty_guild) == 0
         assert await delete_bump_reminders_by_guild(db_session, empty_guild) == 0
         assert await delete_sticky_messages_by_guild(db_session, empty_guild) == 0
 
@@ -2651,27 +1677,26 @@ class TestBulkDeletionEdgeCases:
         """一括削除は他のギルドに影響しない。"""
         g1, g2 = snowflake(), snowflake()
 
-        # 両ギルドにロビーを作成
+        # 両ギルドに sticky メッセージを作成
         for gid in [g1, g2]:
-            lobby = await create_lobby(
-                db_session, guild_id=gid, lobby_channel_id=snowflake()
-            )
-            await create_voice_session(
+            await create_sticky_message(
                 db_session,
-                lobby_id=lobby.id,
                 channel_id=snowflake(),
-                owner_id=snowflake(),
-                name="test",
+                guild_id=gid,
+                title=f"Sticky {gid}",
+                description="test",
+                color=0,
+                cooldown_seconds=5,
             )
 
-        # g1 のセッションのみ削除
-        count = await delete_voice_sessions_by_guild(db_session, g1)
+        # g1 の sticky のみ削除
+        count = await delete_sticky_messages_by_guild(db_session, g1)
         assert count == 1
 
-        # g2 のセッションは残っている
-        all_sessions = await get_all_voice_sessions(db_session)
-        assert len(all_sessions) == 1
-        assert all_sessions[0].lobby.guild_id == g2
+        # g2 の sticky は残っている
+        all_stickies = await get_all_sticky_messages(db_session)
+        g2_stickies = [s for s in all_stickies if s.guild_id == g2]
+        assert len(g2_stickies) == 1
 
 
 class TestUpsertIdempotency:

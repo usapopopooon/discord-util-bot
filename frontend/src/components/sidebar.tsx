@@ -11,7 +11,6 @@ const navItems = [
   { href: '/dashboard/settings', label: 'Settings' },
   { href: '/dashboard/automod', label: 'AutoMod' },
   { href: '/dashboard/banlogs', label: 'Ban Logs' },
-  { href: '/dashboard/lobbies', label: 'Voice Lobbies' },
   { href: '/dashboard/sticky', label: 'Sticky Messages' },
   { href: '/dashboard/bump', label: 'Bump' },
   { href: '/dashboard/tickets', label: 'Tickets' },

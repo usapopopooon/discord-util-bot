@@ -33,7 +33,6 @@ from src.database.models import (
     EventLogConfig,
     HealthConfig,
     JoinRoleConfig,
-    Lobby,
     RolePanel,
     RolePanelItem,
     StickyMessage,
@@ -331,56 +330,6 @@ class TestSettingsRoutes:
 # ===========================================================================
 
 
-class TestLobbiesRoutes:
-    """/lobbies ルートのテスト。"""
-
-    async def test_lobbies_requires_auth(self, client: AsyncClient) -> None:
-        """認証なしでは /login にリダイレクトされる。"""
-        response = await client.get("/lobbies", follow_redirects=False)
-        assert response.status_code == 302
-        assert response.headers["location"] == "/login"
-
-    async def test_lobbies_list_empty(self, authenticated_client: AsyncClient) -> None:
-        """ロビーがない場合は空メッセージが表示される。"""
-        response = await authenticated_client.get("/lobbies")
-        assert response.status_code == 200
-        assert "No lobbies configured" in response.text
-
-    async def test_lobbies_list_with_data(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """ロビーがある場合は一覧が表示される。"""
-        lobby = Lobby(
-            guild_id="123456789012345678",
-            lobby_channel_id="987654321098765432",
-        )
-        db_session.add(lobby)
-        await db_session.commit()
-
-        response = await authenticated_client.get("/lobbies")
-        assert response.status_code == 200
-        assert "123456789012345678" in response.text
-        assert "987654321098765432" in response.text
-
-    async def test_delete_lobby(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """ロビーを削除できる。"""
-        lobby = Lobby(
-            guild_id="123456789012345678",
-            lobby_channel_id="987654321098765432",
-        )
-        db_session.add(lobby)
-        await db_session.commit()
-
-        response = await authenticated_client.post(
-            f"/lobbies/{lobby.id}/delete",
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert response.headers["location"] == "/lobbies"
-
-
 # ===========================================================================
 # Sticky ルート
 # ===========================================================================
@@ -549,75 +498,6 @@ class TestBumpRoutes:
 # ===========================================================================
 # ギルド・チャンネル名表示 (一覧ページ)
 # ===========================================================================
-
-
-class TestLobbiesListWithGuildChannelNames:
-    """ロビー一覧ページのギルド・チャンネル名表示テスト。"""
-
-    async def test_displays_guild_name_when_cached(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """キャッシュにギルド名がある場合、サーバー名が表示される。"""
-        # ロビーとギルド情報を作成
-        lobby = Lobby(
-            guild_id="123456789012345678",
-            lobby_channel_id="987654321098765432",
-        )
-        guild = DiscordGuild(
-            guild_id="123456789012345678",
-            guild_name="My Test Server",
-        )
-        db_session.add_all([lobby, guild])
-        await db_session.commit()
-
-        response = await authenticated_client.get("/lobbies")
-        assert response.status_code == 200
-        assert "My Test Server" in response.text
-        # ID もグレーで表示される
-        assert "123456789012345678" in response.text
-
-    async def test_displays_channel_name_when_cached(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """キャッシュにチャンネル名がある場合、チャンネル名が表示される。"""
-        lobby = Lobby(
-            guild_id="123456789012345678",
-            lobby_channel_id="987654321098765432",
-        )
-        channel = DiscordChannel(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-            channel_name="lobby-voice",
-            position=0,
-        )
-        db_session.add_all([lobby, channel])
-        await db_session.commit()
-
-        response = await authenticated_client.get("/lobbies")
-        assert response.status_code == 200
-        assert "#lobby-voice" in response.text
-
-    async def test_displays_yellow_id_when_not_cached(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """キャッシュにない場合、ID が黄色で表示される。"""
-        lobby = Lobby(
-            guild_id="123456789012345678",
-            lobby_channel_id="987654321098765432",
-        )
-        db_session.add(lobby)
-        await db_session.commit()
-
-        response = await authenticated_client.get("/lobbies")
-        assert response.status_code == 200
-        # 黄色スタイルで ID 表示
-        assert "text-yellow-400" in response.text
 
 
 class TestStickyListWithGuildChannelNames:
@@ -1151,17 +1031,6 @@ class TestPasswordVerification:
 class TestDeleteNonExistent:
     """存在しないアイテムの削除テスト。"""
 
-    async def test_delete_nonexistent_lobby(
-        self, authenticated_client: AsyncClient
-    ) -> None:
-        """存在しないロビーの削除はリダイレクトで返る。"""
-        response = await authenticated_client.post(
-            "/lobbies/99999/delete",
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert response.headers["location"] == "/lobbies"
-
     async def test_delete_nonexistent_sticky(
         self, authenticated_client: AsyncClient
     ) -> None:
@@ -1283,12 +1152,6 @@ class TestUnauthenticatedPostRequests:
     async def test_resend_verification_requires_auth(self, client: AsyncClient) -> None:
         """認証なしで確認メール再送は /login にリダイレクトされる。"""
         response = await client.post("/resend-verification", follow_redirects=False)
-        assert response.status_code == 302
-        assert response.headers["location"] == "/login"
-
-    async def test_lobbies_delete_requires_auth(self, client: AsyncClient) -> None:
-        """認証なしでロビー削除は /login にリダイレクトされる。"""
-        response = await client.post("/lobbies/1/delete", follow_redirects=False)
         assert response.status_code == 302
         assert response.headers["location"] == "/login"
 
@@ -6115,58 +5978,6 @@ class TestCSRFProtection:
         assert response.status_code == 302
         assert response.headers.get("location") == "/login"
 
-    async def test_delete_lobby_without_csrf_is_ignored(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """CSRF トークンなしで削除リクエストは無視される (リダイレクト)。"""
-        lobby = Lobby(
-            guild_id="123456789012345678",
-            lobby_channel_id="987654321098765432",
-        )
-        db_session.add(lobby)
-        await db_session.commit()
-        await db_session.refresh(lobby)
-
-        response = await authenticated_client.post(
-            f"/lobbies/{lobby.id}/delete",
-            data={},  # csrf_token なし
-            follow_redirects=False,
-        )
-        # CSRF 検証失敗 → リダイレクト
-        assert response.status_code == 302
-
-        # ロビーは削除されていない
-        result = await db_session.execute(select(Lobby).where(Lobby.id == lobby.id))
-        assert result.scalar_one_or_none() is not None
-
-    async def test_delete_lobby_with_valid_csrf_succeeds(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """有効な CSRF トークンで削除すると成功する。"""
-        from src.web.app import generate_csrf_token
-
-        lobby = Lobby(
-            guild_id="123456789012345678",
-            lobby_channel_id="987654321098765432",
-        )
-        db_session.add(lobby)
-        await db_session.commit()
-        await db_session.refresh(lobby)
-        lobby_id = lobby.id
-
-        csrf_token = generate_csrf_token()
-        response = await authenticated_client.post(
-            f"/lobbies/{lobby_id}/delete",
-            data={"csrf_token": csrf_token},
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-
-        # ロビーが削除されている
-        db_session.expire_all()
-        result = await db_session.execute(select(Lobby).where(Lobby.id == lobby_id))
-        assert result.scalar_one_or_none() is None
-
     async def test_csrf_token_generation_and_validation(self) -> None:
         """CSRF トークンの生成と検証が正しく動作する。"""
         from src.web.app import generate_csrf_token, validate_csrf_token
@@ -6342,25 +6153,6 @@ class TestFormCooldown:
 class TestFormCooldownRoutes:
     """フォームクールタイムのルートテスト。"""
 
-    async def test_lobby_delete_cooldown(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """ロビー削除にクールタイムが適用される。"""
-        lobby = Lobby(
-            guild_id="123456789012345678",
-            lobby_channel_id="987654321098765432",
-        )
-        db_session.add(lobby)
-        await db_session.commit()
-        await db_session.refresh(lobby)
-
-        # 最初の削除は成功
-        response = await authenticated_client.post(
-            f"/lobbies/{lobby.id}/delete",
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-
     async def test_rolepanel_create_cooldown(
         self, authenticated_client: AsyncClient
     ) -> None:
@@ -6458,33 +6250,6 @@ class TestResourceLock:
 class TestResourceLockIntegration:
     """リソースロックの統合テスト。"""
 
-    async def test_concurrent_lobby_delete_requests(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """同時ロビー削除リクエストが順序正しく処理される。"""
-        lobby = Lobby(
-            guild_id="123456789012345678",
-            lobby_channel_id="987654321098765432",
-        )
-        db_session.add(lobby)
-        await db_session.commit()
-        await db_session.refresh(lobby)
-        lobby_id = lobby.id
-
-        # 削除リクエスト
-        response = await authenticated_client.post(
-            f"/lobbies/{lobby_id}/delete",
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-
-        # 2回目は既に削除済みなのでリダイレクトのみ
-        response2 = await authenticated_client.post(
-            f"/lobbies/{lobby_id}/delete",
-            follow_redirects=False,
-        )
-        assert response2.status_code == 302
-
     async def test_concurrent_rolepanel_item_add(
         self, authenticated_client: AsyncClient, db_session: AsyncSession
     ) -> None:
@@ -6540,63 +6305,6 @@ class TestMaintenanceRoutes:
         assert "Actions" in response.text
         assert "Refresh Stats" in response.text
 
-    async def test_maintenance_shows_stats(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """統計情報が表示される。"""
-        # ギルドを追加
-        guild = DiscordGuild(
-            guild_id="123456789012345678",
-            guild_name="Test Guild",
-            member_count=100,
-        )
-        db_session.add(guild)
-
-        # アクティブなギルドに属するデータを追加
-        lobby = Lobby(
-            guild_id="123456789012345678",
-            lobby_channel_id="987654321098765432",
-        )
-        db_session.add(lobby)
-        await db_session.commit()
-
-        response = await authenticated_client.get("/settings/maintenance")
-        assert response.status_code == 200
-        # ロビー数が表示される
-        assert "Lobbies" in response.text
-
-    async def test_maintenance_shows_orphaned_count(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """孤立データの数が表示される。"""
-        # アクティブなギルド (DiscordGuild にある)
-        active_guild = DiscordGuild(
-            guild_id="111111111111111111",
-            guild_name="Active Guild",
-            member_count=100,
-        )
-        db_session.add(active_guild)
-
-        # アクティブなギルドのロビー
-        active_lobby = Lobby(
-            guild_id="111111111111111111",
-            lobby_channel_id="222222222222222222",
-        )
-        db_session.add(active_lobby)
-
-        # 孤立したロビー (DiscordGuild にない)
-        orphaned_lobby = Lobby(
-            guild_id="999999999999999999",
-            lobby_channel_id="888888888888888888",
-        )
-        db_session.add(orphaned_lobby)
-        await db_session.commit()
-
-        response = await authenticated_client.get("/settings/maintenance")
-        assert response.status_code == 200
-        # 孤立数: 1 が表示される
-        assert "Orphaned: 1" in response.text
-
     async def test_maintenance_cleanup_requires_auth(self, client: AsyncClient) -> None:
         """クリーンアップは認証が必要。"""
         response = await client.post(
@@ -6605,48 +6313,6 @@ class TestMaintenanceRoutes:
         )
         assert response.status_code == 302
         assert response.headers["location"] == "/login"
-
-    async def test_maintenance_cleanup_deletes_orphaned_lobbies(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """孤立したロビーがクリーンアップで削除される。"""
-        # アクティブなギルド
-        active_guild = DiscordGuild(
-            guild_id="111111111111111111",
-            guild_name="Active Guild",
-            member_count=100,
-        )
-        db_session.add(active_guild)
-
-        # アクティブなギルドのロビー
-        active_lobby = Lobby(
-            guild_id="111111111111111111",
-            lobby_channel_id="222222222222222222",
-        )
-        db_session.add(active_lobby)
-
-        # 孤立したロビー
-        orphaned_lobby = Lobby(
-            guild_id="999999999999999999",
-            lobby_channel_id="888888888888888888",
-        )
-        db_session.add(orphaned_lobby)
-        await db_session.commit()
-
-        # クリーンアップを実行
-        response = await authenticated_client.post(
-            "/settings/maintenance/cleanup",
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert "success" in response.headers["location"].lower()
-
-        # 孤立したロビーが削除されていることを確認
-        db_session.expire_all()
-        result = await db_session.execute(select(Lobby))
-        lobbies = list(result.scalars().all())
-        assert len(lobbies) == 1
-        assert lobbies[0].guild_id == "111111111111111111"
 
     async def test_maintenance_cleanup_deletes_orphaned_bump_configs(
         self, authenticated_client: AsyncClient, db_session: AsyncSession
@@ -6791,40 +6457,6 @@ class TestMaintenanceRoutes:
         assert len(panels) == 1
         assert panels[0].guild_id == "111111111111111111"
 
-    async def test_maintenance_cleanup_no_orphaned_data(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """孤立データがない場合のクリーンアップ。"""
-        # アクティブなギルドのみ
-        active_guild = DiscordGuild(
-            guild_id="111111111111111111",
-            guild_name="Active Guild",
-            member_count=100,
-        )
-        db_session.add(active_guild)
-
-        # アクティブなギルドのロビーのみ
-        active_lobby = Lobby(
-            guild_id="111111111111111111",
-            lobby_channel_id="222222222222222222",
-        )
-        db_session.add(active_lobby)
-        await db_session.commit()
-
-        # クリーンアップを実行
-        response = await authenticated_client.post(
-            "/settings/maintenance/cleanup",
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert "No+orphaned+data+found" in response.headers["location"]
-
-        # ロビーは削除されていない
-        db_session.expire_all()
-        result = await db_session.execute(select(Lobby))
-        lobbies = list(result.scalars().all())
-        assert len(lobbies) == 1
-
     async def test_maintenance_refresh_requires_auth(self, client: AsyncClient) -> None:
         """リフレッシュは認証が必要。"""
         response = await client.post(
@@ -6889,159 +6521,8 @@ class TestMaintenanceRoutes:
         assert response.status_code == 302
         assert "Please+wait" in response.headers["location"]
 
-    async def test_maintenance_page_contains_cleanup_modal(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """メンテナンスページに確認モーダルが含まれる。"""
-        # 孤立データを作成
-        orphaned_lobby = Lobby(
-            guild_id="999999999999999999",
-            lobby_channel_id="888888888888888888",
-        )
-        db_session.add(orphaned_lobby)
-        await db_session.commit()
-
-        response = await authenticated_client.get("/settings/maintenance")
-        assert response.status_code == 200
-        # モーダルの要素が含まれる
-        assert "cleanup-modal" in response.text
-        assert "Confirm Cleanup" in response.text
-        assert "permanently deleted" in response.text
-        assert "This action cannot be undone" in response.text
-
-    async def test_cleanup_modal_shows_breakdown(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """確認モーダルに削除対象の内訳が表示される。"""
-        # 複数種類の孤立データを作成
-        orphaned_lobby = Lobby(
-            guild_id="999999999999999999",
-            lobby_channel_id="888888888888888888",
-        )
-        orphaned_bump = BumpConfig(
-            guild_id="999999999999999999",
-            channel_id="777777777777777777",
-        )
-        orphaned_sticky = StickyMessage(
-            channel_id="666666666666666666",
-            guild_id="999999999999999999",
-            title="Orphaned Sticky",
-            description="Test",
-        )
-        orphaned_panel = RolePanel(
-            guild_id="999999999999999999",
-            channel_id="555555555555555555",
-            panel_type="button",
-            title="Orphaned Panel",
-        )
-        db_session.add_all(
-            [orphaned_lobby, orphaned_bump, orphaned_sticky, orphaned_panel]
-        )
-        await db_session.commit()
-
-        response = await authenticated_client.get("/settings/maintenance")
-        assert response.status_code == 200
-        # 内訳が表示される
-        assert "Lobbies:" in response.text
-        assert "Bump Configs:" in response.text
-        assert "Stickies:" in response.text
-        assert "Role Panels:" in response.text
-        # 合計が表示される
-        assert "Total:" in response.text
-        # 確認ボタンにレコード数が表示される
-        assert "Delete 4 Records" in response.text
-
-    async def test_cleanup_modal_has_cancel_button(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """確認モーダルにキャンセルボタンがある。"""
-        orphaned_lobby = Lobby(
-            guild_id="999999999999999999",
-            lobby_channel_id="888888888888888888",
-        )
-        db_session.add(orphaned_lobby)
-        await db_session.commit()
-
-        response = await authenticated_client.get("/settings/maintenance")
-        assert response.status_code == 200
-        # キャンセルボタン
-        assert "Cancel" in response.text
-        assert "hideCleanupModal" in response.text
-
-    async def test_cleanup_button_triggers_modal(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """クリーンアップボタンがモーダルを表示する。"""
-        orphaned_lobby = Lobby(
-            guild_id="999999999999999999",
-            lobby_channel_id="888888888888888888",
-        )
-        db_session.add(orphaned_lobby)
-        await db_session.commit()
-
-        response = await authenticated_client.get("/settings/maintenance")
-        assert response.status_code == 200
-        # ボタンがモーダルを表示する JavaScript を呼び出す
-        assert "showCleanupModal()" in response.text
-
-
-# ===========================================================================
-# クリーンアップモーダル エッジケーステスト
-# ===========================================================================
-
-
 class TestCleanupModalEdgeCases:
     """クリーンアップモーダルのエッジケーステスト。"""
-
-    async def test_cleanup_button_disabled_when_no_orphaned_data(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """孤立データがない場合、クリーンアップボタンが非活性。"""
-        # アクティブなギルドを作成
-        active_guild = DiscordGuild(
-            guild_id="111111111111111111",
-            guild_name="Active Guild",
-            member_count=100,
-        )
-        db_session.add(active_guild)
-
-        # アクティブなギルドのデータのみ
-        active_lobby = Lobby(
-            guild_id="111111111111111111",
-            lobby_channel_id="222222222222222222",
-        )
-        db_session.add(active_lobby)
-        await db_session.commit()
-
-        response = await authenticated_client.get("/settings/maintenance")
-        assert response.status_code == 200
-        # 孤立データなしのボタンが表示される
-        assert "No Orphaned Data" in response.text
-        # disabled 属性がボタンに付いている
-        assert "disabled" in response.text
-
-    async def test_cleanup_modal_with_only_lobbies_orphaned(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """ロビーだけが孤立している場合の表示。"""
-        # 孤立したロビーのみ
-        orphaned_lobby1 = Lobby(
-            guild_id="999999999999999999",
-            lobby_channel_id="888888888888888888",
-        )
-        orphaned_lobby2 = Lobby(
-            guild_id="999999999999999999",
-            lobby_channel_id="777777777777777777",
-        )
-        db_session.add_all([orphaned_lobby1, orphaned_lobby2])
-        await db_session.commit()
-
-        response = await authenticated_client.get("/settings/maintenance")
-        assert response.status_code == 200
-        # Lobbies の数が表示される
-        assert "Delete 2 Records" in response.text
-        # モーダル内のLobbies行
-        assert "Lobbies:" in response.text
 
     async def test_cleanup_modal_with_only_panels_orphaned(
         self, authenticated_client: AsyncClient, db_session: AsyncSession
@@ -7061,52 +6542,6 @@ class TestCleanupModalEdgeCases:
         assert "Delete 1 Records" in response.text
         assert "Role Panels:" in response.text
 
-    async def test_cleanup_modal_shows_mixed_orphaned_types(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """複数種類の孤立データが混在する場合の表示。"""
-        # アクティブなギルド
-        active_guild = DiscordGuild(
-            guild_id="111111111111111111",
-            guild_name="Active Guild",
-        )
-        db_session.add(active_guild)
-
-        # アクティブなデータ (カウントされない)
-        active_lobby = Lobby(
-            guild_id="111111111111111111",
-            lobby_channel_id="222222222222222222",
-        )
-        active_bump = BumpConfig(
-            guild_id="111111111111111111",
-            channel_id="222222222222222222",
-        )
-        db_session.add_all([active_lobby, active_bump])
-
-        # 孤立データ
-        orphaned_lobbies = [
-            Lobby(guild_id="999999999999999999", lobby_channel_id=f"8888{i}")
-            for i in range(3)
-        ]
-        orphaned_stickies = [
-            StickyMessage(
-                channel_id=f"7777{i}",
-                guild_id="999999999999999999",
-                title=f"Sticky {i}",
-                description="Test",
-            )
-            for i in range(2)
-        ]
-        db_session.add_all(orphaned_lobbies + orphaned_stickies)
-        await db_session.commit()
-
-        response = await authenticated_client.get("/settings/maintenance")
-        assert response.status_code == 200
-        # 合計: 3 (lobbies) + 2 (stickies) = 5
-        assert "Delete 5 Records" in response.text
-        assert "Lobbies:" in response.text
-        assert "Stickies:" in response.text
-
     async def test_refresh_stats_updates_counts(
         self, authenticated_client: AsyncClient, db_session: AsyncSession
     ) -> None:
@@ -7118,205 +6553,8 @@ class TestCleanupModalEdgeCases:
         assert response.status_code == 302
         assert "/settings/maintenance" in response.headers["location"]
 
-    async def test_cleanup_with_large_number_of_orphaned_records(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """大量の孤立レコードがある場合のクリーンアップ。"""
-        # 50件の孤立ロビーを作成
-        orphaned_lobbies = [
-            Lobby(
-                guild_id="999999999999999999",
-                lobby_channel_id=f"10000000000000000{i:02d}",
-            )
-            for i in range(50)
-        ]
-        db_session.add_all(orphaned_lobbies)
-        await db_session.commit()
-
-        response = await authenticated_client.get("/settings/maintenance")
-        assert response.status_code == 200
-        assert "Delete 50 Records" in response.text
-
-        # クリーンアップ実行
-        cleanup_response = await authenticated_client.post(
-            "/settings/maintenance/cleanup",
-            follow_redirects=False,
-        )
-        assert cleanup_response.status_code == 302
-
-        # 全て削除されたことを確認
-        db_session.expire_all()
-        result = await db_session.execute(select(Lobby))
-        remaining_lobbies = list(result.scalars().all())
-        assert len(remaining_lobbies) == 0
-
-    async def test_cleanup_preserves_active_guild_data(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """クリーンアップがアクティブギルドのデータを保持する。"""
-        # 複数のアクティブギルド
-        active_guild1 = DiscordGuild(
-            guild_id="111111111111111111",
-            guild_name="Active Guild 1",
-        )
-        active_guild2 = DiscordGuild(
-            guild_id="222222222222222222",
-            guild_name="Active Guild 2",
-        )
-        db_session.add_all([active_guild1, active_guild2])
-
-        # 各アクティブギルドのデータ
-        active_lobby1 = Lobby(
-            guild_id="111111111111111111",
-            lobby_channel_id="100000000000000001",
-        )
-        active_lobby2 = Lobby(
-            guild_id="222222222222222222",
-            lobby_channel_id="200000000000000001",
-        )
-        active_bump = BumpConfig(
-            guild_id="111111111111111111",
-            channel_id="100000000000000001",
-        )
-        db_session.add_all([active_lobby1, active_lobby2, active_bump])
-
-        # 孤立データ
-        orphaned_lobby = Lobby(
-            guild_id="999999999999999999",
-            lobby_channel_id="900000000000000001",
-        )
-        db_session.add(orphaned_lobby)
-        await db_session.commit()
-
-        # クリーンアップ実行
-        await authenticated_client.post(
-            "/settings/maintenance/cleanup",
-            follow_redirects=False,
-        )
-
-        # アクティブギルドのデータが保持されていることを確認
-        db_session.expire_all()
-        lobby_result = await db_session.execute(select(Lobby))
-        lobbies = list(lobby_result.scalars().all())
-        assert len(lobbies) == 2
-        guild_ids = {lobby.guild_id for lobby in lobbies}
-        assert "111111111111111111" in guild_ids
-        assert "222222222222222222" in guild_ids
-        assert "999999999999999999" not in guild_ids
-
-        bump_result = await db_session.execute(select(BumpConfig))
-        bumps = list(bump_result.scalars().all())
-        assert len(bumps) == 1
-        assert bumps[0].guild_id == "111111111111111111"
-
-
-# ===========================================================================
-# ギルド・チャンネル名表示 統合テスト
-# ===========================================================================
-
-
 class TestGuildChannelNameDisplayIntegration:
     """ギルド・チャンネル名表示の統合テスト。"""
-
-    async def test_all_list_pages_display_cached_names(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """全ての一覧ページでキャッシュされた名前が表示される。"""
-        # 共通のギルド・チャンネルキャッシュを作成
-        guild = DiscordGuild(
-            guild_id="111111111111111111",
-            guild_name="Integration Test Server",
-        )
-        channel = DiscordChannel(
-            guild_id="111111111111111111",
-            channel_id="222222222222222222",
-            channel_name="test-channel",
-            position=0,
-        )
-        db_session.add_all([guild, channel])
-
-        # 各機能のデータを作成
-        lobby = Lobby(
-            guild_id="111111111111111111",
-            lobby_channel_id="222222222222222222",
-        )
-        sticky = StickyMessage(
-            channel_id="222222222222222222",
-            guild_id="111111111111111111",
-            title="Test Sticky",
-            description="Test",
-        )
-        bump_config = BumpConfig(
-            guild_id="111111111111111111",
-            channel_id="222222222222222222",
-        )
-        role_panel = RolePanel(
-            guild_id="111111111111111111",
-            channel_id="222222222222222222",
-            panel_type="button",
-            title="Test Panel",
-        )
-        db_session.add_all([lobby, sticky, bump_config, role_panel])
-        await db_session.commit()
-
-        # 全ページで名前が表示されることを確認
-        lobbies_response = await authenticated_client.get("/lobbies")
-        assert lobbies_response.status_code == 200
-        assert "Integration Test Server" in lobbies_response.text
-        assert "#test-channel" in lobbies_response.text
-
-        sticky_response = await authenticated_client.get("/sticky")
-        assert sticky_response.status_code == 200
-        assert "Integration Test Server" in sticky_response.text
-        assert "#test-channel" in sticky_response.text
-
-        bump_response = await authenticated_client.get("/bump")
-        assert bump_response.status_code == 200
-        assert "Integration Test Server" in bump_response.text
-        assert "#test-channel" in bump_response.text
-
-        rolepanels_response = await authenticated_client.get("/rolepanels")
-        assert rolepanels_response.status_code == 200
-        assert "Integration Test Server" in rolepanels_response.text
-        assert "#test-channel" in rolepanels_response.text
-
-    async def test_mixed_cached_and_uncached_guilds(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """キャッシュ済みとキャッシュなしのギルドが混在する場合の表示。"""
-        # キャッシュ済みギルド
-        cached_guild = DiscordGuild(
-            guild_id="111111111111111111",
-            guild_name="Cached Server",
-        )
-        db_session.add(cached_guild)
-
-        # キャッシュ済みギルドのロビー
-        cached_lobby = Lobby(
-            guild_id="111111111111111111",
-            lobby_channel_id="222222222222222222",
-        )
-        # キャッシュなしギルドのロビー
-        uncached_lobby = Lobby(
-            guild_id="999999999999999999",
-            lobby_channel_id="888888888888888888",
-        )
-        db_session.add_all([cached_lobby, uncached_lobby])
-        await db_session.commit()
-
-        response = await authenticated_client.get("/lobbies")
-        assert response.status_code == 200
-
-        # キャッシュ済みはサーバー名が表示
-        assert "Cached Server" in response.text
-        # キャッシュなしは黄色 ID 表示
-        assert "text-yellow-400" in response.text
-        # キャッシュなしの ID が表示
-        assert "999999999999999999" in response.text
 
     async def test_multiple_channels_same_guild(
         self,
@@ -7364,37 +6602,6 @@ class TestGuildChannelNameDisplayIntegration:
         assert "#channel-one" in response.text
         assert "#channel-two" in response.text
 
-    async def test_guild_name_with_special_characters(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """特殊文字を含むサーバー名が正しくエスケープされる。"""
-        guild = DiscordGuild(
-            guild_id="111111111111111111",
-            guild_name="Test <Server> & 'Guild'",
-        )
-        channel = DiscordChannel(
-            guild_id="111111111111111111",
-            channel_id="222222222222222222",
-            channel_name="general",
-            position=0,
-        )
-        lobby = Lobby(
-            guild_id="111111111111111111",
-            lobby_channel_id="222222222222222222",
-        )
-        db_session.add_all([guild, channel, lobby])
-        await db_session.commit()
-
-        response = await authenticated_client.get("/lobbies")
-        assert response.status_code == 200
-        # HTML エスケープされた形で表示
-        assert "&lt;Server&gt;" in response.text
-        assert "&amp;" in response.text
-        # 生の特殊文字は含まれない
-        assert "<Server>" not in response.text
-
     async def test_japanese_guild_and_channel_names(
         self,
         authenticated_client: AsyncClient,
@@ -7422,43 +6629,6 @@ class TestGuildChannelNameDisplayIntegration:
         assert response.status_code == 200
         assert "日本語サーバー" in response.text
         assert "#一般チャット" in response.text
-
-    async def test_display_after_cache_update(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """キャッシュ更新後に新しい名前が反映される。"""
-        # 初期のキャッシュ
-        guild = DiscordGuild(
-            guild_id="111111111111111111",
-            guild_name="Old Server Name",
-        )
-        lobby = Lobby(
-            guild_id="111111111111111111",
-            lobby_channel_id="222222222222222222",
-        )
-        db_session.add_all([guild, lobby])
-        await db_session.commit()
-
-        # 初回リクエスト
-        response1 = await authenticated_client.get("/lobbies")
-        assert "Old Server Name" in response1.text
-
-        # キャッシュを更新
-        guild.guild_name = "New Server Name"
-        await db_session.commit()
-
-        # 更新後のリクエスト
-        response2 = await authenticated_client.get("/lobbies")
-        assert "New Server Name" in response2.text
-        assert "Old Server Name" not in response2.text
-
-
-# ===========================================================================
-# パスワードユーティリティのテスト
-# ===========================================================================
-
 
 class TestPasswordUtilities:
     """hash_password / verify_password のテスト。"""

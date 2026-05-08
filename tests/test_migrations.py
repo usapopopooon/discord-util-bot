@@ -143,8 +143,8 @@ class TestMigrationChain:
     def test_revision_count(self, script_directory: ScriptDirectory) -> None:
         """マイグレーションの数を確認する。"""
         revisions = list(script_directory.walk_revisions())
-        # 40 個のマイグレーションファイルがあることを確認
-        expected = 40
+        # 41 個のマイグレーションファイルがあることを確認
+        expected = 41
         assert len(revisions) == expected, f"リビジョン数: {len(revisions)}"
 
 
@@ -201,10 +201,7 @@ class TestMigrationUpgrade:
             "alembic_version",
             "bump_configs",
             "bump_reminders",
-            "lobbies",
             "sticky_messages",
-            "voice_session_members",
-            "voice_sessions",
         ]
         for table in expected_tables:
             assert table in tables, f"テーブル {table} が見つかりません"
@@ -250,20 +247,6 @@ class TestMigrationUpgrade:
         columns = {col["name"] for col in inspector.get_columns("sticky_messages")}
 
         assert "message_type" in columns, "message_type カラムが見つかりません"
-        engine.dispose()
-
-    @pytest.mark.usefixtures("clean_db")
-    def test_upgrade_creates_correct_columns_for_voice_sessions(
-        self, alembic_config: Config
-    ) -> None:
-        """voice_sessions テーブルに is_hidden カラムが作成されることを確認する。"""
-        command.upgrade(alembic_config, "head")
-
-        engine = create_engine(TEST_DATABASE_URL)
-        inspector = inspect(engine)
-        columns = {col["name"] for col in inspector.get_columns("voice_sessions")}
-
-        assert "is_hidden" in columns, "is_hidden カラムが見つかりません"
         engine.dispose()
 
     @pytest.mark.usefixtures("clean_db")
@@ -452,46 +435,6 @@ class TestModelMigrationConsistency:
         engine.dispose()
 
     @pytest.mark.usefixtures("clean_db")
-    def test_lobbies_columns_match_model(self, alembic_config: Config) -> None:
-        """lobbies テーブルのカラムがモデルと一致することを確認する。"""
-        from src.database.models import Lobby
-
-        command.upgrade(alembic_config, "head")
-
-        engine = create_engine(TEST_DATABASE_URL)
-        inspector = inspect(engine)
-        db_columns = {col["name"] for col in inspector.get_columns("lobbies")}
-
-        model_columns = {col.name for col in Lobby.__table__.columns}
-
-        assert model_columns == db_columns, (
-            f"lobbies のカラムが一致しません。"
-            f"モデルのみ: {model_columns - db_columns}, "
-            f"DBのみ: {db_columns - model_columns}"
-        )
-        engine.dispose()
-
-    @pytest.mark.usefixtures("clean_db")
-    def test_voice_sessions_columns_match_model(self, alembic_config: Config) -> None:
-        """voice_sessions テーブルのカラムがモデルと一致することを確認する。"""
-        from src.database.models import VoiceSession
-
-        command.upgrade(alembic_config, "head")
-
-        engine = create_engine(TEST_DATABASE_URL)
-        inspector = inspect(engine)
-        db_columns = {col["name"] for col in inspector.get_columns("voice_sessions")}
-
-        model_columns = {col.name for col in VoiceSession.__table__.columns}
-
-        assert model_columns == db_columns, (
-            f"voice_sessions のカラムが一致しません。"
-            f"モデルのみ: {model_columns - db_columns}, "
-            f"DBのみ: {db_columns - model_columns}"
-        )
-        engine.dispose()
-
-    @pytest.mark.usefixtures("clean_db")
     def test_bump_reminders_columns_match_model(self, alembic_config: Config) -> None:
         """bump_reminders テーブルのカラムがモデルと一致することを確認する。"""
         from src.database.models import BumpReminder
@@ -605,31 +548,6 @@ class TestMigrationIndexes:
     """マイグレーションで作成されるインデックスのテスト。"""
 
     @pytest.mark.usefixtures("clean_db")
-    def test_lobbies_indexes(self, alembic_config: Config) -> None:
-        """lobbies テーブルのインデックスが正しく作成されることを確認する。"""
-        command.upgrade(alembic_config, "head")
-
-        engine = create_engine(TEST_DATABASE_URL)
-        inspector = inspect(engine)
-        indexes = {idx["name"] for idx in inspector.get_indexes("lobbies")}
-
-        assert "ix_lobbies_guild_id" in indexes
-        assert "ix_lobbies_lobby_channel_id" in indexes
-        engine.dispose()
-
-    @pytest.mark.usefixtures("clean_db")
-    def test_voice_sessions_indexes(self, alembic_config: Config) -> None:
-        """voice_sessions テーブルのインデックスが正しく作成されることを確認する。"""
-        command.upgrade(alembic_config, "head")
-
-        engine = create_engine(TEST_DATABASE_URL)
-        inspector = inspect(engine)
-        indexes = {idx["name"] for idx in inspector.get_indexes("voice_sessions")}
-
-        assert "ix_voice_sessions_channel_id" in indexes
-        engine.dispose()
-
-    @pytest.mark.usefixtures("clean_db")
     def test_bump_reminders_indexes(self, alembic_config: Config) -> None:
         """bump_reminders テーブルのインデックスが正しく作成されることを確認する。"""
         command.upgrade(alembic_config, "head")
@@ -695,74 +613,6 @@ class TestMigrationConstraints:
             "service_name",
         }
         engine.dispose()
-
-    @pytest.mark.usefixtures("clean_db")
-    def test_voice_session_members_unique_session_user(
-        self, alembic_config: Config
-    ) -> None:
-        """voice_session_members に session + user ユニーク制約を確認。"""
-        command.upgrade(alembic_config, "head")
-
-        engine = create_engine(TEST_DATABASE_URL)
-        inspector = inspect(engine)
-        unique_constraints = inspector.get_unique_constraints("voice_session_members")
-
-        session_user_constraint = next(
-            (c for c in unique_constraints if c["name"] == "uq_session_user"),
-            None,
-        )
-        assert session_user_constraint is not None
-        assert set(session_user_constraint["column_names"]) == {
-            "voice_session_id",
-            "user_id",
-        }
-        engine.dispose()
-
-
-@requires_db
-class TestMigrationForeignKeys:
-    """マイグレーションで作成される外部キーのテスト。"""
-
-    @pytest.mark.usefixtures("clean_db")
-    def test_voice_sessions_foreign_key_to_lobbies(
-        self, alembic_config: Config
-    ) -> None:
-        """voice_sessions テーブルに lobbies への外部キーがあることを確認する。"""
-        command.upgrade(alembic_config, "head")
-
-        engine = create_engine(TEST_DATABASE_URL)
-        inspector = inspect(engine)
-        foreign_keys = inspector.get_foreign_keys("voice_sessions")
-
-        lobby_fk = next(
-            (fk for fk in foreign_keys if fk["referred_table"] == "lobbies"),
-            None,
-        )
-        assert lobby_fk is not None
-        assert "lobby_id" in lobby_fk["constrained_columns"]
-        engine.dispose()
-
-    @pytest.mark.usefixtures("clean_db")
-    def test_voice_session_members_foreign_key_to_voice_sessions(
-        self, alembic_config: Config
-    ) -> None:
-        """voice_session_members に voice_sessions への外部キーを確認。"""
-        command.upgrade(alembic_config, "head")
-
-        engine = create_engine(TEST_DATABASE_URL)
-        inspector = inspect(engine)
-        foreign_keys = inspector.get_foreign_keys("voice_session_members")
-
-        session_fk = next(
-            (fk for fk in foreign_keys if fk["referred_table"] == "voice_sessions"),
-            None,
-        )
-        assert session_fk is not None
-        assert "voice_session_id" in session_fk["constrained_columns"]
-        # CASCADE 削除が設定されていることを確認
-        assert session_fk.get("options", {}).get("ondelete") == "CASCADE"
-        engine.dispose()
-
 
 class TestAlembicIniConfiguration:
     """alembic.ini の設定テスト。"""
@@ -858,9 +708,6 @@ class TestSafeDowngradeBehavior:
 
         expected_tables = [
             "admin_users",
-            "lobbies",
-            "voice_sessions",
-            "voice_session_members",
             "bump_reminders",
             "bump_configs",
             "sticky_messages",
@@ -899,7 +746,6 @@ class TestMigrationIdempotency:
         inspector = inspect(engine)
         tables = inspector.get_table_names()
         assert "sticky_messages" in tables
-        assert "voice_session_members" in tables
         assert "bump_reminders" in tables
         assert "bump_configs" in tables
         engine.dispose()

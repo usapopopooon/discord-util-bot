@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from src.constants import DEFAULT_TEST_DATABASE_URL
-from src.database.models import AdminUser, Base, Lobby
+from src.database.models import AdminUser, Base, BumpConfig, BumpReminder
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -51,7 +51,7 @@ class TestDatabaseInitialization:
                 tables = await conn.run_sync(
                     lambda sync_conn: sa_inspect(sync_conn).get_table_names()
                 )
-            assert "lobbies" not in tables
+            assert "bump_configs" not in tables
 
             # テーブルを作成
             async with engine.begin() as conn:
@@ -64,9 +64,6 @@ class TestDatabaseInitialization:
                 )
 
             expected_tables = [
-                "lobbies",
-                "voice_sessions",
-                "voice_session_members",
                 "bump_reminders",
                 "bump_configs",
                 "sticky_messages",
@@ -91,7 +88,7 @@ class TestDatabaseInitialization:
                 )
 
             # 全テーブルが存在
-            assert len(tables) >= 7
+            assert len(tables) >= 4
         finally:
             await engine.dispose()
 
@@ -108,12 +105,13 @@ class TestDatabaseInitialization:
                 await conn.run_sync(Base.metadata.create_all)
 
             async with factory() as session:
-                lobby = Lobby(
-                    guild_id="123456789012345678", lobby_channel_id="987654321098765432"
+                config = BumpConfig(
+                    guild_id="123456789012345678",
+                    channel_id="987654321098765432",
                 )
-                session.add(lobby)
+                session.add(config)
                 await session.commit()
-                lobby_id = lobby.id
+                config_guild_id = config.guild_id
 
             # 再度 init_db を実行
             async with engine.begin() as conn:
@@ -122,11 +120,11 @@ class TestDatabaseInitialization:
             # データが保持されていることを確認
             async with factory() as session:
                 result = await session.execute(
-                    select(Lobby).where(Lobby.id == lobby_id)
+                    select(BumpConfig).where(BumpConfig.guild_id == config_guild_id)
                 )
                 found = result.scalar_one_or_none()
                 assert found is not None
-                assert found.guild_id == "123456789012345678"
+                assert found.channel_id == "987654321098765432"
         finally:
             await engine.dispose()
 
@@ -147,7 +145,7 @@ class TestDatabaseInitialization:
                 tables = await conn.run_sync(
                     lambda sync_conn: sa_inspect(sync_conn).get_table_names()
                 )
-            assert "lobbies" in tables
+            assert "bump_configs" in tables
         finally:
             await engine.dispose()
 
@@ -322,17 +320,17 @@ class TestTransactionHandling:
     async def test_rollback_on_integrity_error(self, db_session: AsyncSession) -> None:
         """IntegrityError 発生時にロールバックする。"""
         # 最初のレコードを作成
-        lobby1 = Lobby(
-            guild_id="100000000000000001", lobby_channel_id="200000000000000001"
+        config1 = BumpConfig(
+            guild_id="100000000000000001", channel_id="200000000000000001"
         )
-        db_session.add(lobby1)
+        db_session.add(config1)
         await db_session.commit()
 
-        # 重複する channel_id で作成を試みる
-        lobby2 = Lobby(
-            guild_id="100000000000000002", lobby_channel_id="200000000000000001"
+        # 重複する guild_id (主キー) で作成を試みる
+        config2 = BumpConfig(
+            guild_id="100000000000000001", channel_id="200000000000000002"
         )
-        db_session.add(lobby2)
+        db_session.add(config2)
 
         with pytest.raises(IntegrityError):
             await db_session.commit()
@@ -342,52 +340,53 @@ class TestTransactionHandling:
 
         # 最初のレコードは残っている
         result = await db_session.execute(
-            select(Lobby).where(Lobby.lobby_channel_id == "200000000000000001")
+            select(BumpConfig).where(BumpConfig.guild_id == "100000000000000001")
         )
         found = result.scalar_one_or_none()
         assert found is not None
-        assert found.guild_id == "100000000000000001"
+        assert found.channel_id == "200000000000000001"
 
     async def test_commit_after_multiple_operations(
         self, db_session: AsyncSession
     ) -> None:
         """複数の操作を1つのトランザクションでコミットできる。"""
-        lobby1 = Lobby(
-            guild_id="100000000000000001", lobby_channel_id="300000000000000001"
+        config1 = BumpConfig(
+            guild_id="100000000000000001", channel_id="300000000000000001"
         )
-        lobby2 = Lobby(
-            guild_id="100000000000000002", lobby_channel_id="300000000000000002"
+        config2 = BumpConfig(
+            guild_id="100000000000000002", channel_id="300000000000000002"
         )
-        lobby3 = Lobby(
-            guild_id="100000000000000003", lobby_channel_id="300000000000000003"
+        config3 = BumpConfig(
+            guild_id="100000000000000003", channel_id="300000000000000003"
         )
 
-        db_session.add_all([lobby1, lobby2, lobby3])
+        db_session.add_all([config1, config2, config3])
         await db_session.commit()
 
         # 全て作成されている
-        result = await db_session.execute(select(Lobby))
-        lobbies = list(result.scalars().all())
-        assert len(lobbies) == 3
+        result = await db_session.execute(select(BumpConfig))
+        configs = list(result.scalars().all())
+        assert len(configs) == 3
 
     async def test_partial_rollback_with_savepoint(
         self, db_session: AsyncSession
     ) -> None:
         """ネストしたトランザクションでセーブポイントを使用できる。"""
         # 最初のレコード
-        lobby1 = Lobby(
-            guild_id="100000000000000001", lobby_channel_id="300000000000000001"
+        config1 = BumpConfig(
+            guild_id="100000000000000001", channel_id="300000000000000001"
         )
-        db_session.add(lobby1)
+        db_session.add(config1)
         await db_session.flush()
 
         # ネストしたトランザクション (begin_nested) を開始
         try:
             async with db_session.begin_nested():
-                lobby2 = Lobby(
-                    guild_id="100000000000000002", lobby_channel_id="300000000000000001"
-                )  # 重複
-                db_session.add(lobby2)
+                config2 = BumpConfig(
+                    guild_id="100000000000000001",
+                    channel_id="300000000000000002",
+                )  # 重複 guild_id
+                db_session.add(config2)
                 await db_session.flush()
         except IntegrityError:
             pass  # 内側のみロールバック
@@ -396,10 +395,10 @@ class TestTransactionHandling:
         await db_session.commit()
 
         # 最初のレコードのみ存在
-        result = await db_session.execute(select(Lobby))
-        lobbies = list(result.scalars().all())
-        assert len(lobbies) == 1
-        assert lobbies[0].lobby_channel_id == "300000000000000001"
+        result = await db_session.execute(select(BumpConfig))
+        configs = list(result.scalars().all())
+        assert len(configs) == 1
+        assert configs[0].channel_id == "300000000000000001"
 
 
 # =============================================================================
@@ -430,9 +429,9 @@ class TestEmptyDatabaseEdgeCases:
         self, empty_db_session: AsyncSession
     ) -> None:
         """空のテーブルから SELECT すると空のリストが返る。"""
-        result = await empty_db_session.execute(select(Lobby))
-        lobbies = list(result.scalars().all())
-        assert lobbies == []
+        result = await empty_db_session.execute(select(BumpConfig))
+        configs = list(result.scalars().all())
+        assert configs == []
 
     async def test_scalar_one_or_none_on_empty_returns_none(
         self, empty_db_session: AsyncSession
@@ -446,20 +445,24 @@ class TestEmptyDatabaseEdgeCases:
         self, empty_db_session: AsyncSession
     ) -> None:
         """drop_all 後の最初の INSERT が成功する。"""
-        lobby = Lobby(
-            guild_id="100000000000000001", lobby_channel_id="200000000000000001"
+        reminder = BumpReminder(
+            guild_id="100000000000000001",
+            channel_id="200000000000000001",
+            service_name="DISBOARD",
         )
-        empty_db_session.add(lobby)
+        empty_db_session.add(reminder)
         await empty_db_session.commit()
 
-        assert lobby.id is not None
-        assert lobby.id >= 1
+        assert reminder.id is not None
+        assert reminder.id >= 1
 
     async def test_count_on_empty_table(self, empty_db_session: AsyncSession) -> None:
         """空のテーブルで COUNT は 0 を返す。"""
         from sqlalchemy import func
 
-        result = await empty_db_session.execute(select(func.count()).select_from(Lobby))
+        result = await empty_db_session.execute(
+            select(func.count()).select_from(BumpConfig)
+        )
         count = result.scalar()
         assert count == 0
 
@@ -485,10 +488,10 @@ class TestConnectionPoolEdgeCases:
             await conn.run_sync(Base.metadata.create_all)
 
         async with factory() as session:
-            lobby = Lobby(
-                guild_id="100000000000000001", lobby_channel_id="200000000000000001"
+            config = BumpConfig(
+                guild_id="100000000000000001", channel_id="200000000000000001"
             )
-            session.add(lobby)
+            session.add(config)
             await session.commit()
 
         # dispose
@@ -501,9 +504,9 @@ class TestConnectionPoolEdgeCases:
         )
 
         async with factory2() as session:
-            result = await session.execute(select(Lobby))
-            lobbies = list(result.scalars().all())
-            assert len(lobbies) == 1
+            result = await session.execute(select(BumpConfig))
+            configs = list(result.scalars().all())
+            assert len(configs) == 1
 
         await engine2.dispose()
 
@@ -521,24 +524,24 @@ class TestConnectionPoolEdgeCases:
 
             # 複数のセッションを同時に開く
             async with factory() as session1, factory() as session2:
-                lobby1 = Lobby(
-                    guild_id="100000000000000001", lobby_channel_id="300000000000000001"
+                config1 = BumpConfig(
+                    guild_id="100000000000000001", channel_id="300000000000000001"
                 )
-                lobby2 = Lobby(
-                    guild_id="100000000000000002", lobby_channel_id="300000000000000002"
+                config2 = BumpConfig(
+                    guild_id="100000000000000002", channel_id="300000000000000002"
                 )
 
-                session1.add(lobby1)
-                session2.add(lobby2)
+                session1.add(config1)
+                session2.add(config2)
 
                 await session1.commit()
                 await session2.commit()
 
             # 両方のレコードが存在
             async with factory() as session:
-                result = await session.execute(select(Lobby))
-                lobbies = list(result.scalars().all())
-                assert len(lobbies) == 2
+                result = await session.execute(select(BumpConfig))
+                configs = list(result.scalars().all())
+                assert len(configs) == 2
         finally:
             await engine.dispose()
 
@@ -561,35 +564,16 @@ class TestDatabaseSchemaEdgeCases:
 
             async with engine.connect() as conn:
                 indexes = await conn.run_sync(
-                    lambda sync_conn: sa_inspect(sync_conn).get_indexes("lobbies")
+                    lambda sync_conn: sa_inspect(sync_conn).get_indexes(
+                        "bump_reminders"
+                    )
                 )
 
             # guild_id にインデックスがある
             index_columns = [
                 col for idx in indexes for col in idx.get("column_names", [])
             ]
-            assert "guild_id" in index_columns or "lobby_channel_id" in index_columns
-        finally:
-            await engine.dispose()
-
-    async def test_foreign_key_constraints_exist(self) -> None:
-        """外部キー制約が存在する。"""
-        engine = create_async_engine(TEST_DATABASE_URL)
-        try:
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.drop_all)
-                await conn.run_sync(Base.metadata.create_all)
-
-            async with engine.connect() as conn:
-                fks = await conn.run_sync(
-                    lambda sync_conn: sa_inspect(sync_conn).get_foreign_keys(
-                        "voice_sessions"
-                    )
-                )
-
-            # lobbies テーブルへの FK がある
-            referred_tables = [fk.get("referred_table") for fk in fks]
-            assert "lobbies" in referred_tables
+            assert "guild_id" in index_columns
         finally:
             await engine.dispose()
 
@@ -605,28 +589,28 @@ class TestDatabaseSchemaEdgeCases:
                 # ユニーク制約をチェック
                 unique_constraints = await conn.run_sync(
                     lambda sync_conn: sa_inspect(sync_conn).get_unique_constraints(
-                        "lobbies"
+                        "bump_reminders"
                     )
                 )
                 # ユニークインデックスもチェック
-                # (PostgreSQL では unique=True がインデックスになる)
                 indexes = await conn.run_sync(
-                    lambda sync_conn: sa_inspect(sync_conn).get_indexes("lobbies")
+                    lambda sync_conn: sa_inspect(sync_conn).get_indexes(
+                        "bump_reminders"
+                    )
                 )
 
-            # ユニーク制約またはユニークインデックスとして lobby_channel_id がある
-            unique_columns = [
-                col for uc in unique_constraints for col in uc.get("column_names", [])
+            # bump_reminders には (guild_id, service_name) のユニーク制約がある
+            unique_columns_sets = [
+                tuple(uc.get("column_names", [])) for uc in unique_constraints
             ]
-            unique_index_columns = [
-                col
+            unique_index_columns_sets = [
+                tuple(idx.get("column_names", []))
                 for idx in indexes
                 if idx.get("unique", False)
-                for col in idx.get("column_names", [])
             ]
 
-            all_unique_columns = unique_columns + unique_index_columns
-            assert "lobby_channel_id" in all_unique_columns
+            all_unique_sets = unique_columns_sets + unique_index_columns_sets
+            assert ("guild_id", "service_name") in all_unique_sets
         finally:
             await engine.dispose()
 
@@ -648,15 +632,16 @@ class TestTableColumnEdgeCases:
                 await conn.run_sync(Base.metadata.create_all)
 
             async with engine.connect() as conn:
-                lobby_cols = await conn.run_sync(
-                    lambda c: [
-                        col["name"] for col in sa_inspect(c).get_columns("lobbies")
-                    ]
-                )
-                vs_cols = await conn.run_sync(
+                bump_config_cols = await conn.run_sync(
                     lambda c: [
                         col["name"]
-                        for col in sa_inspect(c).get_columns("voice_sessions")
+                        for col in sa_inspect(c).get_columns("bump_configs")
+                    ]
+                )
+                bump_reminder_cols = await conn.run_sync(
+                    lambda c: [
+                        col["name"]
+                        for col in sa_inspect(c).get_columns("bump_reminders")
                     ]
                 )
                 admin_cols = await conn.run_sync(
@@ -665,13 +650,13 @@ class TestTableColumnEdgeCases:
                     ]
                 )
 
-            # lobbies
-            for col in ["id", "guild_id", "lobby_channel_id"]:
-                assert col in lobby_cols, f"lobbies should have {col}"
+            # bump_configs
+            for col in ["guild_id", "channel_id"]:
+                assert col in bump_config_cols, f"bump_configs should have {col}"
 
-            # voice_sessions
-            for col in ["id", "lobby_id", "channel_id", "owner_id", "name"]:
-                assert col in vs_cols, f"voice_sessions should have {col}"
+            # bump_reminders
+            for col in ["id", "guild_id", "channel_id", "service_name"]:
+                assert col in bump_reminder_cols, f"bump_reminders should have {col}"
 
             # admin_users
             for col in ["id", "email", "password_hash", "created_at"]:
@@ -690,23 +675,26 @@ class TestTableColumnEdgeCases:
                 await conn.run_sync(Base.metadata.drop_all)
                 await conn.run_sync(Base.metadata.create_all)
 
-            # Lobby with nullable category_id
+            # BumpReminder with nullable remind_at and role_id
             async with factory() as session:
-                lobby = Lobby(
+                reminder = BumpReminder(
                     guild_id="100000000000000001",
-                    lobby_channel_id="200000000000000001",
-                    category_id=None,
-                    default_user_limit=0,
+                    channel_id="200000000000000001",
+                    service_name="DISBOARD",
+                    remind_at=None,
+                    role_id=None,
                 )
-                session.add(lobby)
+                session.add(reminder)
                 await session.commit()
 
                 result = await session.execute(
-                    select(Lobby).where(Lobby.lobby_channel_id == "200000000000000001")
+                    select(BumpReminder).where(
+                        BumpReminder.guild_id == "100000000000000001"
+                    )
                 )
                 found = result.scalar_one()
-                assert found.category_id is None
-                assert found.default_user_limit == 0
+                assert found.remind_at is None
+                assert found.role_id is None
         finally:
             await engine.dispose()
 
@@ -761,11 +749,12 @@ class TestDropAllAndRecreate:
 
             async with factory() as session:
                 for i in range(5):
-                    lobby = Lobby(
+                    reminder = BumpReminder(
                         guild_id=f"10000000000000000{i}",
-                        lobby_channel_id=f"20000000000000000{i}",
+                        channel_id=f"20000000000000000{i}",
+                        service_name="DISBOARD",
                     )
-                    session.add(lobby)
+                    session.add(reminder)
                 await session.commit()
 
             # 2回目: テーブル再作成
@@ -775,18 +764,19 @@ class TestDropAllAndRecreate:
 
             # 再作成後は空
             async with factory() as session:
-                result = await session.execute(select(Lobby))
-                lobbies = list(result.scalars().all())
-                assert lobbies == []
+                result = await session.execute(select(BumpReminder))
+                reminders = list(result.scalars().all())
+                assert reminders == []
 
             # 新しいレコードを作成できる
             async with factory() as session:
-                lobby = Lobby(
+                reminder = BumpReminder(
                     guild_id="100000000000000001",
-                    lobby_channel_id="200000000000000001",
+                    channel_id="200000000000000001",
+                    service_name="DISBOARD",
                 )
-                session.add(lobby)
+                session.add(reminder)
                 await session.commit()
-                assert lobby.id is not None
+                assert reminder.id is not None
         finally:
             await engine.dispose()

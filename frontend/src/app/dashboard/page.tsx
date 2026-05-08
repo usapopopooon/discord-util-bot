@@ -34,11 +34,6 @@ const quickLinks = [
     description: 'Bump reminder configuration',
   },
   {
-    href: '/dashboard/lobbies',
-    title: 'Voice Lobbies',
-    description: 'Manage voice channel lobbies',
-  },
-  {
     href: '/dashboard/eventlog',
     title: 'Event Log',
     description: 'Configure event logging channels',

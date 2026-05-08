@@ -150,8 +150,6 @@ def settings_page(
 
 
 def maintenance_page(
-    lobby_total: int,
-    lobby_orphaned: int,
     bump_total: int,
     bump_orphaned: int,
     sticky_total: int,
@@ -172,7 +170,7 @@ def maintenance_page(
         """
 
     # 孤立データの合計
-    total_orphaned = lobby_orphaned + bump_orphaned + sticky_orphaned + panel_orphaned
+    total_orphaned = bump_orphaned + sticky_orphaned + panel_orphaned
 
     content = f"""
     <div class="p-6">
@@ -190,14 +188,7 @@ def maintenance_page(
             {message_html}
             <div class="bg-gray-800 p-6 rounded-lg mb-6">
                 <h2 class="text-lg font-semibold mb-4">Database Statistics</h2>
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-                    <div class="bg-gray-700 p-4 rounded">
-                        <p class="text-2xl font-bold">{lobby_total}</p>
-                        <p class="text-gray-400 text-sm">Lobbies</p>
-                        <p class="text-yellow-400 text-xs mt-1">
-                            Orphaned: {lobby_orphaned}
-                        </p>
-                    </div>
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-4 text-center">
                     <div class="bg-gray-700 p-4 rounded">
                         <p class="text-2xl font-bold">{bump_total}</p>
                         <p class="text-gray-400 text-sm">Bump Configs</p>
@@ -267,11 +258,6 @@ def maintenance_page(
                 The following orphaned data will be permanently deleted:
             </p>
             <div class="bg-gray-700 rounded p-4 mb-4 space-y-2 text-sm">
-                {
-        ""
-        if lobby_orphaned == 0
-        else f'<div class="flex justify-between"><span>Lobbies:</span><span class="text-yellow-400">{lobby_orphaned}</span></div>'
-    }
                 {
         ""
         if bump_orphaned == 0

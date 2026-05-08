@@ -66,9 +66,6 @@ from src.web.templates.automod import (
 from src.web.templates.bump import bump_list_page as bump_list_page  # noqa: F401
 from src.web.templates.chatrole import chatrole_page as chatrole_page  # noqa: F401
 from src.web.templates.joinrole import joinrole_page as joinrole_page  # noqa: F401
-from src.web.templates.lobby import (  # noqa: F401
-    lobbies_list_page as lobbies_list_page,
-)
 from src.web.templates.misc import (  # noqa: F401
     activity_page as activity_page,
 )

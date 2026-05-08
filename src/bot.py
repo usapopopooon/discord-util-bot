@@ -29,11 +29,9 @@ from discord.ext import commands
 
 from src.database.engine import async_session
 from src.services.db_service import (
-    get_all_voice_sessions,
     get_bot_activity,
     get_site_settings,
 )
-from src.ui.control_panel import ControlPanelView
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +56,10 @@ def make_activity(activity_type: str, text: str) -> discord.BaseActivity:
 
 
 class EphemeralVCBot(commands.Bot):
-    """Ephemeral VC の Bot 本体。
+    """Bot 本体。
 
-    discord.py の commands.Bot を継承し、一時ボイスチャンネル機能、
-    bump リマインダー、sticky メッセージなどの機能を提供する。
+    discord.py の commands.Bot を継承し、bump リマインダー、sticky メッセージ、
+    ロールパネル、チケット、自動リアクション等の機能を提供する。
 
     Attributes:
         command_prefix (str): テキストコマンドの接頭辞 ("!")。
@@ -71,7 +69,6 @@ class EphemeralVCBot(commands.Bot):
     Notes:
         必要な Intents:
 
-        - voice_states: ボイスチャンネルの参加/退出イベント
         - guilds: サーバー情報 (ギルド) の取得
         - members: メンバー情報の取得 (特権 Intent、Portal 有効化必須)
         - message_content: メッセージ内容の取得 (bump 検知用)
@@ -82,14 +79,6 @@ class EphemeralVCBot(commands.Bot):
             bot = EphemeralVCBot()
             async with bot:
                 await bot.start(settings.discord_token)
-
-        コンテキストマネージャーなしでの使用::
-
-            bot = EphemeralVCBot()
-            try:
-                await bot.start(settings.discord_token)
-            finally:
-                await bot.close()
 
     See Also:
         - :meth:`setup_hook`: 起動前の初期化処理
@@ -104,19 +93,6 @@ class EphemeralVCBot(commands.Bot):
         Discord Developer Portal の Bot 設定で同じ Intents を
         有効にする必要がある。
 
-        Notes:
-            設定される Intents:
-
-            - voice_states: ボイスチャンネルの参加/退出イベント
-            - guilds: サーバー情報の取得
-            - members: メンバー情報の取得 (特権 Intent)
-            - message_content: メッセージ内容の取得 (bump 検知用)
-
-            アクティビティ (プレゼンス):
-
-            - 「お菓子を食べています」をプレイ中として表示
-            - コンストラクタで設定することで接続直後から表示される
-
         Raises:
             discord.LoginFailure: トークンが無効な場合 (start() 時)。
             discord.PrivilegedIntentsRequired: 特権 Intent が無効な場合。
@@ -128,7 +104,6 @@ class EphemeralVCBot(commands.Bot):
         # Discord は Bot が必要なイベントだけ受け取るよう Intents で制御する。
         # Developer Portal の Bot 設定でも同じ Intents を有効にする必要がある。
         intents = discord.Intents.default()
-        intents.voice_states = True  # ボイスチャンネルの参加/退出イベントを受け取る
         intents.guilds = True  # サーバー情報 (ギルド) を取得する
         intents.members = True  # メンバー情報を取得する (特権 Intent、要 Portal 有効化)
         intents.message_content = True  # メッセージ内容を取得する (bump 検知用)
@@ -147,55 +122,20 @@ class EphemeralVCBot(commands.Bot):
         )
 
     async def setup_hook(self) -> None:
-        """Bot 起動前に呼ばれるフック。Cog・View の初期化を行う。
+        """Bot 起動前に呼ばれるフック。Cog・スラッシュコマンドの初期化を行う。
 
-        discord.py が内部的に呼び出す。Cog の読み込み、
-        永続 View の復元、スラッシュコマンドの同期を行う。
-
-        Returns:
-            None
+        discord.py が内部的に呼び出す。Cog の読み込みとスラッシュコマンドの
+        同期を行う。
 
         Raises:
             discord.ExtensionError: Cog の読み込みに失敗した場合。
             sqlalchemy.exc.OperationalError: DB 接続に失敗した場合。
             discord.HTTPException: Discord API へのリクエストに失敗した場合。
 
-        Notes:
-            実行される処理:
-
-            1. Cog (機能モジュール) の読み込み
-               - voice: ボイスチャンネル管理
-               - admin: /lobby コマンド
-               - health: 死活監視
-               - bump: bump リマインダー
-               - sticky: sticky メッセージ
-
-            2. 永続 View の復元
-               - DB から VoiceSession を取得し、ControlPanelView を再登録
-
-            3. スラッシュコマンドの同期
-               - tree.sync() で Discord にコマンドを登録
-
-        Examples:
-            setup_hook は自動で呼ばれるため、直接呼び出す必要はない::
-
-                bot = EphemeralVCBot()
-                async with bot:
-                    # setup_hook() が自動で呼ばれる
-                    await bot.start(token)
-
         See Also:
             - :meth:`on_ready`: 起動完了時の処理
-            - :class:`src.ui.control_panel.ControlPanelView`: コントロールパネル
         """
-        # 1. Cog の読み込み — 各機能を独立したファイル (Cog) に分けている
-        #    voice: ボイスチャンネルの作成・削除・オーナー引き継ぎ
-        #    admin: /lobby コマンドでロビーVC を作成
-        #    health: 定期的にハートビートを送る死活監視
-        #    bump: bump リマインダー
-        #    sticky: sticky メッセージ
         extensions = [
-            "src.cogs.voice",
             "src.cogs.admin",
             "src.cogs.health",
             "src.cogs.bump",
@@ -217,12 +157,8 @@ class EphemeralVCBot(commands.Bot):
                 logger.exception("Failed to load extension %s: %s", ext, e)
                 raise  # 起動時に Cog 読み込みに失敗したら例外を上げて停止
 
-        # 2. 永続 View の復元
-        #    discord.py の View (ボタン等) は Bot が再起動すると動かなくなる。
-        #    DB に保存されているセッション情報から View を再登録することで、
-        #    再起動後もボタンが押せるようにする。
+        # タイムゾーン設定を DB から読み込み
         async with async_session() as session:
-            # タイムゾーン設定を読み込み
             site = await get_site_settings(session)
             if site:
                 from src.utils import set_timezone_offset
@@ -230,42 +166,7 @@ class EphemeralVCBot(commands.Bot):
                 set_timezone_offset(site.timezone_offset)
                 logger.info("Timezone offset loaded: UTC%+d", site.timezone_offset)
 
-            sessions = await get_all_voice_sessions(session)
-            logger.info("Restoring %d persistent views from database", len(sessions))
-            for voice_session in sessions:
-                # NSFW 状態は DB に保存していないため、チャンネルから取得する
-                # setup_hook 時点ではキャッシュが空の場合があるため、
-                # 取得できなければデフォルト値 False を使う
-                is_nsfw = False
-                channel = self.get_channel(int(voice_session.channel_id))
-                if channel is None:
-                    logger.debug(
-                        "Channel %s not in cache for session %d, using NSFW=False",
-                        voice_session.channel_id,
-                        voice_session.id,
-                    )
-                elif isinstance(channel, discord.VoiceChannel):
-                    is_nsfw = channel.nsfw
-                else:
-                    logger.warning(
-                        "Channel %s is not a VoiceChannel (type=%s) for session %d",
-                        voice_session.channel_id,
-                        type(channel).__name__,
-                        voice_session.id,
-                    )
-                view = ControlPanelView(
-                    voice_session.id,
-                    voice_session.is_locked,
-                    voice_session.is_hidden,
-                    is_nsfw,
-                )
-                # add_view() で Bot にビューを登録する。
-                # custom_id が一致するボタンのクリックイベントが届くようになる。
-                self.add_view(view)
-
-        # 3. スラッシュコマンドの同期
-        #    tree.sync() で Bot のスラッシュコマンドを Discord に登録する。
-        #    これを呼ばないとスラッシュコマンドが表示されない。
+        # スラッシュコマンドを Discord に登録する
         try:
             synced = await self.tree.sync()
             logger.info("Synced %d slash commands", len(synced))

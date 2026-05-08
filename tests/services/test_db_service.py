@@ -17,7 +17,6 @@ from src.constants import DEFAULT_TEST_DATABASE_URL
 from src.database.models import Base
 from src.services.db_service import (
     add_role_panel_item,
-    add_voice_session_member,
     claim_automod_log,
     claim_ban_log,
     claim_event,
@@ -31,10 +30,8 @@ from src.services.db_service import (
     create_chat_role_config,
     create_join_role_assignment,
     create_join_role_config,
-    create_lobby,
     create_role_panel,
     create_sticky_message,
-    create_voice_session,
     decode_auto_reaction_emojis,
     delete_auto_reaction_config,
     delete_automod_rule,
@@ -49,25 +46,19 @@ from src.services.db_service import (
     delete_intro_posts_by_guild,
     delete_join_role_assignment,
     delete_join_role_config,
-    delete_lobbies_by_guild,
-    delete_lobby,
     delete_role_panel,
     delete_role_panel_by_message_id,
     delete_role_panels_by_channel,
     delete_role_panels_by_guild,
     delete_sticky_message,
     delete_sticky_messages_by_guild,
-    delete_voice_session,
-    delete_voice_sessions_by_guild,
     get_all_automod_configs,
     get_all_automod_logs,
     get_all_automod_rules,
     get_all_bump_configs,
     get_all_discord_guilds,
-    get_all_lobbies,
     get_all_role_panels,
     get_all_sticky_messages,
-    get_all_voice_sessions,
     get_auto_reaction_configs,
     get_automod_config,
     get_automod_logs_by_guild,
@@ -90,8 +81,6 @@ from src.services.db_service import (
     get_expired_chat_role_progress,
     get_expired_join_role_assignments,
     get_join_role_configs,
-    get_lobbies_by_guild,
-    get_lobby_by_channel_id,
     get_role_panel,
     get_role_panel_by_message_id,
     get_role_panel_item_by_emoji,
@@ -99,15 +88,12 @@ from src.services.db_service import (
     get_role_panels_by_channel,
     get_role_panels_by_guild,
     get_sticky_message,
-    get_voice_session,
-    get_voice_session_members_ordered,
     has_intro_post,
     increment_chat_role_progress,
     mark_chat_role_progress_expired,
     mark_chat_role_progress_granted,
     record_intro_post,
     remove_role_panel_item,
-    remove_voice_session_member,
     toggle_auto_reaction_config,
     toggle_automod_rule,
     toggle_bump_reminder,
@@ -118,7 +104,6 @@ from src.services.db_service import (
     update_bump_reminder_role,
     update_role_panel,
     update_sticky_message_id,
-    update_voice_session,
     upsert_automod_config,
     upsert_bot_activity,
     upsert_bump_config,
@@ -157,388 +142,6 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
     await engine.dispose()
-
-
-class TestLobbyOperations:
-    """Tests for lobby database operations."""
-
-    async def test_create_lobby(self, db_session: AsyncSession) -> None:
-        """Test creating a lobby."""
-        lobby = await create_lobby(
-            db_session,
-            guild_id="123",
-            lobby_channel_id="456",
-            category_id="789",
-            default_user_limit=10,
-        )
-        assert lobby.id is not None
-        assert lobby.guild_id == "123"
-        assert lobby.lobby_channel_id == "456"
-        assert lobby.category_id == "789"
-        assert lobby.default_user_limit == 10
-
-    async def test_get_lobby_by_channel_id(self, db_session: AsyncSession) -> None:
-        """Test getting a lobby by channel ID."""
-        await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-
-        lobby = await get_lobby_by_channel_id(db_session, "456")
-        assert lobby is not None
-        assert lobby.guild_id == "123"
-
-    async def test_get_lobby_by_channel_id_not_found(
-        self, db_session: AsyncSession
-    ) -> None:
-        """Test getting a non-existent lobby."""
-        lobby = await get_lobby_by_channel_id(db_session, "nonexistent")
-        assert lobby is None
-
-    async def test_get_lobbies_by_guild(self, db_session: AsyncSession) -> None:
-        """Test getting all lobbies for a guild."""
-        await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        await create_lobby(db_session, guild_id="123", lobby_channel_id="789")
-        await create_lobby(db_session, guild_id="999", lobby_channel_id="111")
-
-        lobbies = await get_lobbies_by_guild(db_session, "123")
-        assert len(lobbies) == 2
-
-    async def test_delete_lobby(self, db_session: AsyncSession) -> None:
-        """Test deleting a lobby."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-
-        result = await delete_lobby(db_session, lobby.id)
-        assert result is True
-
-        found = await get_lobby_by_channel_id(db_session, "456")
-        assert found is None
-
-    async def test_delete_lobby_not_found(self, db_session: AsyncSession) -> None:
-        """Test deleting a non-existent lobby."""
-        result = await delete_lobby(db_session, 99999)
-        assert result is False
-
-
-class TestVoiceSessionOperations:
-    """Tests for voice session database operations."""
-
-    async def test_create_voice_session(self, db_session: AsyncSession) -> None:
-        """Test creating a voice session."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-
-        session = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Test Channel",
-            user_limit=5,
-        )
-
-        assert session.id is not None
-        assert session.channel_id == "789"
-        assert session.owner_id == "111"
-        assert session.name == "Test Channel"
-        assert session.user_limit == 5
-
-    async def test_get_voice_session(self, db_session: AsyncSession) -> None:
-        """Test getting a voice session."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Test Channel",
-        )
-
-        found = await get_voice_session(db_session, "789")
-        assert found is not None
-        assert found.owner_id == "111"
-
-    async def test_get_voice_session_not_found(self, db_session: AsyncSession) -> None:
-        """Test getting a non-existent voice session."""
-        found = await get_voice_session(db_session, "nonexistent")
-        assert found is None
-
-    async def test_get_all_voice_sessions(self, db_session: AsyncSession) -> None:
-        """Test getting all voice sessions."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Channel 1",
-        )
-        await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="790",
-            owner_id="222",
-            name="Channel 2",
-        )
-
-        sessions = await get_all_voice_sessions(db_session)
-        assert len(sessions) == 2
-
-    async def test_update_voice_session(self, db_session: AsyncSession) -> None:
-        """Test updating a voice session."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        session = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Test Channel",
-        )
-
-        updated = await update_voice_session(
-            db_session,
-            session,
-            name="New Name",
-            user_limit=10,
-            is_locked=True,
-            is_hidden=True,
-            owner_id="222",
-        )
-
-        assert updated.name == "New Name"
-        assert updated.user_limit == 10
-        assert updated.is_locked is True
-        assert updated.is_hidden is True
-        assert updated.owner_id == "222"
-
-    async def test_update_voice_session_name_only(
-        self, db_session: AsyncSession
-    ) -> None:
-        """Test updating only the name leaves other fields unchanged."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        session = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Original",
-            user_limit=5,
-        )
-
-        updated = await update_voice_session(db_session, session, name="Renamed")
-
-        assert updated.name == "Renamed"
-        assert updated.user_limit == 5
-        assert updated.is_locked is False
-        assert updated.is_hidden is False
-        assert updated.owner_id == "111"
-
-    async def test_update_voice_session_no_params(
-        self, db_session: AsyncSession
-    ) -> None:
-        """Test updating with no parameters changes nothing."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        session = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Unchanged",
-        )
-
-        updated = await update_voice_session(db_session, session)
-
-        assert updated.name == "Unchanged"
-        assert updated.owner_id == "111"
-        assert updated.is_locked is False
-        assert updated.is_hidden is False
-
-    async def test_delete_voice_session(self, db_session: AsyncSession) -> None:
-        """Test deleting a voice session."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Test Channel",
-        )
-
-        result = await delete_voice_session(db_session, "789")
-        assert result is True
-
-        found = await get_voice_session(db_session, "789")
-        assert found is None
-
-    async def test_delete_voice_session_not_found(
-        self, db_session: AsyncSession
-    ) -> None:
-        """Test deleting a non-existent voice session."""
-        result = await delete_voice_session(db_session, "nonexistent")
-        assert result is False
-
-    async def test_voice_session_default_values(self, db_session: AsyncSession) -> None:
-        """Test that default values are set correctly."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        session = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Test Channel",
-        )
-
-        assert session.is_locked is False
-        assert session.is_hidden is False
-        assert session.user_limit == 0
-
-
-class TestVoiceSessionMemberOperations:
-    """Tests for voice session member database operations."""
-
-    async def test_add_voice_session_member(self, db_session: AsyncSession) -> None:
-        """Test adding a member to a voice session."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        voice_session = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Test Channel",
-        )
-
-        member = await add_voice_session_member(db_session, voice_session.id, "222")
-
-        assert member.id is not None
-        assert member.voice_session_id == voice_session.id
-        assert member.user_id == "222"
-        assert member.joined_at is not None
-
-    async def test_add_voice_session_member_existing(
-        self, db_session: AsyncSession
-    ) -> None:
-        """Test adding an existing member returns the existing record."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        voice_session = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Test Channel",
-        )
-
-        # Add member first time
-        member1 = await add_voice_session_member(db_session, voice_session.id, "222")
-
-        # Add same member again
-        member2 = await add_voice_session_member(db_session, voice_session.id, "222")
-
-        # Should return same record (idempotent)
-        assert member1.id == member2.id
-        assert member1.joined_at == member2.joined_at
-
-    async def test_remove_voice_session_member(self, db_session: AsyncSession) -> None:
-        """Test removing a member from a voice session."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        voice_session = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Test Channel",
-        )
-
-        await add_voice_session_member(db_session, voice_session.id, "222")
-
-        result = await remove_voice_session_member(db_session, voice_session.id, "222")
-        assert result is True
-
-        # Verify member is gone
-        members = await get_voice_session_members_ordered(db_session, voice_session.id)
-        assert len(members) == 0
-
-    async def test_remove_voice_session_member_not_found(
-        self, db_session: AsyncSession
-    ) -> None:
-        """Test removing a non-existent member returns False."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        voice_session = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Test Channel",
-        )
-
-        result = await remove_voice_session_member(
-            db_session, voice_session.id, "nonexistent"
-        )
-        assert result is False
-
-    async def test_get_voice_session_members_ordered(
-        self, db_session: AsyncSession
-    ) -> None:
-        """Test getting members ordered by join time."""
-        import asyncio
-
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        voice_session = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Test Channel",
-        )
-
-        # Add members with slight delays to ensure different join times
-        await add_voice_session_member(db_session, voice_session.id, "first")
-        await asyncio.sleep(0.01)
-        await add_voice_session_member(db_session, voice_session.id, "second")
-        await asyncio.sleep(0.01)
-        await add_voice_session_member(db_session, voice_session.id, "third")
-
-        members = await get_voice_session_members_ordered(db_session, voice_session.id)
-
-        assert len(members) == 3
-        assert members[0].user_id == "first"
-        assert members[1].user_id == "second"
-        assert members[2].user_id == "third"
-
-    async def test_get_voice_session_members_ordered_empty(
-        self, db_session: AsyncSession
-    ) -> None:
-        """Test getting members from empty session returns empty list."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        voice_session = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Test Channel",
-        )
-
-        members = await get_voice_session_members_ordered(db_session, voice_session.id)
-
-        assert members == []
-
-    async def test_voice_session_members_cascade_delete(
-        self, db_session: AsyncSession
-    ) -> None:
-        """Test that members are deleted when voice session is deleted."""
-        lobby = await create_lobby(db_session, guild_id="123", lobby_channel_id="456")
-        voice_session = await create_voice_session(
-            db_session,
-            lobby_id=lobby.id,
-            channel_id="789",
-            owner_id="111",
-            name="Test Channel",
-        )
-
-        await add_voice_session_member(db_session, voice_session.id, "222")
-        await add_voice_session_member(db_session, voice_session.id, "333")
-
-        # Delete the voice session
-        await delete_voice_session(db_session, "789")
-
-        # Members should be automatically deleted via CASCADE
-        # We can't query directly since voice_session is gone,
-        # but we verify no errors occurred during cascade delete
 
 
 class TestBumpReminderOperations:
@@ -2627,101 +2230,6 @@ class TestRolePanelItemOperations:
 # =============================================================================
 
 
-class TestDeleteLobbiesByGuild:
-    """delete_lobbies_by_guild のテスト。"""
-
-    async def test_delete_lobbies_by_guild(self, db_session: AsyncSession) -> None:
-        """指定ギルドのロビーを全て削除できる。"""
-        # 対象ギルドにロビーを作成
-        await create_lobby(
-            db_session, guild_id="123", lobby_channel_id="200000000000000001"
-        )
-        await create_lobby(
-            db_session, guild_id="123", lobby_channel_id="200000000000000002"
-        )
-        # 別ギルドにもロビーを作成
-        await create_lobby(
-            db_session, guild_id="999", lobby_channel_id="200000000000000003"
-        )
-
-        count = await delete_lobbies_by_guild(db_session, "123")
-        assert count == 2
-
-        # 対象ギルドのロビーは削除されている
-        lobbies = await get_lobbies_by_guild(db_session, "123")
-        assert len(lobbies) == 0
-
-        # 別ギルドのロビーは残っている
-        other_lobbies = await get_lobbies_by_guild(db_session, "999")
-        assert len(other_lobbies) == 1
-
-    async def test_delete_lobbies_by_guild_empty(
-        self, db_session: AsyncSession
-    ) -> None:
-        """存在しないギルドを指定しても 0 が返る。"""
-        count = await delete_lobbies_by_guild(db_session, "nonexistent")
-        assert count == 0
-
-
-class TestDeleteVoiceSessionsByGuild:
-    """delete_voice_sessions_by_guild のテスト。"""
-
-    async def test_delete_voice_sessions_by_guild(
-        self, db_session: AsyncSession
-    ) -> None:
-        """指定ギルドのボイスセッションを全て削除できる。"""
-        # ロビーを作成
-        lobby1 = await create_lobby(
-            db_session, guild_id="123", lobby_channel_id="200000000000000001"
-        )
-        lobby2 = await create_lobby(
-            db_session, guild_id="999", lobby_channel_id="200000000000000002"
-        )
-
-        # 対象ギルドにボイスセッションを作成
-        await create_voice_session(
-            db_session,
-            lobby_id=lobby1.id,
-            channel_id="300000000000000001",
-            owner_id="400000000000000001",
-            name="VC 1",
-        )
-        await create_voice_session(
-            db_session,
-            lobby_id=lobby1.id,
-            channel_id="300000000000000002",
-            owner_id="400000000000000002",
-            name="VC 2",
-        )
-        # 別ギルドにもボイスセッションを作成
-        await create_voice_session(
-            db_session,
-            lobby_id=lobby2.id,
-            channel_id="300000000000000003",
-            owner_id="400000000000000003",
-            name="VC 3",
-        )
-
-        count = await delete_voice_sessions_by_guild(db_session, "123")
-        assert count == 2
-
-        # 対象ギルドのボイスセッションは削除されている
-        all_sessions = await get_all_voice_sessions(db_session)
-        target_sessions = [s for s in all_sessions if s.lobby.guild_id == "123"]
-        assert len(target_sessions) == 0
-
-        # 別ギルドのボイスセッションは残っている
-        other_sessions = [s for s in all_sessions if s.lobby.guild_id == "999"]
-        assert len(other_sessions) == 1
-
-    async def test_delete_voice_sessions_by_guild_empty(
-        self, db_session: AsyncSession
-    ) -> None:
-        """存在しないギルドを指定しても 0 が返る。"""
-        count = await delete_voice_sessions_by_guild(db_session, "nonexistent")
-        assert count == 0
-
-
 class TestDeleteBumpRemindersByGuild:
     """delete_bump_reminders_by_guild のテスト。"""
 
@@ -2833,66 +2341,6 @@ class TestDeleteStickyMessagesByGuild:
         """存在しないギルドを指定しても 0 が返る。"""
         count = await delete_sticky_messages_by_guild(db_session, "nonexistent")
         assert count == 0
-
-
-class TestGetAllLobbies:
-    """get_all_lobbies のテスト。"""
-
-    async def test_get_all_lobbies(self, db_session: AsyncSession) -> None:
-        """全てのロビーを取得できる。"""
-        # 複数ギルドにロビーを作成
-        await create_lobby(
-            db_session,
-            guild_id="100000000000000001",
-            lobby_channel_id="200000000000000001",
-        )
-        await create_lobby(
-            db_session,
-            guild_id="100000000000000001",
-            lobby_channel_id="200000000000000002",
-        )
-        await create_lobby(
-            db_session,
-            guild_id="100000000000000002",
-            lobby_channel_id="200000000000000003",
-        )
-
-        lobbies = await get_all_lobbies(db_session)
-        assert len(lobbies) == 3
-
-        channel_ids = {lobby.lobby_channel_id for lobby in lobbies}
-        assert channel_ids == {
-            "200000000000000001",
-            "200000000000000002",
-            "200000000000000003",
-        }
-
-    async def test_get_all_lobbies_empty(self, db_session: AsyncSession) -> None:
-        """ロビーが存在しない場合は空リストを返す。"""
-        lobbies = await get_all_lobbies(db_session)
-        assert lobbies == []
-
-    async def test_get_all_lobbies_after_deletion(
-        self, db_session: AsyncSession
-    ) -> None:
-        """削除後にロビーが正しく取得される。"""
-        lobby1 = await create_lobby(
-            db_session,
-            guild_id="100000000000000001",
-            lobby_channel_id="200000000000000001",
-        )
-        await create_lobby(
-            db_session,
-            guild_id="100000000000000001",
-            lobby_channel_id="200000000000000002",
-        )
-
-        # 1つ削除（IDで削除）
-        await delete_lobby(db_session, lobby1.id)
-
-        lobbies = await get_all_lobbies(db_session)
-        assert len(lobbies) == 1
-        assert lobbies[0].lobby_channel_id == "200000000000000002"
 
 
 class TestGetAllBumpConfigs:
@@ -5020,38 +4468,8 @@ class TestUpdateTicketSentinelEdgeCases:
         assert updated.claimed_by == "staff1"
 
 
-class TestDeleteVoiceSessionEdgeCases:
-    """Edge case tests for voice session deletion."""
-
-    async def test_delete_non_existent_returns_false(
-        self, db_session: AsyncSession
-    ) -> None:
-        """Deleting a non-existent voice session returns False."""
-        result = await delete_voice_session(db_session, "999999999999999999")
-        assert result is False
-
-
-# =============================================================================
-# Additional Edge Case Tests
-# =============================================================================
-
-
 class TestGetOperationsEdgeCases:
     """get_* 系関数のエッジケーステスト。"""
-
-    async def test_get_lobby_by_nonexistent_channel(
-        self, db_session: AsyncSession
-    ) -> None:
-        """存在しない channel_id で get_lobby_by_channel_id は None を返す。"""
-        result = await get_lobby_by_channel_id(db_session, "999999999999999999")
-        assert result is None
-
-    async def test_get_voice_session_nonexistent(
-        self, db_session: AsyncSession
-    ) -> None:
-        """存在しない channel_id で get_voice_session は None を返す。"""
-        result = await get_voice_session(db_session, "999999999999999999")
-        assert result is None
 
     async def test_get_sticky_message_nonexistent(
         self, db_session: AsyncSession
@@ -5093,11 +4511,6 @@ class TestGetOperationsEdgeCases:
 class TestDeleteOperationsEdgeCases:
     """delete_* 系関数のエッジケーステスト。"""
 
-    async def test_delete_lobby_nonexistent(self, db_session: AsyncSession) -> None:
-        """存在しないロビーの削除は False を返す。"""
-        result = await delete_lobby(db_session, 999999)
-        assert result is False
-
     async def test_delete_sticky_nonexistent(self, db_session: AsyncSession) -> None:
         """存在しない sticky の削除は False を返す。"""
         result = await delete_sticky_message(db_session, "999999999999999999")
@@ -5127,20 +4540,6 @@ class TestDeleteOperationsEdgeCases:
 
 class TestBulkDeleteEdgeCases:
     """一括削除関数のエッジケーステスト。"""
-
-    async def test_delete_lobbies_by_guild_empty(
-        self, db_session: AsyncSession
-    ) -> None:
-        """存在しないギルドのロビー一括削除は 0 を返す。"""
-        result = await delete_lobbies_by_guild(db_session, "999999999999999999")
-        assert result == 0
-
-    async def test_delete_voice_sessions_by_guild_empty(
-        self, db_session: AsyncSession
-    ) -> None:
-        """存在しないギルドの VC セッション一括削除は 0 を返す。"""
-        result = await delete_voice_sessions_by_guild(db_session, "999999999999999999")
-        assert result == 0
 
     async def test_delete_sticky_messages_by_guild_empty(
         self, db_session: AsyncSession
@@ -5183,16 +4582,6 @@ class TestBulkDeleteEdgeCases:
 class TestListOperationsEdgeCases:
     """リスト取得関数のエッジケーステスト。"""
 
-    async def test_get_all_lobbies_empty(self, db_session: AsyncSession) -> None:
-        """ロビーがない場合は空リストを返す。"""
-        result = await get_all_lobbies(db_session)
-        assert result == []
-
-    async def test_get_all_voice_sessions_empty(self, db_session: AsyncSession) -> None:
-        """VC セッションがない場合は空リストを返す。"""
-        result = await get_all_voice_sessions(db_session)
-        assert result == []
-
     async def test_get_all_sticky_messages_empty(
         self, db_session: AsyncSession
     ) -> None:
@@ -5218,11 +4607,6 @@ class TestListOperationsEdgeCases:
     async def test_get_all_automod_logs_empty(self, db_session: AsyncSession) -> None:
         """automod ログがない場合は空リストを返す。"""
         result = await get_all_automod_logs(db_session)
-        assert result == []
-
-    async def test_get_lobbies_by_guild_empty(self, db_session: AsyncSession) -> None:
-        """ギルドにロビーがない場合は空リストを返す。"""
-        result = await get_lobbies_by_guild(db_session, "999999999999999999")
         assert result == []
 
     async def test_get_role_panels_by_guild_empty(
@@ -5889,9 +5273,11 @@ class TestClaimEventSessionRecovery:
         result = await claim_event(db_session, "key:recovery:1")  # False + rollback
         assert result is False
 
-        # rollback 後にロビー作成が成功することを確認
-        lobby = await create_lobby(db_session, guild_id="111", lobby_channel_id="222")
-        assert lobby.id is not None
+        # rollback 後に bump 設定の upsert が成功することを確認
+        config = await upsert_bump_config(
+            db_session, guild_id="111", channel_id="222"
+        )
+        assert config.guild_id == "111"
 
     @pytest.mark.asyncio
     async def test_different_operations_after_rollback(
@@ -5901,9 +5287,11 @@ class TestClaimEventSessionRecovery:
         await claim_event(db_session, "ops:after:rollback")
         await claim_event(db_session, "ops:after:rollback")  # False + rollback
 
-        # rollback 後にロビー作成 → 更にイベント claim → 両方成功
-        lobby = await create_lobby(db_session, guild_id="333", lobby_channel_id="444")
-        assert lobby.id is not None
+        # rollback 後に bump 設定の upsert → 更にイベント claim → 両方成功
+        config = await upsert_bump_config(
+            db_session, guild_id="333", channel_id="444"
+        )
+        assert config.guild_id == "333"
 
         result = await claim_event(db_session, "ops:after:rollback:2")
         assert result is True

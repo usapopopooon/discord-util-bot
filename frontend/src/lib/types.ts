@@ -9,15 +9,6 @@ export interface RolesMap {
   [guildId: string]: { id: string; name: string; color: number }[]
 }
 
-// Lobbies
-export interface Lobby {
-  id: number
-  guild_id: string
-  lobby_channel_id: string
-  default_user_limit: number
-  default_bitrate: number | null
-}
-
 // Sticky
 export interface StickyMessage {
   id: number

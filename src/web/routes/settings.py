@@ -19,7 +19,6 @@ from src.database.models import (
     BumpConfig,
     BumpReminder,
     DiscordGuild,
-    Lobby,
     RolePanel,
     SiteSettings,
     StickyMessage,
@@ -381,13 +380,6 @@ async def settings_maintenance(
     guild_result = await db.execute(select(DiscordGuild.guild_id))
     active_guild_ids = {row[0] for row in guild_result.fetchall()}
 
-    # Get all lobbies and count orphaned
-    lobby_result = await db.execute(select(Lobby))
-    lobbies = list(lobby_result.scalars().all())
-    lobby_orphaned = sum(
-        1 for lobby in lobbies if lobby.guild_id not in active_guild_ids
-    )
-
     # Get all bump configs and count orphaned
     bump_result = await db.execute(select(BumpConfig))
     bump_configs = list(bump_result.scalars().all())
@@ -405,8 +397,6 @@ async def settings_maintenance(
 
     return HTMLResponse(
         content=maintenance_page(
-            lobby_total=len(lobbies),
-            lobby_orphaned=lobby_orphaned,
             bump_total=len(bump_configs),
             bump_orphaned=bump_orphaned,
             sticky_total=len(stickies),
@@ -467,8 +457,6 @@ async def settings_maintenance_cleanup(
     if not _app.validate_csrf_token(csrf_token):
         return HTMLResponse(
             content=maintenance_page(
-                lobby_total=0,
-                lobby_orphaned=0,
                 bump_total=0,
                 bump_orphaned=0,
                 sticky_total=0,
@@ -495,17 +483,6 @@ async def settings_maintenance_cleanup(
     active_guild_ids = {row[0] for row in guild_result.fetchall()}
 
     deleted_counts: list[str] = []
-
-    # Delete orphaned lobbies
-    lobby_result = await db.execute(select(Lobby))
-    lobbies = list(lobby_result.scalars().all())
-    lobby_deleted = 0
-    for lobby in lobbies:
-        if lobby.guild_id not in active_guild_ids:
-            await db.delete(lobby)
-            lobby_deleted += 1
-    if lobby_deleted > 0:
-        deleted_counts.append(f"{lobby_deleted} lobbies")
 
     # Delete orphaned bump configs and their reminders
     bump_result = await db.execute(select(BumpConfig))

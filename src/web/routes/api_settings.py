@@ -18,7 +18,6 @@ from src.database.models import (
     BumpConfig,
     BumpReminder,
     DiscordGuild,
-    Lobby,
     RolePanel,
     SiteSettings,
     StickyMessage,
@@ -246,12 +245,6 @@ async def api_maintenance(
     guild_result = await db.execute(select(DiscordGuild.guild_id))
     active_guild_ids = {row[0] for row in guild_result.fetchall()}
 
-    lobby_result = await db.execute(select(Lobby))
-    lobbies = list(lobby_result.scalars().all())
-    lobby_orphaned = sum(
-        1 for lobby in lobbies if lobby.guild_id not in active_guild_ids
-    )
-
     bump_result = await db.execute(select(BumpConfig))
     bump_configs = list(bump_result.scalars().all())
     bump_orphaned = sum(1 for c in bump_configs if c.guild_id not in active_guild_ids)
@@ -267,10 +260,6 @@ async def api_maintenance(
     return JSONResponse(
         {
             "guild_count": len(active_guild_ids),
-            "lobbies": {
-                "total": len(lobbies),
-                "orphaned": lobby_orphaned,
-            },
             "bump_configs": {
                 "total": len(bump_configs),
                 "orphaned": bump_orphaned,
@@ -306,15 +295,6 @@ async def api_maintenance_cleanup(
     async with get_resource_lock("maintenance:cleanup"):
         guild_result = await db.execute(select(DiscordGuild.guild_id))
         active_guild_ids = {row[0] for row in guild_result.fetchall()}
-
-        # Delete orphaned lobbies
-        lobby_result = await db.execute(select(Lobby))
-        lobbies = list(lobby_result.scalars().all())
-        lobby_deleted = 0
-        for lobby in lobbies:
-            if lobby.guild_id not in active_guild_ids:
-                await db.delete(lobby)
-                lobby_deleted += 1
 
         # Delete orphaned bump configs and their reminders
         bump_result = await db.execute(select(BumpConfig))
@@ -355,7 +335,6 @@ async def api_maintenance_cleanup(
         {
             "ok": True,
             "deleted": {
-                "lobbies": lobby_deleted,
                 "bump_configs": bump_deleted,
                 "stickies": sticky_deleted,
                 "role_panels": panel_deleted,

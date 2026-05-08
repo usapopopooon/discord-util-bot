@@ -22,16 +22,10 @@ from src.database.models import (
     Base,
     BumpConfig,
     BumpReminder,
-    Lobby,
     StickyMessage,
-    VoiceSession,
-    VoiceSessionMember,
 )
 from src.services.db_service import (
-    add_voice_session_member,
-    create_lobby,
     create_sticky_message,
-    create_voice_session,
     upsert_bump_config,
     upsert_bump_reminder,
 )
@@ -98,40 +92,6 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     factory = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
         yield session
-
-
-@pytest.fixture
-async def lobby(db_session: AsyncSession) -> Lobby:
-    """テスト用ロビーを1つ作成して返す。"""
-    return await create_lobby(
-        db_session,
-        guild_id=snowflake(),
-        lobby_channel_id=snowflake(),
-    )
-
-
-@pytest.fixture
-async def voice_session(db_session: AsyncSession, lobby: Lobby) -> VoiceSession:
-    """テスト用 VoiceSession を1つ作成して返す。"""
-    return await create_voice_session(
-        db_session,
-        lobby_id=lobby.id,
-        channel_id=snowflake(),
-        owner_id=snowflake(),
-        name=fake.word(),
-    )
-
-
-@pytest.fixture
-async def voice_session_member(
-    db_session: AsyncSession, voice_session: VoiceSession
-) -> VoiceSessionMember:
-    """テスト用 VoiceSessionMember を1つ作成して返す。"""
-    return await add_voice_session_member(
-        db_session,
-        voice_session_id=voice_session.id,
-        user_id=snowflake(),
-    )
 
 
 @pytest.fixture
