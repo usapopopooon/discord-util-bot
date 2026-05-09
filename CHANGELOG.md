@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-05-09
+
 ### Added
 - ChatRole feature: grant a role automatically when a member posts a cumulative N times in a designated channel.
   - New `ChatRoleConfig` (guild_id, channel_id, role_id, threshold, optional duration_hours) and `ChatRoleProgress` (count + granted state) models.
@@ -11,6 +13,22 @@ All notable changes to this project will be documented in this file.
   - Posts authored before `config.created_at` are not counted.
   - Web admin (FastAPI HTML + JSON API at `/api/v1/chatrole`) and Next.js dashboard page.
   - Atomic `granted=False → True` claim via SQL UPDATE so multi-instance deployments avoid double-grants.
+- Auto-reaction feature: automatically attach configured emoji reactions to messages in target channels.
+- Gateway watchdog: exit the process when the gateway is silent for 10 minutes so the supervisor can restart a hung bot.
+- AutoMod role exemption: allow specific roles to bypass AutoMod rules, with admin UI support.
+- `/health` status endpoint enrichment for clearer startup diagnostics.
+
+### Fixed
+- Hardened startup against Discord 429 responses by capping gateway reconnect backoff at ~128s.
+- Stopped redundant `change_presence` calls on every heartbeat.
+- Voice channel kick bypass closed for `user_limit`; restrictions are now applied retroactively.
+- Railway: use the frontend `Dockerfile` for the frontend service so deploys pick up the correct image.
+
+### Performance
+- Sped up lobby VC creation path.
+
+### Chore
+- CI/test cleanup after VC feature removal; lint fixes; cspell dictionary updates.
 
 ## [0.1.3] - 2026-03-31
 
