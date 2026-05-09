@@ -173,7 +173,7 @@ class TestRolePanelCRUD:
 
     async def test_create_role_panel(self, db_session: AsyncMock) -> None:
         """create_role_panel がパネルを作成する。"""
-        from src.services.db_service import create_role_panel
+        from src.services.role_panel_service import create_role_panel
 
         db_session.commit = AsyncMock()
         db_session.refresh = AsyncMock()
@@ -194,7 +194,7 @@ class TestRolePanelCRUD:
 
     async def test_get_role_panel(self, db_session: AsyncMock) -> None:
         """get_role_panel がパネルを取得する。"""
-        from src.services.db_service import get_role_panel
+        from src.services.role_panel_service import get_role_panel
 
         mock_panel = RolePanel(
             id=1, guild_id="123", channel_id="456", panel_type="button", title="Test"
@@ -210,7 +210,7 @@ class TestRolePanelCRUD:
 
     async def test_get_role_panel_not_found(self, db_session: AsyncMock) -> None:
         """get_role_panel がパネルが見つからない場合 None を返す。"""
-        from src.services.db_service import get_role_panel
+        from src.services.role_panel_service import get_role_panel
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
@@ -222,7 +222,7 @@ class TestRolePanelCRUD:
 
     async def test_get_role_panel_by_message_id(self, db_session: AsyncMock) -> None:
         """get_role_panel_by_message_id がメッセージ ID からパネルを取得する。"""
-        from src.services.db_service import get_role_panel_by_message_id
+        from src.services.role_panel_service import get_role_panel_by_message_id
 
         mock_panel = RolePanel(
             id=1,
@@ -243,7 +243,7 @@ class TestRolePanelCRUD:
 
     async def test_get_role_panels_by_guild(self, db_session: AsyncMock) -> None:
         """get_role_panels_by_guild がサーバー内の全パネルを取得する。"""
-        from src.services.db_service import get_role_panels_by_guild
+        from src.services.role_panel_service import get_role_panels_by_guild
 
         mock_panels = [
             RolePanel(
@@ -271,7 +271,7 @@ class TestRolePanelCRUD:
 
     async def test_delete_role_panel(self, db_session: AsyncMock) -> None:
         """delete_role_panel がパネルを削除する。"""
-        from src.services.db_service import delete_role_panel
+        from src.services.role_panel_service import delete_role_panel
 
         mock_panel = RolePanel(
             id=1, guild_id="123", channel_id="456", panel_type="button", title="Test"
@@ -290,7 +290,7 @@ class TestRolePanelCRUD:
 
     async def test_delete_role_panel_not_found(self, db_session: AsyncMock) -> None:
         """delete_role_panel がパネルが見つからない場合 False を返す。"""
-        from src.services.db_service import delete_role_panel
+        from src.services.role_panel_service import delete_role_panel
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
@@ -311,7 +311,7 @@ class TestRolePanelItemCRUD:
 
     async def test_add_role_panel_item(self, db_session: AsyncMock) -> None:
         """add_role_panel_item がアイテムを追加する。"""
-        from src.services.db_service import add_role_panel_item
+        from src.services.role_panel_service import add_role_panel_item
 
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = []
@@ -333,7 +333,7 @@ class TestRolePanelItemCRUD:
 
     async def test_get_role_panel_items(self, db_session: AsyncMock) -> None:
         """get_role_panel_items がアイテムを取得する。"""
-        from src.services.db_service import get_role_panel_items
+        from src.services.role_panel_service import get_role_panel_items
 
         mock_items = [
             RolePanelItem(id=1, panel_id=1, role_id="123", emoji="🎮", position=0),
@@ -349,7 +349,7 @@ class TestRolePanelItemCRUD:
 
     async def test_remove_role_panel_item(self, db_session: AsyncMock) -> None:
         """remove_role_panel_item がアイテムを削除する。"""
-        from src.services.db_service import remove_role_panel_item
+        from src.services.role_panel_service import remove_role_panel_item
 
         mock_item = RolePanelItem(
             id=1, panel_id=1, role_id="123", emoji="🎮", position=0
@@ -755,7 +755,7 @@ class TestRemoveReactionFeature:
         self, db_session: AsyncMock
     ) -> None:
         """create_role_panel が remove_reaction を設定できる。"""
-        from src.services.db_service import create_role_panel
+        from src.services.role_panel_service import create_role_panel
 
         db_session.commit = AsyncMock()
         db_session.refresh = AsyncMock()
@@ -1336,7 +1336,7 @@ class TestListCommand:
             mock_session.return_value.__aenter__.return_value = mock_db
 
             with patch(
-                "src.services.db_service.get_role_panels_by_guild"
+                "src.services.role_panel_service.get_role_panels_by_guild"
             ) as mock_get_panels:
                 mock_get_panels.return_value = []
 
@@ -2146,7 +2146,7 @@ class TestListCommandSuccess:
             mock_session.return_value.__aenter__.return_value = mock_db
 
             with patch(
-                "src.services.db_service.get_role_panels_by_guild"
+                "src.services.role_panel_service.get_role_panels_by_guild"
             ) as mock_get_panels:
                 mock_get_panels.return_value = mock_panels
 
@@ -4459,7 +4459,7 @@ class TestRolePanelCreateModal:
             mock_session.return_value.__aenter__.return_value = mock_db
 
             with patch(
-                "src.services.db_service.create_role_panel"
+                "src.services.role_panel_service.create_role_panel"
             ) as mock_create_panel:
                 mock_create_panel.return_value = mock_panel
 
@@ -4504,12 +4504,12 @@ class TestRolePanelCreateModal:
             mock_session.return_value.__aenter__.return_value = mock_db
 
             with patch(
-                "src.services.db_service.create_role_panel"
+                "src.services.role_panel_service.create_role_panel"
             ) as mock_create_panel:
                 mock_create_panel.return_value = mock_panel
 
                 with patch(
-                    "src.services.db_service.update_role_panel"
+                    "src.services.role_panel_service.update_role_panel"
                 ) as mock_update_panel:
                     mock_update_panel.return_value = mock_panel
 
@@ -4562,12 +4562,12 @@ class TestRolePanelCreateModal:
             mock_session.return_value.__aenter__.return_value = mock_db
 
             with patch(
-                "src.services.db_service.create_role_panel"
+                "src.services.role_panel_service.create_role_panel"
             ) as mock_create_panel:
                 mock_create_panel.return_value = mock_panel
 
                 with patch(
-                    "src.services.db_service.update_role_panel"
+                    "src.services.role_panel_service.update_role_panel"
                 ) as mock_update_panel:
                     mock_update_panel.return_value = mock_panel
 

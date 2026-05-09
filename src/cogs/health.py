@@ -29,7 +29,7 @@ from src.bot import make_activity
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.database.models import HealthConfig
-from src.services.db_service import (
+from src.services.common_service import (
     claim_event,
     cleanup_expired_events,
     delete_health_config,

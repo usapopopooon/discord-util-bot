@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import discord
 
-from src.core.permissions import (
+from src.shared.permissions import (
     build_locked_overwrites,
     build_unlocked_overwrites,
     is_owner,

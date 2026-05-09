@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import (
 
 from src.constants import DEFAULT_TEST_DATABASE_URL
 from src.database.models import Base
-from src.services.db_service import (
+from src.services import (
     add_role_panel_item,
     claim_automod_log,
     claim_ban_log,
@@ -2661,7 +2661,7 @@ class TestTicketCategoryOperations:
 
     async def test_create_ticket_category(self, db_session: AsyncSession) -> None:
         """チケットカテゴリを作成できる。"""
-        from src.services.db_service import create_ticket_category
+        from src.services import create_ticket_category
 
         category = await create_ticket_category(
             db_session,
@@ -2680,7 +2680,7 @@ class TestTicketCategoryOperations:
         self, db_session: AsyncSession
     ) -> None:
         """オプション付きでチケットカテゴリを作成できる。"""
-        from src.services.db_service import create_ticket_category
+        from src.services import create_ticket_category
 
         category = await create_ticket_category(
             db_session,
@@ -2699,7 +2699,7 @@ class TestTicketCategoryOperations:
         self, db_session: AsyncSession
     ) -> None:
         """log_channel_id 付きでチケットカテゴリを作成できる。"""
-        from src.services.db_service import create_ticket_category
+        from src.services import create_ticket_category
 
         category = await create_ticket_category(
             db_session,
@@ -2712,7 +2712,7 @@ class TestTicketCategoryOperations:
 
     async def test_get_ticket_category(self, db_session: AsyncSession) -> None:
         """チケットカテゴリを ID で取得できる。"""
-        from src.services.db_service import create_ticket_category, get_ticket_category
+        from src.services import create_ticket_category, get_ticket_category
 
         created = await create_ticket_category(
             db_session, guild_id="123", name="Test", staff_role_id="999"
@@ -2725,7 +2725,7 @@ class TestTicketCategoryOperations:
         self, db_session: AsyncSession
     ) -> None:
         """存在しないカテゴリは None を返す。"""
-        from src.services.db_service import get_ticket_category
+        from src.services import get_ticket_category
 
         found = await get_ticket_category(db_session, 99999)
         assert found is None
@@ -2734,7 +2734,7 @@ class TestTicketCategoryOperations:
         self, db_session: AsyncSession
     ) -> None:
         """ギルドごとのカテゴリ一覧を取得できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket_category,
             get_ticket_categories_by_guild,
         )
@@ -2756,7 +2756,7 @@ class TestTicketCategoryOperations:
         self, db_session: AsyncSession
     ) -> None:
         """有効なカテゴリのみ取得できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket_category,
             get_enabled_ticket_categories_by_guild,
         )
@@ -2776,7 +2776,7 @@ class TestTicketCategoryOperations:
 
     async def test_delete_ticket_category(self, db_session: AsyncSession) -> None:
         """チケットカテゴリを削除できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket_category,
             delete_ticket_category,
             get_ticket_category,
@@ -2795,7 +2795,7 @@ class TestTicketCategoryOperations:
         self, db_session: AsyncSession
     ) -> None:
         """存在しないカテゴリの削除は False。"""
-        from src.services.db_service import delete_ticket_category
+        from src.services import delete_ticket_category
 
         result = await delete_ticket_category(db_session, 99999)
         assert result is False
@@ -2804,7 +2804,7 @@ class TestTicketCategoryOperations:
         self, db_session: AsyncSession
     ) -> None:
         """カテゴリ削除時に関連チケットも CASCADE 削除される。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             delete_ticket_category,
@@ -2834,7 +2834,7 @@ class TestTicketCategoryOperations:
         self, db_session: AsyncSession
     ) -> None:
         """カテゴリ削除時に関連 panel_category も CASCADE 削除される。"""
-        from src.services.db_service import (
+        from src.services import (
             add_ticket_panel_category,
             create_ticket_category,
             create_ticket_panel,
@@ -2869,7 +2869,7 @@ class TestTicketPanelOperations:
 
     async def test_create_ticket_panel(self, db_session: AsyncSession) -> None:
         """チケットパネルを作成できる。"""
-        from src.services.db_service import create_ticket_panel
+        from src.services import create_ticket_panel
 
         panel = await create_ticket_panel(
             db_session,
@@ -2884,7 +2884,7 @@ class TestTicketPanelOperations:
 
     async def test_get_ticket_panel(self, db_session: AsyncSession) -> None:
         """パネルを ID で取得できる。"""
-        from src.services.db_service import create_ticket_panel, get_ticket_panel
+        from src.services import create_ticket_panel, get_ticket_panel
 
         created = await create_ticket_panel(
             db_session, guild_id="123", channel_id="456", title="Test"
@@ -2897,7 +2897,7 @@ class TestTicketPanelOperations:
         self, db_session: AsyncSession
     ) -> None:
         """message_id でパネルを取得できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket_panel,
             get_ticket_panel_by_message_id,
             update_ticket_panel,
@@ -2914,7 +2914,7 @@ class TestTicketPanelOperations:
 
     async def test_get_all_ticket_panels(self, db_session: AsyncSession) -> None:
         """全パネルを取得できる。"""
-        from src.services.db_service import create_ticket_panel, get_all_ticket_panels
+        from src.services import create_ticket_panel, get_all_ticket_panels
 
         await create_ticket_panel(
             db_session, guild_id="123", channel_id="ch1", title="P1"
@@ -2928,7 +2928,7 @@ class TestTicketPanelOperations:
 
     async def test_update_ticket_panel(self, db_session: AsyncSession) -> None:
         """パネルを更新できる。"""
-        from src.services.db_service import create_ticket_panel, update_ticket_panel
+        from src.services import create_ticket_panel, update_ticket_panel
 
         panel = await create_ticket_panel(
             db_session, guild_id="123", channel_id="456", title="Old"
@@ -2941,7 +2941,7 @@ class TestTicketPanelOperations:
 
     async def test_delete_ticket_panel(self, db_session: AsyncSession) -> None:
         """パネルを削除できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket_panel,
             delete_ticket_panel,
             get_ticket_panel,
@@ -2960,7 +2960,7 @@ class TestTicketPanelOperations:
         self, db_session: AsyncSession
     ) -> None:
         """message_id でパネルを削除できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket_panel,
             delete_ticket_panel_by_message_id,
             update_ticket_panel,
@@ -2976,7 +2976,7 @@ class TestTicketPanelOperations:
 
     async def test_get_ticket_panel_not_found(self, db_session: AsyncSession) -> None:
         """存在しないパネルは None を返す。"""
-        from src.services.db_service import get_ticket_panel
+        from src.services import get_ticket_panel
 
         found = await get_ticket_panel(db_session, 99999)
         assert found is None
@@ -2985,7 +2985,7 @@ class TestTicketPanelOperations:
         self, db_session: AsyncSession
     ) -> None:
         """存在しない message_id は None を返す。"""
-        from src.services.db_service import get_ticket_panel_by_message_id
+        from src.services import get_ticket_panel_by_message_id
 
         found = await get_ticket_panel_by_message_id(db_session, "nonexistent")
         assert found is None
@@ -2994,7 +2994,7 @@ class TestTicketPanelOperations:
         self, db_session: AsyncSession
     ) -> None:
         """存在しないパネルの削除は False。"""
-        from src.services.db_service import delete_ticket_panel
+        from src.services import delete_ticket_panel
 
         result = await delete_ticket_panel(db_session, 99999)
         assert result is False
@@ -3003,14 +3003,14 @@ class TestTicketPanelOperations:
         self, db_session: AsyncSession
     ) -> None:
         """存在しない message_id の削除は False。"""
-        from src.services.db_service import delete_ticket_panel_by_message_id
+        from src.services import delete_ticket_panel_by_message_id
 
         result = await delete_ticket_panel_by_message_id(db_session, "nonexistent")
         assert result is False
 
     async def test_get_ticket_panels_by_guild(self, db_session: AsyncSession) -> None:
         """ギルドごとのパネル一覧を取得できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket_panel,
             get_ticket_panels_by_guild,
         )
@@ -3035,7 +3035,7 @@ class TestTicketPanelOperations:
         self, db_session: AsyncSession
     ) -> None:
         """description のみを更新できる。"""
-        from src.services.db_service import create_ticket_panel, update_ticket_panel
+        from src.services import create_ticket_panel, update_ticket_panel
 
         panel = await create_ticket_panel(
             db_session, guild_id="123", channel_id="456", title="Title"
@@ -3050,7 +3050,7 @@ class TestTicketPanelOperations:
         self, db_session: AsyncSession
     ) -> None:
         """description 付きでパネルを作成できる。"""
-        from src.services.db_service import create_ticket_panel
+        from src.services import create_ticket_panel
 
         panel = await create_ticket_panel(
             db_session,
@@ -3065,7 +3065,7 @@ class TestTicketPanelOperations:
         self, db_session: AsyncSession
     ) -> None:
         """パネル削除で関連する panel_category も CASCADE 削除される。"""
-        from src.services.db_service import (
+        from src.services import (
             add_ticket_panel_category,
             create_ticket_category,
             create_ticket_panel,
@@ -3102,7 +3102,7 @@ class TestTicketPanelCategoryOperations:
 
     async def test_add_ticket_panel_category(self, db_session: AsyncSession) -> None:
         """パネルにカテゴリを関連付けできる。"""
-        from src.services.db_service import (
+        from src.services import (
             add_ticket_panel_category,
             create_ticket_category,
             create_ticket_panel,
@@ -3123,7 +3123,7 @@ class TestTicketPanelCategoryOperations:
 
     async def test_get_ticket_panel_categories(self, db_session: AsyncSession) -> None:
         """パネルのカテゴリ関連を取得できる。"""
-        from src.services.db_service import (
+        from src.services import (
             add_ticket_panel_category,
             create_ticket_category,
             create_ticket_panel,
@@ -3145,7 +3145,7 @@ class TestTicketPanelCategoryOperations:
 
     async def test_remove_ticket_panel_category(self, db_session: AsyncSession) -> None:
         """パネルのカテゴリ関連を削除できる。"""
-        from src.services.db_service import (
+        from src.services import (
             add_ticket_panel_category,
             create_ticket_category,
             create_ticket_panel,
@@ -3175,7 +3175,7 @@ class TestTicketPanelCategoryOperations:
         self, db_session: AsyncSession
     ) -> None:
         """存在しない関連の削除は False。"""
-        from src.services.db_service import remove_ticket_panel_category
+        from src.services import remove_ticket_panel_category
 
         result = await remove_ticket_panel_category(db_session, 99999, 99999)
         assert result is False
@@ -3184,7 +3184,7 @@ class TestTicketPanelCategoryOperations:
         self, db_session: AsyncSession
     ) -> None:
         """オプション付きで関連を追加できる。"""
-        from src.services.db_service import (
+        from src.services import (
             add_ticket_panel_category,
             create_ticket_category,
             create_ticket_panel,
@@ -3212,7 +3212,7 @@ class TestTicketPanelCategoryOperations:
         self, db_session: AsyncSession
     ) -> None:
         """複数カテゴリ追加時に position が自動増加する。"""
-        from src.services.db_service import (
+        from src.services import (
             add_ticket_panel_category,
             create_ticket_category,
             create_ticket_panel,
@@ -3251,7 +3251,7 @@ class TestTicketOperations:
 
     async def test_create_ticket(self, db_session: AsyncSession) -> None:
         """チケットを作成できる。"""
-        from src.services.db_service import create_ticket, create_ticket_category
+        from src.services import create_ticket, create_ticket_category
 
         cat = await create_ticket_category(
             db_session, guild_id="123", name="Cat1", staff_role_id="999"
@@ -3273,7 +3273,7 @@ class TestTicketOperations:
 
     async def test_get_ticket(self, db_session: AsyncSession) -> None:
         """チケットを ID で取得できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             get_ticket,
@@ -3297,7 +3297,7 @@ class TestTicketOperations:
 
     async def test_get_ticket_by_channel_id(self, db_session: AsyncSession) -> None:
         """channel_id でチケットを取得できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             get_ticket_by_channel_id,
@@ -3322,14 +3322,14 @@ class TestTicketOperations:
         self, db_session: AsyncSession
     ) -> None:
         """存在しない channel_id は None を返す。"""
-        from src.services.db_service import get_ticket_by_channel_id
+        from src.services import get_ticket_by_channel_id
 
         found = await get_ticket_by_channel_id(db_session, "nonexistent")
         assert found is None
 
     async def test_get_next_ticket_number(self, db_session: AsyncSession) -> None:
         """次のチケット番号が正しく返される。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             get_next_ticket_number,
@@ -3359,7 +3359,7 @@ class TestTicketOperations:
 
     async def test_update_ticket_status(self, db_session: AsyncSession) -> None:
         """チケットステータスを更新できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             update_ticket_status,
@@ -3393,7 +3393,7 @@ class TestTicketOperations:
         """チケットクローズ時に channel_id を None に設定できる。"""
         from datetime import UTC, datetime
 
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             update_ticket_status,
@@ -3430,7 +3430,7 @@ class TestTicketOperations:
 
     async def test_get_all_tickets(self, db_session: AsyncSession) -> None:
         """全チケットを取得できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             get_all_tickets,
@@ -3465,7 +3465,7 @@ class TestTicketOperations:
         self, db_session: AsyncSession
     ) -> None:
         """ステータスフィルタ付きでギルドのチケットを取得できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             get_tickets_by_guild,
@@ -3503,7 +3503,7 @@ class TestTicketOperations:
 
     async def test_get_ticket_not_found(self, db_session: AsyncSession) -> None:
         """存在しないチケットは None を返す。"""
-        from src.services.db_service import get_ticket
+        from src.services import get_ticket
 
         found = await get_ticket(db_session, 99999)
         assert found is None
@@ -3512,7 +3512,7 @@ class TestTicketOperations:
         self, db_session: AsyncSession
     ) -> None:
         """フォーム回答付きでチケットを作成できる。"""
-        from src.services.db_service import create_ticket, create_ticket_category
+        from src.services import create_ticket, create_ticket_category
 
         cat = await create_ticket_category(
             db_session, guild_id="123", name="Cat1", staff_role_id="999"
@@ -3533,7 +3533,7 @@ class TestTicketOperations:
         self, db_session: AsyncSession
     ) -> None:
         """ステータスフィルタ付きで全チケットを取得できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             get_all_tickets,
@@ -3571,7 +3571,7 @@ class TestTicketOperations:
 
     async def test_get_all_tickets_with_limit(self, db_session: AsyncSession) -> None:
         """limit 付きで全チケットを取得できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             get_all_tickets,
@@ -3598,7 +3598,7 @@ class TestTicketOperations:
         self, db_session: AsyncSession
     ) -> None:
         """ステータスフィルタなしでギルドのチケットを取得できる。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             get_tickets_by_guild,
@@ -3642,7 +3642,7 @@ class TestTicketOperations:
         self, db_session: AsyncSession
     ) -> None:
         """異なるギルドのチケット番号は独立している。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             get_next_ticket_number,
@@ -3673,7 +3673,7 @@ class TestTicketOperations:
         self, db_session: AsyncSession
     ) -> None:
         """channel_id を渡さない場合は変更しない (_UNSET sentinel)。"""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             update_ticket_status,
@@ -4382,7 +4382,7 @@ class TestTicketNumberEdgeCases:
 
     async def test_next_number_non_sequential(self, db_session: AsyncSession) -> None:
         """Non-sequential ticket numbers still return max+1, not gap-filling."""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             get_next_ticket_number,
@@ -4408,7 +4408,7 @@ class TestTicketNumberEdgeCases:
 
     async def test_next_number_empty_guild(self, db_session: AsyncSession) -> None:
         """Empty guild returns 1 as the first ticket number."""
-        from src.services.db_service import get_next_ticket_number
+        from src.services import get_next_ticket_number
 
         result = await get_next_ticket_number(db_session, "999999")
         assert result == 1
@@ -4438,7 +4438,7 @@ class TestUpdateTicketSentinelEdgeCases:
         self, db_session: AsyncSession
     ) -> None:
         """Updating status only preserves previously-set claimed_by."""
-        from src.services.db_service import (
+        from src.services import (
             create_ticket,
             create_ticket_category,
             update_ticket_status,

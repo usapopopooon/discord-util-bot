@@ -26,7 +26,7 @@ from discord.ext import commands, tasks
 
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
-from src.services.db_service import (
+from src.services.bump_service import (
     claim_bump_detection,
     clear_bump_reminder,
     delete_bump_config,
@@ -1107,7 +1107,7 @@ async def setup(bot: commands.Bot) -> None:
     # bump 設定済みギルド ID のキャッシュを構築
     try:
         async with async_session() as session:
-            from src.services.db_service import get_all_bump_configs
+            from src.services.bump_service import get_all_bump_configs
 
             configs = await get_all_bump_configs(session)
             cog._bump_guild_ids = {c.guild_id for c in configs}

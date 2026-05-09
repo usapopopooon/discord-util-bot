@@ -50,7 +50,7 @@ from src.cogs._eventlog_helpers import (
     truncate_content,
 )
 from src.database.engine import async_session
-from src.services.db_service import get_enabled_event_log_configs
+from src.services.common_service import get_enabled_event_log_configs
 from src.utils import format_datetime
 
 logger = logging.getLogger(__name__)

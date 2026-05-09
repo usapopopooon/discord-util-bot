@@ -21,7 +21,7 @@ from src.config import settings
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.database.models import Ticket, TicketCategory, TicketPanel, TicketPanelCategory
-from src.services.db_service import (
+from src.services.ticket_service import (
     create_ticket,
     get_next_ticket_number,
     get_ticket,

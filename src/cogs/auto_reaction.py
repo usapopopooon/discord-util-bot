@@ -21,7 +21,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src.database.engine import async_session
-from src.services.db_service import get_enabled_auto_reaction_emoji_map
+from src.services.auto_reaction_service import get_enabled_auto_reaction_emoji_map
 
 logger = logging.getLogger(__name__)
 

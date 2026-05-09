@@ -28,7 +28,7 @@ import discord
 from discord.ext import commands
 
 from src.database.engine import async_session
-from src.services.db_service import (
+from src.services.common_service import (
     get_bot_activity,
     get_site_settings,
 )

@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Architecture cleanup to reduce cross-feature blast radius:
+  - Canonicalized pure shared helpers to `src/shared/*`.
+  - Canonicalized service entrypoint to `src/services` package exports.
+  - Updated cogs/UI/tests to use canonical imports directly.
+
+### Removed
+- Backward-compatibility shims were intentionally removed:
+  - `src/core/builders.py`
+  - `src/core/validators.py`
+  - `src/core/permissions.py`
+  - `src/services/db_service.py`
+
+### Breaking Changes
+- Imports from `src.core.*` no longer work. Use `src.shared.*`.
+- Imports from `src.services.db_service` no longer work. Use `src.services` or concrete `*_service` modules.
+
+### Migration
+- Replace:
+  - `from src.core import builders|validators|permissions`
+  - with `from src.shared import builders|validators|permissions`
+- Replace:
+  - `from src.services import db_service`
+  - with direct imports from `src.services` package exports.
+
 ## [0.1.4] - 2026-05-09
 
 ### Added

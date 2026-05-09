@@ -20,7 +20,7 @@ from discord.ext import commands, tasks
 
 from src.config import settings
 from src.database.engine import async_session
-from src.services.db_service import (
+from src.services.ticket_service import (
     delete_ticket_panel_by_message_id,
     get_all_ticket_panels,
     get_all_tickets,

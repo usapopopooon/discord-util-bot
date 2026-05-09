@@ -25,13 +25,18 @@ from sqlalchemy.exc import IntegrityError
 
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
-from src.services.db_service import (
-    add_role_panel_item,
+from src.services.discord_cache_service import (
     delete_discord_channel,
     delete_discord_channels_by_guild,
     delete_discord_guild,
     delete_discord_role,
     delete_discord_roles_by_guild,
+    upsert_discord_channel,
+    upsert_discord_guild,
+    upsert_discord_role,
+)
+from src.services.role_panel_service import (
+    add_role_panel_item,
     delete_role_panel,
     delete_role_panel_by_message_id,
     delete_role_panels_by_channel,
@@ -41,9 +46,6 @@ from src.services.db_service import (
     get_role_panel_items,
     get_role_panels_by_channel,
     remove_role_panel_item,
-    upsert_discord_channel,
-    upsert_discord_guild,
-    upsert_discord_role,
 )
 from src.ui.role_panel_view import (
     RolePanelCreateModal,
@@ -353,7 +355,7 @@ class RolePanelCog(commands.Cog):
             )
             return
 
-        from src.services.db_service import get_role_panels_by_guild
+        from src.services.role_panel_service import get_role_panels_by_guild
 
         async with async_session() as db_session:
             panels = await get_role_panels_by_guild(

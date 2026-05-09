@@ -11,7 +11,7 @@ Python オブジェクトとしてデータベースの行を操作できる。
     - sticky_messages: sticky メッセージの設定 (チャンネルごと)
 
 See Also:
-    - :mod:`src.services.db_service`: CRUD 操作関数
+    - :mod:`src.services.bump_service`: CRUD 操作関数
     - :mod:`src.database.engine`: データベース接続設定
     - SQLAlchemy ORM: https://docs.sqlalchemy.org/en/20/orm/
 """
@@ -209,7 +209,7 @@ class BumpReminder(Base):
 
     See Also:
         - :class:`BumpConfig`: bump 監視設定
-        - :func:`src.services.db_service.upsert_bump_reminder`: 作成/更新関数
+        - :func:`src.services.bump_service.upsert_bump_reminder`: 作成/更新関数
         - :mod:`src.cogs.bump`: bump 検知 Cog
     """
 
@@ -278,7 +278,7 @@ class BumpConfig(Base):
 
     See Also:
         - :class:`BumpReminder`: 個別のリマインダー
-        - :func:`src.services.db_service.upsert_bump_config`: 作成/更新関数
+        - :func:`src.services.bump_service.upsert_bump_config`: 作成/更新関数
     """
 
     __tablename__ = "bump_configs"
@@ -338,7 +338,7 @@ class StickyMessage(Base):
             )
 
     See Also:
-        - :func:`src.services.db_service.create_sticky_message`: 作成関数
+        - :func:`src.services.sticky_service.create_sticky_message`: 作成関数
         - :mod:`src.cogs.sticky`: sticky メッセージ Cog
     """
 
@@ -781,7 +781,7 @@ class RolePanelItem(Base):
 
     See Also:
         - :class:`RolePanel`: 親パネル
-        - :func:`src.services.db_service.add_role_panel_item`: 追加関数
+        - :func:`src.services.role_panel_service.add_role_panel_item`: 追加関数
     """
 
     __tablename__ = "role_panel_items"

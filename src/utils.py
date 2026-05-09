@@ -17,16 +17,10 @@ from src.config import settings
 # リソースロック管理 (並行処理の競合防止)
 # =============================================================================
 
-# リソースごとのロックを管理
-# key: resource_key (任意の文字列), value: (asyncio.Lock, last_access_time)
 _resource_locks: dict[str, tuple[asyncio.Lock, float]] = {}
-
-# ロッククリーンアップ間隔
-_LOCK_CLEANUP_INTERVAL = 600  # 10分
+_LOCK_CLEANUP_INTERVAL = 600
+_LOCK_EXPIRY_TIME = 300
 _lock_last_cleanup_time = float("-inf")
-
-# 未使用ロックの保持時間
-_LOCK_EXPIRY_TIME = 300  # 5分
 
 
 def _cleanup_resource_locks() -> None:
@@ -34,7 +28,6 @@ def _cleanup_resource_locks() -> None:
     global _lock_last_cleanup_time
     now = time.monotonic()
 
-    # 10分ごとにクリーンアップ
     if (
         _lock_last_cleanup_time > 0
         and now - _lock_last_cleanup_time < _LOCK_CLEANUP_INTERVAL
@@ -42,8 +35,6 @@ def _cleanup_resource_locks() -> None:
         return
 
     _lock_last_cleanup_time = now
-
-    # 1パス削除: キーのスナップショットから期限切れをその場で削除
     for key in list(_resource_locks):
         lock, last_access = _resource_locks[key]
         if now - last_access > _LOCK_EXPIRY_TIME and not lock.locked():
@@ -51,35 +42,16 @@ def _cleanup_resource_locks() -> None:
 
 
 def get_resource_lock(resource_key: str) -> asyncio.Lock:
-    """リソースキーに対応するロックを取得する.
-
-    同じリソースキーに対しては常に同じロックインスタンスを返す。
-    これにより、同一リソースへの同時アクセスを防止できる。
-
-    Args:
-        resource_key: リソースを識別するキー
-            例: "channel:123456", "guild:789:bump:DISBOARD"
-
-    Returns:
-        asyncio.Lock インスタンス
-
-    Example:
-        async with get_resource_lock(f"channel:{channel_id}"):
-            # この中は同じチャンネルに対して1つのリクエストのみ実行される
-            await do_operation()
-    """
+    """リソースキーに対応するロックを取得する."""
     _cleanup_resource_locks()
-
     now = time.monotonic()
 
-    # 単一 .get() でキー存在チェックと値取得を同時に行う (dict 操作 3→2 回)
     entry = _resource_locks.get(resource_key)
     if entry is None:
         lock = asyncio.Lock()
         _resource_locks[resource_key] = (lock, now)
         return lock
 
-    # アクセス時刻を更新 (entry[0] で tuple unpack を回避)
     _resource_locks[resource_key] = (entry[0], now)
     return entry[0]
 

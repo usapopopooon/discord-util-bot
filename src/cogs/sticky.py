@@ -24,7 +24,7 @@ from discord.ext import commands
 
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
-from src.services.db_service import (
+from src.services.sticky_service import (
     claim_sticky_repost,
     create_sticky_message,
     delete_sticky_message,

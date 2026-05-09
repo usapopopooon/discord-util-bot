@@ -504,7 +504,7 @@ class TestHandleRoleReaction:
             mock_session.return_value.__aexit__ = AsyncMock()
 
             with patch(
-                "src.services.db_service.get_role_panel_by_message_id",
+                "src.services.role_panel_service.get_role_panel_by_message_id",
                 new_callable=AsyncMock,
                 return_value=None,
             ):
@@ -529,7 +529,7 @@ class TestHandleRoleReaction:
             mock_session.return_value.__aexit__ = AsyncMock()
 
             with patch(
-                "src.services.db_service.get_role_panel_by_message_id",
+                "src.services.role_panel_service.get_role_panel_by_message_id",
                 new_callable=AsyncMock,
                 return_value=panel,
             ):
@@ -558,7 +558,7 @@ class TestHandleRoleReaction:
             mock_session.return_value.__aexit__ = AsyncMock()
 
             with patch(
-                "src.services.db_service.get_role_panel_by_message_id",
+                "src.services.role_panel_service.get_role_panel_by_message_id",
                 new_callable=AsyncMock,
                 return_value=panel,
             ):
@@ -588,7 +588,7 @@ class TestHandleRoleReaction:
             mock_session.return_value.__aexit__ = AsyncMock()
 
             with patch(
-                "src.services.db_service.get_role_panel_by_message_id",
+                "src.services.role_panel_service.get_role_panel_by_message_id",
                 new_callable=AsyncMock,
                 return_value=panel,
             ):
@@ -625,7 +625,7 @@ class TestHandleRoleReaction:
             mock_session.return_value.__aexit__ = AsyncMock()
 
             with patch(
-                "src.services.db_service.get_role_panel_by_message_id",
+                "src.services.role_panel_service.get_role_panel_by_message_id",
                 new_callable=AsyncMock,
                 return_value=panel,
             ):
@@ -667,7 +667,7 @@ class TestHandleRoleReaction:
             mock_session.return_value.__aexit__ = AsyncMock()
 
             with patch(
-                "src.services.db_service.get_role_panel_by_message_id",
+                "src.services.role_panel_service.get_role_panel_by_message_id",
                 new_callable=AsyncMock,
                 return_value=panel,
             ):
@@ -710,7 +710,7 @@ class TestHandleRoleReaction:
             mock_session.return_value.__aexit__ = AsyncMock()
 
             with patch(
-                "src.services.db_service.get_role_panel_by_message_id",
+                "src.services.role_panel_service.get_role_panel_by_message_id",
                 new_callable=AsyncMock,
                 return_value=panel,
             ):
@@ -749,7 +749,7 @@ class TestHandleRoleReaction:
             mock_session.return_value.__aexit__ = AsyncMock()
 
             with patch(
-                "src.services.db_service.get_role_panel_by_message_id",
+                "src.services.role_panel_service.get_role_panel_by_message_id",
                 new_callable=AsyncMock,
                 return_value=panel,
             ):
@@ -794,7 +794,7 @@ class TestHandleRoleReaction:
             mock_session.return_value.__aexit__ = AsyncMock()
 
             with patch(
-                "src.services.db_service.get_role_panel_by_message_id",
+                "src.services.role_panel_service.get_role_panel_by_message_id",
                 new_callable=AsyncMock,
                 return_value=panel,
             ):
@@ -839,7 +839,7 @@ class TestHandleRoleReaction:
             mock_session.return_value.__aexit__ = AsyncMock()
 
             with patch(
-                "src.services.db_service.get_role_panel_by_message_id",
+                "src.services.role_panel_service.get_role_panel_by_message_id",
                 new_callable=AsyncMock,
                 return_value=panel,
             ):

@@ -1,6 +1,6 @@
 """Tests for core builders."""
 
-from src.core.builders import (
+from src.shared.builders import (
     build_channel_name,
     build_user_limit_options,
     truncate_name,

@@ -16,15 +16,19 @@ from discord.ext import commands
 from src.bot import make_activity
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
-from src.services.db_service import (
+from src.services.bump_service import (
     delete_bump_config,
     delete_bump_reminders_by_guild,
-    delete_role_panels_by_guild,
-    delete_sticky_messages_by_guild,
     get_all_bump_configs,
+)
+from src.services.common_service import upsert_bot_activity
+from src.services.role_panel_service import (
+    delete_role_panels_by_guild,
     get_all_role_panels,
+)
+from src.services.sticky_service import (
+    delete_sticky_messages_by_guild,
     get_all_sticky_messages,
-    upsert_bot_activity,
 )
 
 logger = logging.getLogger(__name__)

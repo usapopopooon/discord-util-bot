@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.core.validators import (
+from src.shared.validators import (
     validate_bitrate,
     validate_channel_name,
     validate_user_limit,

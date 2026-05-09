@@ -24,7 +24,7 @@ from src.database.models import (
     BumpReminder,
     StickyMessage,
 )
-from src.services.db_service import (
+from src.services import (
     create_sticky_message,
     upsert_bump_config,
     upsert_bump_reminder,

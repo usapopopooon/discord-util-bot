@@ -21,7 +21,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src.database.engine import async_session
-from src.services.db_service import (
+from src.services.chatrole_service import (
     get_enabled_chat_role_channel_ids,
     get_enabled_chat_role_configs_for_channel,
     get_expired_chat_role_progress,

@@ -19,7 +19,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src.database.engine import async_session
-from src.services.db_service import (
+from src.services.joinrole_service import (
     claim_join_role_assignment,
     delete_join_role_assignment,
     get_enabled_join_role_configs,

@@ -34,7 +34,7 @@ from discord.ext import commands
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.database.models import AutoModRule
-from src.services.db_service import (
+from src.services.automod_service import (
     claim_automod_log,
     claim_ban_log,
     create_automod_rule,

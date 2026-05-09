@@ -20,7 +20,7 @@ import discord
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
 from src.database.models import RolePanel, RolePanelItem
-from src.services.db_service import (
+from src.services.role_panel_service import (
     get_role_panel,
     get_role_panel_item_by_emoji,
 )
@@ -322,7 +322,7 @@ class RolePanelCreateModal(discord.ui.Modal, title="ロールパネル作成"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         """モーダル送信時の処理。パネルを作成して Embed を送信する。"""
-        from src.services.db_service import create_role_panel, update_role_panel
+        from src.services.role_panel_service import create_role_panel, update_role_panel
 
         if interaction.guild is None or interaction.channel is None:
             await interaction.response.send_message(
@@ -478,7 +478,7 @@ async def handle_role_reaction(
         return
 
     async with async_session() as db_session:
-        from src.services.db_service import get_role_panel_by_message_id
+        from src.services.role_panel_service import get_role_panel_by_message_id
 
         # パネルを取得
         panel = await get_role_panel_by_message_id(db_session, str(payload.message_id))

@@ -9,7 +9,7 @@ from faker import Faker
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.services.db_service import (
+from src.services import (
     add_role_panel_item,
     clear_bump_reminder,
     create_role_panel,

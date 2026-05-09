@@ -29,7 +29,7 @@ CHECKS: list[Check] = [
     Check("Spell check (cspell)", ["npm", "run", "lint:spell"]),
     Check("JSON lint", ["npm", "run", "lint:json"]),
     Check("YAML lint", ["yamllint", "-s", "."]),
-    Check("TOML lint", ["taplo", "check", "pyproject.toml"]),
+    Check("TOML lint", ["python", "scripts/toml_lint.py"]),
     Check("Ruff format", ["ruff", "format", "--check", "."]),
     Check("Ruff check", ["ruff", "check", "src", "tests"]),
     Check("mypy", ["mypy", "src"]),

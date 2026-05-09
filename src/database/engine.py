@@ -32,7 +32,7 @@ Examples:
 
 See Also:
     - :mod:`src.database.models`: テーブル定義
-    - :mod:`src.services.db_service`: CRUD 操作関数
+    - :mod:`src.services.common_service`: CRUD 操作関数
     - SQLAlchemy asyncio: https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html
 
 Notes:

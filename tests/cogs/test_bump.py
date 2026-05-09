@@ -3759,7 +3759,7 @@ class TestBumpCogSetupCacheVerification:
         with (
             patch("src.cogs.bump.async_session", return_value=mock_session),
             patch(
-                "src.services.db_service.get_all_bump_configs",
+                "src.services.bump_service.get_all_bump_configs",
                 new_callable=AsyncMock,
                 return_value=[mock_config1, mock_config2],
             ),
