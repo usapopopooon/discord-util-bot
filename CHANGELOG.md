@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-05-09
+
 ### Changed
 - Architecture cleanup to reduce cross-feature blast radius:
   - Canonicalized pure shared helpers to `src/shared/*`.
