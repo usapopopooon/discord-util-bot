@@ -1563,3 +1563,44 @@ class TestHealthDeferFailure:
         await cog.health_disable.callback(cog, interaction)
 
         interaction.followup.send.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# /health status コマンドテスト
+# ---------------------------------------------------------------------------
+
+
+class TestHealthStatusCommand:
+    """Tests for /health status command."""
+
+    async def test_sends_ephemeral_embed_with_healthy_status(self) -> None:
+        """低レイテンシで Healthy ステータスの ephemeral Embed を返す。"""
+        cog = _make_cog(latency=0.05, guild_count=2)
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+
+        await cog.health_status.callback(cog, interaction)
+
+        interaction.response.send_message.assert_awaited_once()
+        kwargs = interaction.response.send_message.await_args.kwargs
+        assert kwargs.get("ephemeral") is True
+        embed = kwargs.get("embed")
+        assert embed is not None
+        assert "Healthy" in (embed.title or "")
+
+    async def test_reports_unhealthy_on_high_latency(self) -> None:
+        """500ms 以上のレイテンシで Unhealthy を返す。"""
+        cog = _make_cog(latency=0.7, guild_count=1)
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.response = MagicMock()
+        interaction.response.send_message = AsyncMock()
+
+        await cog.health_status.callback(cog, interaction)
+
+        kwargs = interaction.response.send_message.await_args.kwargs
+        embed = kwargs.get("embed")
+        assert embed is not None
+        assert "Unhealthy" in (embed.title or "")

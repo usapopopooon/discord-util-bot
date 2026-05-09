@@ -35,6 +35,7 @@ import signal
 import sys
 from types import FrameType
 
+import discord
 import discord.client
 
 from src.bot import EphemeralVCBot
@@ -168,8 +169,29 @@ async def main() -> None:
             logger.warning("Could not register SIGPIPE handler: %s", e)
 
     _bot = EphemeralVCBot()
+    # Discord グローバル制限 (Cloudflare 40062 等) で login() が 429 になると
+    # discord.py は内部で 5 回リトライしただけで HTTPException を上げる。
+    # そのままプロセスが死ぬと Railway が即再起動 → さらに 40062 リストに残り続け、
+    # クラッシュループから抜けられなくなる。1 プロセス内で指数バックオフして
+    # レート制限ウィンドウを跨ぐ。
     async with _bot:
-        await _bot.start(settings.discord_token)
+        backoff = 60
+        while True:
+            try:
+                await _bot.start(settings.discord_token)
+                break
+            except discord.HTTPException as e:
+                if e.status != 429:
+                    raise
+                logger.error(
+                    "Discord rate limit on startup (status=%s code=%s); "
+                    "sleeping %ds before retry",
+                    e.status,
+                    getattr(e, "code", None),
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 600)
 
 
 if __name__ == "__main__":

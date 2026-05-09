@@ -5,7 +5,17 @@ from __future__ import annotations
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import discord
 import pytest
+
+
+def _make_http_exception(status: int, code: int = 0) -> discord.HTTPException:
+    """テスト用に discord.HTTPException を生成する。"""
+    response = MagicMock()
+    response.status = status
+    response.reason = "Test"
+    return discord.HTTPException(response, {"code": code, "message": "test"})
+
 
 # ===========================================================================
 # _setup_logging テスト
@@ -416,3 +426,103 @@ class TestUnixSignalHandlers:
         await main()
 
         mock_bot.start.assert_awaited_once()
+
+
+# ===========================================================================
+# 起動時 429 バックオフテスト
+# ===========================================================================
+
+
+class TestStartupRateLimitBackoff:
+    """起動時の Discord 429 (Cloudflare 40062 等) リトライ挙動。"""
+
+    @patch("src.main.asyncio.sleep")
+    @patch("src.main.settings")
+    @patch("src.main.EphemeralVCBot")
+    @patch("src.main.check_database_connection_with_retry")
+    async def test_retries_after_429_then_succeeds(
+        self,
+        mock_check_db: AsyncMock,
+        mock_bot_class: MagicMock,
+        mock_settings: MagicMock,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        """start() が 429 を 1 度上げた後、リトライで成功する。"""
+        from src.main import main
+
+        mock_check_db.return_value = True
+        mock_settings.discord_token = "test-token"
+
+        mock_bot = AsyncMock()
+        mock_bot.start.side_effect = [_make_http_exception(429, 40062), None]
+        mock_bot_class.return_value = mock_bot
+
+        await main()
+
+        assert mock_bot.start.await_count == 2
+        # 初回 429 後に 60s sleep
+        mock_sleep.assert_awaited_once_with(60)
+
+    @patch("src.main.asyncio.sleep")
+    @patch("src.main.settings")
+    @patch("src.main.EphemeralVCBot")
+    @patch("src.main.check_database_connection_with_retry")
+    async def test_backoff_doubles_and_caps_at_600(
+        self,
+        mock_check_db: AsyncMock,
+        mock_bot_class: MagicMock,
+        mock_settings: MagicMock,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        """バックオフは倍化し、600s で頭打ちになる。"""
+        from src.main import main
+
+        mock_check_db.return_value = True
+        mock_settings.discord_token = "test-token"
+
+        # 6 回 429 → 7 回目で成功
+        mock_bot = AsyncMock()
+        mock_bot.start.side_effect = [
+            _make_http_exception(429, 40062),
+            _make_http_exception(429, 40062),
+            _make_http_exception(429, 40062),
+            _make_http_exception(429, 40062),
+            _make_http_exception(429, 40062),
+            _make_http_exception(429, 40062),
+            None,
+        ]
+        mock_bot_class.return_value = mock_bot
+
+        await main()
+
+        # 60 → 120 → 240 → 480 → 600 (cap) → 600
+        sleep_args = [c.args[0] for c in mock_sleep.await_args_list]
+        assert sleep_args == [60, 120, 240, 480, 600, 600]
+
+    @patch("src.main.asyncio.sleep")
+    @patch("src.main.settings")
+    @patch("src.main.EphemeralVCBot")
+    @patch("src.main.check_database_connection_with_retry")
+    async def test_non_429_http_exception_is_raised(
+        self,
+        mock_check_db: AsyncMock,
+        mock_bot_class: MagicMock,
+        mock_settings: MagicMock,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        """429 以外の HTTPException はリトライせず即 raise する。"""
+        from src.main import main
+
+        mock_check_db.return_value = True
+        mock_settings.discord_token = "test-token"
+
+        mock_bot = AsyncMock()
+        mock_bot.start.side_effect = _make_http_exception(500)
+        mock_bot_class.return_value = mock_bot
+
+        with pytest.raises(discord.HTTPException):
+            await main()
+
+        # リトライしていない (sleep が呼ばれていない)
+        mock_sleep.assert_not_awaited()
+        assert mock_bot.start.await_count == 1

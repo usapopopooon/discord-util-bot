@@ -143,6 +143,32 @@ class HealthCog(commands.Cog):
             )
         await interaction.followup.send(embed=embed)
 
+    @health_group.command(name="status", description="現在の Bot の状態を表示する")
+    async def health_status(self, interaction: discord.Interaction) -> None:
+        """現在の Bot の状態 (uptime/latency/guilds) をその場で表示する。"""
+        uptime_sec = int(time.monotonic() - self._start_time)
+        hours, remainder = divmod(uptime_sec, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        uptime_str = f"{hours}h {minutes}m {seconds}s"
+
+        guild_count = len(self.bot.guilds)
+        latency_ms = round(self.bot.latency * 1000)
+
+        if latency_ms < 200:
+            status = "Healthy"
+        elif latency_ms < 500:
+            status = "Degraded"
+        else:
+            status = "Unhealthy"
+
+        embed = self._build_embed(
+            status=status,
+            uptime_str=uptime_str,
+            latency_ms=latency_ms,
+            guild_count=guild_count,
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     # ------------------------------------------------------------------
     # Heartbeat loop
     # ------------------------------------------------------------------
