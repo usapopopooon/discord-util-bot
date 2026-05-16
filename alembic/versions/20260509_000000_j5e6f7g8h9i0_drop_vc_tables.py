@@ -22,6 +22,10 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.drop_table("bump_configs")
+    op.drop_index(op.f("ix_bump_reminders_guild_id"), table_name="bump_reminders")
+    op.drop_table("bump_reminders")
+
     # 子テーブルから先に削除する (FK 制約のため)
     op.drop_index(op.f("ix_voice_session_members_user_id"), "voice_session_members")
     op.drop_table("voice_session_members")
@@ -35,6 +39,34 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.create_table(
+        "bump_reminders",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("guild_id", sa.String(), nullable=False),
+        sa.Column("channel_id", sa.String(), nullable=False),
+        sa.Column("service_name", sa.String(), nullable=False),
+        sa.Column("remind_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "is_enabled",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.text("true"),
+        ),
+        sa.Column("role_id", sa.String(), nullable=True),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("guild_id", "service_name", name="uq_guild_service"),
+    )
+    op.create_index(
+        op.f("ix_bump_reminders_guild_id"), "bump_reminders", ["guild_id"], unique=False
+    )
+    op.create_table(
+        "bump_configs",
+        sa.Column("guild_id", sa.String(), nullable=False),
+        sa.Column("channel_id", sa.String(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.PrimaryKeyConstraint("guild_id"),
+    )
+
     # 親テーブルから順に再作成する
     op.create_table(
         "lobbies",

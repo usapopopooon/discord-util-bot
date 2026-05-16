@@ -15,8 +15,6 @@ import src.web.db_helpers as _db
 import src.web.security as _security
 from src.constants import BCRYPT_MAX_PASSWORD_BYTES, PASSWORD_MIN_LENGTH
 from src.database.models import (
-    BumpConfig,
-    BumpReminder,
     DiscordGuild,
     RolePanel,
     SiteSettings,
@@ -245,10 +243,6 @@ async def api_maintenance(
     guild_result = await db.execute(select(DiscordGuild.guild_id))
     active_guild_ids = {row[0] for row in guild_result.fetchall()}
 
-    bump_result = await db.execute(select(BumpConfig))
-    bump_configs = list(bump_result.scalars().all())
-    bump_orphaned = sum(1 for c in bump_configs if c.guild_id not in active_guild_ids)
-
     sticky_result = await db.execute(select(StickyMessage))
     stickies = list(sticky_result.scalars().all())
     sticky_orphaned = sum(1 for s in stickies if s.guild_id not in active_guild_ids)
@@ -260,10 +254,6 @@ async def api_maintenance(
     return JSONResponse(
         {
             "guild_count": len(active_guild_ids),
-            "bump_configs": {
-                "total": len(bump_configs),
-                "orphaned": bump_orphaned,
-            },
             "stickies": {
                 "total": len(stickies),
                 "orphaned": sticky_orphaned,
@@ -296,20 +286,6 @@ async def api_maintenance_cleanup(
         guild_result = await db.execute(select(DiscordGuild.guild_id))
         active_guild_ids = {row[0] for row in guild_result.fetchall()}
 
-        # Delete orphaned bump configs and their reminders
-        bump_result = await db.execute(select(BumpConfig))
-        bump_configs = list(bump_result.scalars().all())
-        bump_deleted = 0
-        for config in bump_configs:
-            if config.guild_id not in active_guild_ids:
-                reminder_result = await db.execute(
-                    select(BumpReminder).where(BumpReminder.guild_id == config.guild_id)
-                )
-                for reminder in reminder_result.scalars().all():
-                    await db.delete(reminder)
-                await db.delete(config)
-                bump_deleted += 1
-
         # Delete orphaned stickies
         sticky_result = await db.execute(select(StickyMessage))
         stickies = list(sticky_result.scalars().all())
@@ -335,7 +311,6 @@ async def api_maintenance_cleanup(
         {
             "ok": True,
             "deleted": {
-                "bump_configs": bump_deleted,
                 "stickies": sticky_deleted,
                 "role_panels": panel_deleted,
             },

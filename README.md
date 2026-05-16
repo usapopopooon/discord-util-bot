@@ -21,7 +21,6 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 ## 機能
 
 - **一時 VC**: ロビー参加で個人用 VC 自動作成、ボタン UI で管理
-- **Bump リマインダー**: DISBOARD / ディス速報 の bump 検出 → 2時間後通知
 - **Sticky メッセージ**: チャンネル最下部に常駐するメッセージ
 - **チケットシステム**: パネル + ボタンでチケット作成、スタッフ対応、トランスクリプト保存
 - **ロールパネル**: ボタン式 / リアクション式のロール自動付与
@@ -40,9 +39,9 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 │   ├── config.py                 # 設定管理
 │   ├── constants.py              # 定数
 │   ├── utils.py                  # ユーティリティ
-│   ├── cogs/                     # Discord Bot 機能 (11 cogs)
+│   ├── cogs/                     # Discord Bot 機能
 │   ├── database/                 # SQLAlchemy モデル + エンジン
-│   ├── services/                 # DB 操作 (ドメイン別 9 サービス + ファサード)
+│   ├── services/                 # DB 操作 (ドメイン別サービス + ファサード)
 │   ├── ui/                       # Discord UI コンポーネント
 │   └── web/                      # FastAPI
 │       ├── app.py                # FastAPI アプリ (ファサード)
@@ -53,9 +52,7 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 │       ├── email_service.py      # メール送信
 │       ├── routes/               # ルートハンドラ
 │       │   ├── api_auth.py       # /api/v1/auth/*
-│       │   ├── api_lobbies.py    # /api/v1/lobbies
 │       │   ├── api_sticky.py     # /api/v1/sticky
-│       │   ├── api_bump.py       # /api/v1/bump
 │       │   ├── api_rolepanel.py  # /api/v1/rolepanels
 │       │   ├── api_automod.py    # /api/v1/automod
 │       │   ├── api_ticket.py     # /api/v1/tickets
@@ -68,7 +65,7 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 │       └── templates/            # 旧 HTML テンプレート (廃止予定)
 ├── frontend/                     # Next.js フロントエンド
 │   ├── src/
-│   │   ├── app/                  # App Router ページ (26 ページ)
+│   │   ├── app/                  # App Router ページ
 │   │   ├── components/           # UI コンポーネント
 │   │   └── lib/                  # API クライアント・型定義
 │   ├── Dockerfile                # 本番用
@@ -85,6 +82,10 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 ```
 
 ## 開発環境
+
+> [!IMPORTANT]
+> このプロジェクトの標準手順は **Docker 実行** です。  
+> 起動・テスト・CI 検証は必ず Docker (`docker compose ...`) を使ってください。
 
 ### Docker Compose (推奨)
 
@@ -118,9 +119,13 @@ docker compose run --rm --profile dev migrate
 ### ローカル CI
 
 ```bash
-python scripts/ci_check.py        # Lint のみ (12 チェック)
-python scripts/ci_check.py --all  # テスト + ビルド込み (15 チェック)
+docker compose run --rm --profile dev lint  # Lint / 型チェック
+docker compose run --rm --profile dev test  # Python テスト
+docker compose run --rm --profile dev frontend-test  # Frontend テスト
 ```
+
+`python scripts/ci_check.py` / `python scripts/ci_check.py --all` は補助用途です。
+最終確認は Docker 実行結果を採用してください。
 
 ## CI / CD
 

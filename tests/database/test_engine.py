@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import ssl
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from src.constants import DEFAULT_TEST_DATABASE_URL
 from src.database.models import Base
 
-from .conftest import TEST_DATABASE_URL
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", DEFAULT_TEST_DATABASE_URL)
 
 # ===========================================================================
 # Heroku / SSL configuration テスト

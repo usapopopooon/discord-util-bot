@@ -58,7 +58,7 @@ def make_activity(activity_type: str, text: str) -> discord.BaseActivity:
 class EphemeralVCBot(commands.Bot):
     """Bot 本体。
 
-    discord.py の commands.Bot を継承し、bump リマインダー、sticky メッセージ、
+    discord.py の commands.Bot を継承し、sticky メッセージ、
     ロールパネル、チケット、自動リアクション等の機能を提供する。
 
     Attributes:
@@ -71,7 +71,7 @@ class EphemeralVCBot(commands.Bot):
 
         - guilds: サーバー情報 (ギルド) の取得
         - members: メンバー情報の取得 (特権 Intent、Portal 有効化必須)
-        - message_content: メッセージ内容の取得 (bump 検知用)
+        - message_content: メッセージ内容の取得
 
     Examples:
         Bot の起動::
@@ -106,7 +106,7 @@ class EphemeralVCBot(commands.Bot):
         intents = discord.Intents.default()
         intents.guilds = True  # サーバー情報 (ギルド) を取得する
         intents.members = True  # メンバー情報を取得する (特権 Intent、要 Portal 有効化)
-        intents.message_content = True  # メッセージ内容を取得する (bump 検知用)
+        intents.message_content = True  # メッセージ内容を取得する
 
         # --- アクティビティ (プレゼンス) を設定 ---
         # discord.Game = 「〜をプレイ中」タイプのアクティビティ
@@ -138,7 +138,6 @@ class EphemeralVCBot(commands.Bot):
         extensions = [
             "src.cogs.admin",
             "src.cogs.health",
-            "src.cogs.bump",
             "src.cogs.sticky",
             "src.cogs.role_panel",
             "src.cogs.automod",

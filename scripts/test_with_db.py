@@ -4,7 +4,7 @@
 使い方:
     python scripts/test_with_db.py              # 全テストを実行
     python scripts/test_with_db.py -v           # verbose モードで実行
-    python scripts/test_with_db.py -k bump      # bump 関連のテストのみ実行
+    python scripts/test_with_db.py -k sticky    # sticky 関連のテストのみ実行
     python scripts/test_with_db.py --keep       # テスト後コンテナを停止しない
 
 Windows, macOS, Linux で動作します。

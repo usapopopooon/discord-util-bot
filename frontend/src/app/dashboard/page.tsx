@@ -29,11 +29,6 @@ const quickLinks = [
     description: 'Configure persistent channel messages',
   },
   {
-    href: '/dashboard/bump',
-    title: 'Bump',
-    description: 'Bump reminder configuration',
-  },
-  {
     href: '/dashboard/eventlog',
     title: 'Event Log',
     description: 'Configure event logging channels',

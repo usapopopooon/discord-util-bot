@@ -199,8 +199,6 @@ class TestMigrationUpgrade:
         expected_tables = [
             "admin_users",
             "alembic_version",
-            "bump_configs",
-            "bump_reminders",
             "sticky_messages",
         ]
         for table in expected_tables:
@@ -435,26 +433,6 @@ class TestModelMigrationConsistency:
         engine.dispose()
 
     @pytest.mark.usefixtures("clean_db")
-    def test_bump_reminders_columns_match_model(self, alembic_config: Config) -> None:
-        """bump_reminders テーブルのカラムがモデルと一致することを確認する。"""
-        from src.database.models import BumpReminder
-
-        command.upgrade(alembic_config, "head")
-
-        engine = create_engine(TEST_DATABASE_URL)
-        inspector = inspect(engine)
-        db_columns = {col["name"] for col in inspector.get_columns("bump_reminders")}
-
-        model_columns = {col.name for col in BumpReminder.__table__.columns}
-
-        assert model_columns == db_columns, (
-            f"bump_reminders のカラムが一致しません。"
-            f"モデルのみ: {model_columns - db_columns}, "
-            f"DBのみ: {db_columns - model_columns}"
-        )
-        engine.dispose()
-
-    @pytest.mark.usefixtures("clean_db")
     def test_sticky_messages_columns_match_model(self, alembic_config: Config) -> None:
         """sticky_messages テーブルのカラムがモデルと一致することを確認する。"""
         from src.database.models import StickyMessage
@@ -548,18 +526,6 @@ class TestMigrationIndexes:
     """マイグレーションで作成されるインデックスのテスト。"""
 
     @pytest.mark.usefixtures("clean_db")
-    def test_bump_reminders_indexes(self, alembic_config: Config) -> None:
-        """bump_reminders テーブルのインデックスが正しく作成されることを確認する。"""
-        command.upgrade(alembic_config, "head")
-
-        engine = create_engine(TEST_DATABASE_URL)
-        inspector = inspect(engine)
-        indexes = {idx["name"] for idx in inspector.get_indexes("bump_reminders")}
-
-        assert "ix_bump_reminders_guild_id" in indexes
-        engine.dispose()
-
-    @pytest.mark.usefixtures("clean_db")
     def test_sticky_messages_indexes(self, alembic_config: Config) -> None:
         """sticky_messages テーブルのインデックスが正しく作成されることを確認する。"""
         command.upgrade(alembic_config, "head")
@@ -594,30 +560,6 @@ class TestMigrationConstraints:
         engine.dispose()
 
     @pytest.mark.usefixtures("clean_db")
-    def test_bump_reminders_unique_guild_service(self, alembic_config: Config) -> None:
-        """bump_reminders に guild_id + service_name ユニーク制約を確認。"""
-        command.upgrade(alembic_config, "head")
-
-        engine = create_engine(TEST_DATABASE_URL)
-        inspector = inspect(engine)
-        unique_constraints = inspector.get_unique_constraints("bump_reminders")
-
-        # uq_guild_service 制約を探す
-        guild_service_constraint = next(
-            (c for c in unique_constraints if c["name"] == "uq_guild_service"),
-            None,
-        )
-        assert guild_service_constraint is not None
-        assert set(guild_service_constraint["column_names"]) == {
-            "guild_id",
-            "service_name",
-        }
-        engine.dispose()
-
-
-class TestAlembicIniConfiguration:
-    """alembic.ini の設定テスト。"""
-
     def test_path_separator_configured(self) -> None:
         """path_separator が設定されていることを確認する。"""
         ini_path = Path("alembic.ini")
@@ -652,17 +594,17 @@ class TestSafeDowngradeBehavior:
     ) -> None:
         """テーブルが存在しない場合でも downgrade がエラーにならないことを確認。"""
         # 特定のマイグレーションまで upgrade
-        command.upgrade(alembic_config, "d4e5f6a7b8c9")  # bump_configs まで
+        command.upgrade(alembic_config, "head")
 
         # テーブルを手動で削除
         engine = create_engine(TEST_DATABASE_URL)
         with engine.connect() as conn:
-            conn.execute(text("DROP TABLE IF EXISTS bump_configs"))
+            conn.execute(text("DROP TABLE IF EXISTS lobbies"))
             conn.commit()
         engine.dispose()
 
         # downgrade してもエラーにならないことを確認
-        command.downgrade(alembic_config, "c3d4e5f6a7b8")
+        command.downgrade(alembic_config, "base")
 
     @pytest.mark.usefixtures("clean_db")
     def test_initial_schema_downgrade_handles_missing_tables(
@@ -676,7 +618,6 @@ class TestSafeDowngradeBehavior:
         engine = create_engine(TEST_DATABASE_URL)
         with engine.connect() as conn:
             conn.execute(text("DROP TABLE IF EXISTS sticky_messages"))
-            conn.execute(text("DROP TABLE IF EXISTS bump_configs"))
             conn.commit()
         engine.dispose()
 
@@ -709,8 +650,6 @@ class TestSafeDowngradeBehavior:
 
         expected_tables = [
             "admin_users",
-            "bump_reminders",
-            "bump_configs",
             "sticky_messages",
         ]
         for table in expected_tables:
@@ -747,8 +686,6 @@ class TestMigrationIdempotency:
         inspector = inspect(engine)
         tables = inspector.get_table_names()
         assert "sticky_messages" in tables
-        assert "bump_reminders" in tables
-        assert "bump_configs" in tables
         engine.dispose()
 
     @pytest.mark.usefixtures("clean_db")
@@ -759,8 +696,7 @@ class TestMigrationIdempotency:
         # 初期スキーマを適用 (全テーブルが作成される)
         command.upgrade(alembic_config, "000000000000")
 
-        # bump_configs マイグレーションまでの alembic_version を設定
-        # (bump_configs 作成マイグレーションの直前)
+        # 増分マイグレーションの途中版へ alembic_version を設定
         engine = create_engine(TEST_DATABASE_URL)
         with engine.connect() as conn:
             conn.execute(
@@ -769,14 +705,13 @@ class TestMigrationIdempotency:
             conn.commit()
         engine.dispose()
 
-        # bump_configs マイグレーションを実行 (テーブルは既に存在)
-        # 条件付き作成により、エラーにならずスキップされる
-        command.upgrade(alembic_config, "d4e5f6a7b8c9")
+        # 以降を再適用してもエラーにならないことを確認
+        command.upgrade(alembic_config, "head")
 
         # テーブルが存在することを確認
         engine = create_engine(TEST_DATABASE_URL)
         inspector = inspect(engine)
-        assert "bump_configs" in inspector.get_table_names()
+        assert "sticky_messages" in inspector.get_table_names()
         engine.dispose()
 
 
@@ -787,9 +722,7 @@ class TestMigrationFileSafety:
         """増分マイグレーションが安全な downgrade を持つことを確認する。"""
         migration_files = [
             "alembic/versions/e5f6a7b8c9d0_add_sticky_messages.py",
-            "alembic/versions/a1b2c3d4e5f6_add_bump_reminders.py",
             "alembic/versions/6be2a413ed70_add_voice_session_members.py",
-            "alembic/versions/d4e5f6a7b8c9_add_bump_configs.py",
         ]
 
         for file_path in migration_files:
@@ -815,8 +748,6 @@ class TestMigrationFileSafety:
         # 各テーブルの条件チェックがあることを確認
         for table in [
             "sticky_messages",
-            "bump_configs",
-            "bump_reminders",
             "voice_session_members",
             "voice_sessions",
             "lobbies",

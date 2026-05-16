@@ -4,7 +4,7 @@
 # 使い方:
 #   ./scripts/test-with-db.sh          # 全テストを実行
 #   ./scripts/test-with-db.sh -v       # verbose モードで実行
-#   ./scripts/test-with-db.sh -k bump  # bump 関連のテストのみ実行
+#   ./scripts/test-with-db.sh -k sticky  # sticky 関連のテストのみ実行
 #
 # Windows ユーザーへ:
 #   - PowerShell: .\scripts\test-with-db.ps1

@@ -44,8 +44,6 @@ class Settings(BaseSettings):
             デフォルトはローカル PostgreSQL。
         admin_email (str): Web 管理画面の初期管理者メールアドレス。
         admin_password (str): Web 管理画面の初期管理者パスワード。
-        bump_channel_id (int): bump リマインダー用チャンネル ID。
-            0 の場合は機能無効。
         smtp_host (str): SMTP サーバーのホスト名。
         smtp_port (int): SMTP サーバーのポート番号。
         smtp_user (str): SMTP 認証用ユーザー名。
@@ -128,10 +126,6 @@ class Settings(BaseSettings):
 
     # Web 管理画面の初期管理者パスワード
     admin_password: str = "changeme"
-
-    # bump リマインダー用チャンネルの ID
-    # 0 の場合は bump リマインダー機能を無効化
-    bump_channel_id: int = 0
 
     # --- SMTP 設定 (パスワードリセット用) ---
     # SMTP サーバーのホスト名

@@ -22,10 +22,6 @@ interface MaintenanceStats {
     total: number
     orphaned: number
   }
-  bump_configs: {
-    total: number
-    orphaned: number
-  }
   stickies: {
     total: number
     orphaned: number
@@ -40,7 +36,6 @@ interface CleanupResult {
   ok: boolean
   deleted: {
     lobbies: number
-    bump_configs: number
     stickies: number
     role_panels: number
   }
@@ -114,8 +109,6 @@ export default function MaintenancePage() {
         { label: 'Active Guilds', value: stats.guild_count },
         { label: 'Voice Lobbies', value: stats.lobbies.total },
         { label: 'Orphaned Lobbies', value: stats.lobbies.orphaned },
-        { label: 'Bump Configs', value: stats.bump_configs.total },
-        { label: 'Orphaned Bump Configs', value: stats.bump_configs.orphaned },
         { label: 'Sticky Messages', value: stats.stickies.total },
         { label: 'Orphaned Stickies', value: stats.stickies.orphaned },
         { label: 'Role Panels', value: stats.role_panels.total },
@@ -190,10 +183,6 @@ export default function MaintenancePage() {
                   <li>
                     Orphaned lobbies removed:{' '}
                     <span className="font-medium">{cleanupResult.deleted.lobbies}</span>
-                  </li>
-                  <li>
-                    Orphaned bump configs removed:{' '}
-                    <span className="font-medium">{cleanupResult.deleted.bump_configs}</span>
                   </li>
                   <li>
                     Orphaned sticky messages removed:{' '}

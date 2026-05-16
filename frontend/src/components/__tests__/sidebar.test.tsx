@@ -21,7 +21,6 @@ const expectedNavItems = [
   { href: '/dashboard/automod', label: 'AutoMod' },
   { href: '/dashboard/banlogs', label: 'Ban Logs' },
   { href: '/dashboard/sticky', label: 'Sticky Messages' },
-  { href: '/dashboard/bump', label: 'Bump' },
   { href: '/dashboard/tickets', label: 'Tickets' },
   { href: '/dashboard/roles', label: 'Role Panels' },
   { href: '/dashboard/joinrole', label: 'Join Roles' },

@@ -104,6 +104,7 @@ if _xdist_worker:
     atexit.register(_cleanup_worker_db)
 
 import logging
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -114,6 +115,7 @@ from src.constants import DEFAULT_TEST_DATABASE_URL_SYNC
 from src.database.models import Base
 
 logger = logging.getLogger(__name__)
+
 
 TEST_DATABASE_URL_SYNC = os.environ.get(
     "TEST_DATABASE_URL_SYNC",

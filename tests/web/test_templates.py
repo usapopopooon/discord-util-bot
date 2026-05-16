@@ -8,8 +8,6 @@ from src.database.models import (
     AutoModLog,
     AutoModRule,
     BanLog,
-    BumpConfig,
-    BumpReminder,
     JoinRoleConfig,
     RolePanel,
     RolePanelItem,
@@ -29,7 +27,6 @@ from src.web.templates import (
     automod_logs_page,
     automod_settings_page,
     ban_logs_page,
-    bump_list_page,
     dashboard_page,
     email_change_page,
     forgot_password_page,
@@ -210,13 +207,6 @@ class TestListPageBreadcrumbs:
         assert "Dashboard" in result
         assert "Sticky Messages" in result
 
-    def test_bump_list_has_breadcrumb(self) -> None:
-        """Bump Reminders リストページにパンくずリストがある。"""
-        result = bump_list_page([], [])
-        assert 'href="/dashboard"' in result
-        assert "Dashboard" in result
-        assert "Bump Reminders" in result
-
 
 # ===========================================================================
 # ナビゲーションコンポーネント
@@ -292,11 +282,6 @@ class TestDashboardPage:
         """Sticky リンクが含まれる。"""
         result = dashboard_page()
         assert "/sticky" in result
-
-    def test_contains_bump_link(self) -> None:
-        """Bump リンクが含まれる。"""
-        result = dashboard_page()
-        assert "/bump" in result
 
     def test_contains_settings_link(self) -> None:
         """Settings リンクが含まれる。"""
@@ -424,105 +409,6 @@ class TestStickyListPage:
         result = sticky_list_page([sticky], channels_map={})
         assert "987654321" in result
         assert result.count("text-yellow-400") >= 1
-
-
-# ===========================================================================
-# Bump 一覧ページ
-# ===========================================================================
-
-
-class TestBumpListPage:
-    """bump_list_page テンプレートのテスト。"""
-
-    def test_empty_configs_message(self) -> None:
-        """Config が空の場合はメッセージが表示される。"""
-        result = bump_list_page([], [])
-        assert "No bump configs" in result
-
-    def test_empty_reminders_message(self) -> None:
-        """Reminder が空の場合はメッセージが表示される。"""
-        result = bump_list_page([], [])
-        assert "No bump reminders" in result
-
-    def test_contains_config_headers(self) -> None:
-        """Config テーブルヘッダーが含まれる。"""
-        result = bump_list_page([], [])
-        assert "Bump Configs" in result
-
-    def test_contains_reminder_headers(self) -> None:
-        """Reminder テーブルヘッダーが含まれる。"""
-        result = bump_list_page([], [])
-        assert "Bump Reminders" in result
-        assert "Service" in result
-        assert "Status" in result
-
-    def test_config_displays_guild_name_when_available(self) -> None:
-        """configs で guilds_map にギルドIDがある場合、サーバー名が表示される。"""
-        config = BumpConfig(
-            guild_id="123456789",
-            channel_id="987654321",
-        )
-        guilds_map = {"123456789": "Test Server"}
-        result = bump_list_page([config], [], guilds_map=guilds_map)
-        assert "Test Server" in result
-        assert "123456789" in result
-
-    def test_config_displays_guild_id_yellow_when_not_cached(self) -> None:
-        """configs で guilds_map にギルドIDがない場合、IDが黄色で表示される。"""
-        config = BumpConfig(
-            guild_id="123456789",
-            channel_id="987654321",
-        )
-        result = bump_list_page([config], [], guilds_map={})
-        assert "123456789" in result
-        assert "text-yellow-400" in result
-
-    def test_config_displays_channel_name_when_available(self) -> None:
-        """channels_map にチャンネルIDがある場合、チャンネル名が表示される。"""
-        config = BumpConfig(
-            guild_id="123456789",
-            channel_id="987654321",
-        )
-        channels_map = {"123456789": [("987654321", "bump-channel")]}
-        result = bump_list_page([config], [], channels_map=channels_map)
-        assert "#bump-channel" in result
-        assert "987654321" in result
-
-    def test_reminder_displays_guild_name_when_available(self) -> None:
-        """reminders で guilds_map にギルドIDがある場合、サーバー名が表示される。"""
-        reminder = BumpReminder(
-            id=1,
-            guild_id="123456789",
-            channel_id="987654321",
-            service_name="DISBOARD",
-        )
-        guilds_map = {"123456789": "Test Server"}
-        result = bump_list_page([], [reminder], guilds_map=guilds_map)
-        assert "Test Server" in result
-
-    def test_reminder_displays_guild_id_yellow_when_not_cached(self) -> None:
-        """reminders で guilds_map にギルドIDがない場合、IDが黄色で表示される。"""
-        reminder = BumpReminder(
-            id=1,
-            guild_id="123456789",
-            channel_id="987654321",
-            service_name="DISBOARD",
-        )
-        result = bump_list_page([], [reminder], guilds_map={})
-        assert "123456789" in result
-        assert "text-yellow-400" in result
-
-    def test_reminder_displays_channel_name_when_available(self) -> None:
-        """channels_map にチャンネルIDがある場合、チャンネル名が表示される。"""
-        reminder = BumpReminder(
-            id=1,
-            guild_id="123456789",
-            channel_id="987654321",
-            service_name="DISBOARD",
-        )
-        channels_map = {"123456789": [("987654321", "reminder-channel")]}
-        result = bump_list_page([], [reminder], channels_map=channels_map)
-        assert "#reminder-channel" in result
 
 
 # ===========================================================================
@@ -1440,16 +1326,6 @@ class TestGuildChannelNameDisplayEdgeCases:
         assert "&quot;&gt;&lt;script&gt;" in result
         assert '"><script>' not in result
 
-    def test_bump_guild_name_with_xss_is_escaped(self) -> None:
-        """バンプでギルド名のXSSが適切にエスケープされる。"""
-        config = BumpConfig(
-            guild_id="123456789",
-            channel_id="987654321",
-        )
-        guilds_map = {"123456789": "<script>xss</script>"}
-        result = bump_list_page([config], [], guilds_map=guilds_map)
-        assert "&lt;script&gt;" in result
-
     def test_rolepanel_guild_name_with_xss_is_escaped(self) -> None:
         """ロールパネルでギルド名のXSSが適切にエスケープされる。"""
         panel = RolePanel(
@@ -1469,54 +1345,53 @@ class TestMaintenancePage:
 
     def test_contains_page_title(self) -> None:
         """ページタイトルが含まれる。"""
-        result = maintenance_page(0, 0, 0, 0, 0, 0, 0)
+        result = maintenance_page(0, 0, 0, 0, 0)
         assert "Database Maintenance" in result
 
     def test_contains_statistics_section(self) -> None:
         """統計セクションが含まれる。"""
-        result = maintenance_page(0, 0, 0, 0, 0, 0, 0)
+        result = maintenance_page(0, 0, 0, 0, 0)
         assert "Database Statistics" in result
 
     def test_success_message_displayed(self) -> None:
         """成功メッセージが表示される。"""
-        result = maintenance_page(0, 0, 0, 0, 0, 0, 0, success="Cleanup completed")
+        result = maintenance_page(0, 0, 0, 0, 0, success="Cleanup completed")
         assert "Cleanup completed" in result
         assert "bg-green-500" in result
 
     def test_success_message_escaped(self) -> None:
         """成功メッセージがエスケープされる。"""
-        result = maintenance_page(0, 0, 0, 0, 0, 0, 0, success="<script>xss</script>")
+        result = maintenance_page(0, 0, 0, 0, 0, success="<script>xss</script>")
         assert "&lt;script&gt;" in result
         assert "<script>xss" not in result
 
     def test_cleanup_button_disabled_when_no_orphaned(self) -> None:
         """孤立データがない場合、クリーンアップボタンが非活性。"""
-        result = maintenance_page(5, 0, 3, 0, 7, 0, 15)
+        result = maintenance_page(5, 0, 3, 0, 15)
         assert "No Orphaned Data" in result
         assert "disabled" in result
 
     def test_cleanup_button_shows_count_when_orphaned(self) -> None:
         """孤立データがある場合、レコード数がボタンに表示される。"""
-        result = maintenance_page(5, 1, 3, 0, 7, 3, 15)
-        # 1 + 0 + 3 = 4
-        assert "Cleanup 4 Records" in result
+        result = maintenance_page(5, 1, 3, 0, 15)
+        assert "Cleanup 1 Records" in result
 
     def test_contains_refresh_button(self) -> None:
         """更新ボタンが含まれる。"""
-        result = maintenance_page(0, 0, 0, 0, 0, 0, 0)
+        result = maintenance_page(0, 0, 0, 0, 0)
         assert "Refresh Stats" in result
         assert "/settings/maintenance/refresh" in result
 
     def test_contains_breadcrumb_with_settings_link(self) -> None:
         """パンくずリストに Settings へのリンクが含まれる。"""
-        result = maintenance_page(0, 0, 0, 0, 0, 0, 0)
+        result = maintenance_page(0, 0, 0, 0, 0)
         assert 'href="/settings"' in result
         assert "Settings" in result
         assert "Database Maintenance" in result
 
     def test_contains_csrf_token(self) -> None:
         """CSRFトークンが含まれる。"""
-        result = maintenance_page(0, 0, 0, 0, 0, 0, 0, csrf_token="test_csrf_123")
+        result = maintenance_page(0, 0, 0, 0, 0, csrf_token="test_csrf_123")
         assert 'value="test_csrf_123"' in result
 
 
@@ -1525,16 +1400,14 @@ class TestMaintenancePageCleanupModal:
 
     def test_modal_structure_exists(self) -> None:
         """モーダルの構造が存在する。"""
-        result = maintenance_page(5, 1, 3, 1, 7, 3, 15)
+        result = maintenance_page(5, 1, 3, 1, 15)
         assert 'id="cleanup-modal"' in result
         assert "Confirm Cleanup" in result
         assert "will be permanently deleted" in result
 
     def test_modal_shows_orphaned_breakdown(self) -> None:
         """モーダルに孤立データの内訳が表示される。"""
-        result = maintenance_page(5, 1, 3, 4, 7, 3, 15)
-        # 内訳が表示される
-        assert "Bump Configs:" in result
+        result = maintenance_page(5, 1, 3, 4, 15)
         assert "Stickies:" in result
         assert "Role Panels:" in result
         # Total
@@ -1542,14 +1415,13 @@ class TestMaintenancePageCleanupModal:
 
     def test_modal_shows_correct_total(self) -> None:
         """モーダルに正しい合計が表示される。"""
-        result = maintenance_page(5, 3, 3, 2, 7, 1, 15)
-        # 3 + 2 + 1 = 6
-        assert "Delete 6 Records" in result
-        assert 'text-red-400">6</span>' in result
+        result = maintenance_page(5, 3, 3, 2, 15)
+        assert "Delete 5 Records" in result
+        assert 'text-red-400">5</span>' in result
 
     def test_modal_cancel_button_exists(self) -> None:
         """モーダルにキャンセルボタンがある。"""
-        result = maintenance_page(5, 1, 3, 1, 7, 1, 15)
+        result = maintenance_page(5, 1, 3, 1, 15)
         # Cancel ボタンのテキストが含まれる
         assert "Cancel" in result
         # モーダルを閉じる関数が呼び出される
@@ -1557,31 +1429,31 @@ class TestMaintenancePageCleanupModal:
 
     def test_modal_submit_button_exists(self) -> None:
         """モーダルに送信ボタンがある。"""
-        result = maintenance_page(5, 1, 3, 1, 7, 1, 15)
+        result = maintenance_page(5, 1, 3, 1, 15)
         assert 'id="confirm-cleanup-btn"' in result
         assert "/settings/maintenance/cleanup" in result
 
     def test_modal_javascript_functions(self) -> None:
         """モーダルのJavaScript関数が含まれる。"""
-        result = maintenance_page(5, 1, 3, 1, 7, 1, 15)
+        result = maintenance_page(5, 1, 3, 1, 15)
         assert "function showCleanupModal()" in result
         assert "function hideCleanupModal()" in result
         assert "function handleCleanupSubmit(" in result
 
     def test_modal_escape_key_handler(self) -> None:
         """Escapeキーでモーダルを閉じるハンドラが含まれる。"""
-        result = maintenance_page(5, 1, 3, 1, 7, 1, 15)
+        result = maintenance_page(5, 1, 3, 1, 15)
         assert "e.key === 'Escape'" in result
 
     def test_modal_backdrop_click_handler(self) -> None:
         """背景クリックでモーダルを閉じるハンドラが含まれる。"""
-        result = maintenance_page(5, 1, 3, 1, 7, 1, 15)
+        result = maintenance_page(5, 1, 3, 1, 15)
         assert "e.target === this" in result
         assert "hideCleanupModal()" in result
 
     def test_irreversible_warning_displayed(self) -> None:
         """「元に戻せない」警告が表示される。"""
-        result = maintenance_page(5, 1, 3, 1, 7, 1, 15)
+        result = maintenance_page(5, 1, 3, 1, 15)
         assert "cannot be undone" in result
 
 
@@ -3387,20 +3259,6 @@ class TestChannelLookupBranches:
             [panel], items_by_panel={}, csrf_token="tok", channels_map=channels_map
         )
         assert "#panel-ch" in result
-
-    def test_bump_reminder_channel_not_first_in_map(self) -> None:
-        """Bump リマインダーのチャンネルが channels_map の最初でない場合。"""
-        reminder = BumpReminder(
-            id=1,
-            guild_id="100",
-            channel_id="402",
-            service_name="DISBOARD",
-        )
-        channels_map = {"100": [("401", "other-ch"), ("402", "bump-ch")]}
-        result = bump_list_page(
-            [], [reminder], csrf_token="tok", channels_map=channels_map
-        )
-        assert "#bump-ch" in result
 
     def test_ticket_panel_channel_not_first_in_map(self) -> None:
         """チケットパネルのチャンネルが channels_map の最初でない場合。"""

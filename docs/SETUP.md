@@ -55,6 +55,10 @@
 
 ## ローカル開発
 
+> [!IMPORTANT]
+> このリポジトリは **Docker での起動・テスト** を標準手順とします。  
+> 再現性のため、CI 相当の確認は必ず `docker compose ...` で実行してください。
+
 ### Docker Compose (推奨)
 
 ```bash
@@ -96,34 +100,32 @@ npm run dev
 ### Python (pytest)
 
 ```bash
-# Docker
+# 標準手順 (Docker)
 docker compose run --rm --profile dev test
 
-# ローカル
+# 参考: ローカル直実行 (最終確認には使わない)
 pytest -v --cov=src
 ```
 
 ### Frontend (Vitest)
 
 ```bash
-# Docker
+# 標準手順 (Docker)
 docker compose run --rm --profile dev frontend-test
 
-# ローカル
+# 参考: ローカル直実行 (最終確認には使わない)
 cd frontend && npm run test:run
 ```
 
 ## Lint / 型チェック
 
 ```bash
-# ローカル CI (全チェック)
-python scripts/ci_check.py
-
-# テスト込み
-python scripts/ci_check.py --all
-
-# Docker
+# 標準手順 (Docker)
 docker compose run --rm --profile dev lint
+
+# 参考: ローカル補助チェック
+python scripts/ci_check.py
+python scripts/ci_check.py --all
 ```
 
 ## マイグレーション

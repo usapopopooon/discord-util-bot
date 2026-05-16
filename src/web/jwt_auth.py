@@ -22,7 +22,7 @@ def create_jwt_token(email: str) -> str:
         "iat": now,
         "exp": now + SESSION_MAX_AGE_SECONDS,
     }
-    return jwt.encode(payload, SECRET_KEY, algorithm=_ALGORITHM)
+    return str(jwt.encode(payload, SECRET_KEY, algorithm=_ALGORITHM))
 
 
 def verify_jwt_token(token: str) -> dict[str, Any] | None:

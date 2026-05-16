@@ -138,6 +138,7 @@ services:
       dockerfile: Dockerfile.dev
     command: sh -c "ruff check src tests && ruff format --check src tests && mypy src"
     volumes:
+      - ./pyproject.toml:/app/pyproject.toml
       - ./src:/app/src
       - ./tests:/app/tests
     profiles:
@@ -149,6 +150,7 @@ services:
       dockerfile: Dockerfile.dev
     command: sh -c "ruff check --fix src tests && ruff format src tests"
     volumes:
+      - ./pyproject.toml:/app/pyproject.toml
       - ./src:/app/src
       - ./tests:/app/tests
     profiles:

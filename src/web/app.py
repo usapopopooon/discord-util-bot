@@ -217,7 +217,6 @@ from src.web.routes.api_auto_reaction import (  # noqa: E402
     router as api_auto_reaction_router,
 )
 from src.web.routes.api_automod import router as api_automod_router  # noqa: E402
-from src.web.routes.api_bump import router as api_bump_router  # noqa: E402
 from src.web.routes.api_chatrole import router as api_chatrole_router  # noqa: E402
 from src.web.routes.api_common import router as api_common_router  # noqa: E402
 from src.web.routes.api_eventlog import router as api_eventlog_router  # noqa: E402
@@ -232,7 +231,6 @@ from src.web.routes.auto_reaction import (  # noqa: E402
     router as auto_reaction_router,
 )
 from src.web.routes.automod import router as automod_router  # noqa: E402
-from src.web.routes.bump import router as bump_router  # noqa: E402
 from src.web.routes.chatrole import router as chatrole_router  # noqa: E402
 from src.web.routes.joinrole import router as joinrole_router  # noqa: E402
 from src.web.routes.misc import router as misc_router  # noqa: E402
@@ -245,7 +243,6 @@ app.include_router(api_auth_router)
 app.include_router(api_common_router)
 app.include_router(api_automod_router)
 app.include_router(api_sticky_router)
-app.include_router(api_bump_router)
 app.include_router(api_joinrole_router)
 app.include_router(api_chatrole_router)
 app.include_router(api_auto_reaction_router)
@@ -258,7 +255,6 @@ app.include_router(misc_router)
 app.include_router(auth_router)
 app.include_router(settings_router)
 app.include_router(sticky_router)
-app.include_router(bump_router)
 app.include_router(rolepanel_router)
 app.include_router(automod_router)
 app.include_router(ticket_router)

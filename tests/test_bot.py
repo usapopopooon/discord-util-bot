@@ -70,7 +70,6 @@ class TestSetupHook:
 
         bot.load_extension.assert_any_await("src.cogs.admin")
         bot.load_extension.assert_any_await("src.cogs.health")
-        bot.load_extension.assert_any_await("src.cogs.bump")
         bot.load_extension.assert_any_await("src.cogs.sticky")
         bot.load_extension.assert_any_await("src.cogs.role_panel")
         bot.load_extension.assert_any_await("src.cogs.automod")

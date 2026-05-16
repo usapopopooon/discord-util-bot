@@ -3,7 +3,7 @@
 # 使い方:
 #   .\scripts\test-with-db.ps1              # 全テストを実行
 #   .\scripts\test-with-db.ps1 -v           # verbose モードで実行
-#   .\scripts\test-with-db.ps1 -k bump      # bump 関連のテストのみ実行
+#   .\scripts\test-with-db.ps1 -k sticky      # sticky 関連のテストのみ実行
 #   .\scripts\test-with-db.ps1 --keep       # テスト後コンテナを停止しない
 
 param(

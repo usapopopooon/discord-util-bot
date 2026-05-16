@@ -32,10 +32,6 @@ def dashboard_page(email: str = "Admin") -> str:
                 <h2 class="text-lg font-semibold mb-2">Sticky Messages</h2>
                 <p class="text-gray-400 text-sm">Manage sticky messages</p>
             </a>
-            <a href="/bump" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
-                <h2 class="text-lg font-semibold mb-2">Bump Reminders</h2>
-                <p class="text-gray-400 text-sm">Manage bump settings</p>
-            </a>
             <a href="/rolepanels" class="bg-gray-800 p-6 rounded-lg hover:bg-gray-750 transition-colors">
                 <h2 class="text-lg font-semibold mb-2">Role Panels</h2>
                 <p class="text-gray-400 text-sm">View role assignment panels</p>
@@ -150,13 +146,11 @@ def settings_page(
 
 
 def maintenance_page(
-    bump_total: int,
-    bump_orphaned: int,
     sticky_total: int,
     sticky_orphaned: int,
     panel_total: int,
     panel_orphaned: int,
-    guild_count: int,
+    guild_count: int = 0,
     success: str | None = None,
     csrf_token: str = "",
 ) -> str:
@@ -170,7 +164,7 @@ def maintenance_page(
         """
 
     # 孤立データの合計
-    total_orphaned = bump_orphaned + sticky_orphaned + panel_orphaned
+    total_orphaned = sticky_orphaned + panel_orphaned
 
     content = f"""
     <div class="p-6">
@@ -189,13 +183,6 @@ def maintenance_page(
             <div class="bg-gray-800 p-6 rounded-lg mb-6">
                 <h2 class="text-lg font-semibold mb-4">Database Statistics</h2>
                 <div class="grid grid-cols-2 md:grid-cols-3 gap-4 text-center">
-                    <div class="bg-gray-700 p-4 rounded">
-                        <p class="text-2xl font-bold">{bump_total}</p>
-                        <p class="text-gray-400 text-sm">Bump Configs</p>
-                        <p class="text-yellow-400 text-xs mt-1">
-                            Orphaned: {bump_orphaned}
-                        </p>
-                    </div>
                     <div class="bg-gray-700 p-4 rounded">
                         <p class="text-2xl font-bold">{sticky_total}</p>
                         <p class="text-gray-400 text-sm">Stickies</p>
@@ -258,11 +245,6 @@ def maintenance_page(
                 The following orphaned data will be permanently deleted:
             </p>
             <div class="bg-gray-700 rounded p-4 mb-4 space-y-2 text-sm">
-                {
-        ""
-        if bump_orphaned == 0
-        else f'<div class="flex justify-between"><span>Bump Configs:</span><span class="text-yellow-400">{bump_orphaned}</span></div>'
-    }
                 {
         ""
         if sticky_orphaned == 0

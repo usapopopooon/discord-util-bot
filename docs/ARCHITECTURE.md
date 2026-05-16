@@ -48,10 +48,8 @@ src/
 ├── config.py                  # 設定管理
 ├── constants.py               # 定数
 ├── utils.py                   # ユーティリティ
-├── cogs/                      # Bot 機能 (11 cogs)
+├── cogs/                      # Bot 機能
 │   ├── admin.py               # 管理コマンド
-│   ├── voice.py               # 一時 VC
-│   ├── bump.py                # Bump リマインダー
 │   ├── sticky.py              # Sticky メッセージ
 │   ├── role_panel.py          # ロールパネル
 │   ├── ticket.py              # チケット
@@ -76,9 +74,7 @@ src/
     ├── email_service.py       # メール送信
     └── routes/
         ├── api_auth.py        # /api/v1/auth
-        ├── api_lobbies.py     # /api/v1/lobbies
         ├── api_sticky.py      # /api/v1/sticky
-        ├── api_bump.py        # /api/v1/bump
         ├── api_rolepanel.py   # /api/v1/rolepanels
         ├── api_automod.py     # /api/v1/automod
         ├── api_ticket.py      # /api/v1/tickets
@@ -94,9 +90,7 @@ frontend/
 │   ├── app/                   # Next.js ページ (26 ページ)
 │   │   ├── login/
 │   │   └── dashboard/
-│   │       ├── lobbies/
 │   │       ├── sticky/
-│   │       ├── bump/
 │   │       ├── automod/       # rules, new, edit, logs, banlist, settings
 │   │       ├── roles/         # list, new, detail
 │   │       ├── tickets/       # list, detail, panels/*
@@ -137,9 +131,7 @@ frontend/
 | プレフィックス | 内容 |
 |---------------|------|
 | `/api/v1/auth` | 認証 (login, logout, me, setup-status) |
-| `/api/v1/lobbies` | ロビー管理 |
 | `/api/v1/sticky` | Sticky メッセージ |
-| `/api/v1/bump` | Bump 設定 + リマインダー |
 | `/api/v1/rolepanels` | ロールパネル + アイテム + Discord 投稿 |
 | `/api/v1/automod` | ルール CRUD + ログ + 設定 + BANリスト |
 | `/api/v1/tickets` | チケット + パネル + カテゴリ |
@@ -161,7 +153,6 @@ frontend/
 
 - `AdminUser` — 管理者
 - `Lobby` / `VoiceSession` / `VoiceSessionMember` — 一時 VC
-- `BumpConfig` / `BumpReminder` — Bump
 - `StickyMessage` — Sticky
 - `RolePanel` / `RolePanelItem` — ロールパネル
 - `AutoModRule` / `AutoModConfig` / `AutoModLog` / `AutoModIntroPost` / `AutoModBanList` — AutoMod

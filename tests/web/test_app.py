@@ -25,8 +25,6 @@ from src.database.models import (
     AutoModRule,
     BanLog,
     BotActivity,
-    BumpConfig,
-    BumpReminder,
     DiscordChannel,
     DiscordGuild,
     DiscordRole,
@@ -297,7 +295,6 @@ class TestDashboardRoute:
         assert "Dashboard" in response.text
         assert "Lobbies" in response.text
         assert "Sticky Messages" in response.text
-        assert "Bump Reminders" in response.text
 
 
 # ===========================================================================
@@ -389,113 +386,6 @@ class TestStickyRoutes:
 
 
 # ===========================================================================
-# Bump ルート
-# ===========================================================================
-
-
-class TestBumpRoutes:
-    """/bump ルートのテスト。"""
-
-    async def test_bump_requires_auth(self, client: AsyncClient) -> None:
-        """認証なしでは /login にリダイレクトされる。"""
-        response = await client.get("/bump", follow_redirects=False)
-        assert response.status_code == 302
-        assert response.headers["location"] == "/login"
-
-    async def test_bump_list_empty(self, authenticated_client: AsyncClient) -> None:
-        """Bump 設定がない場合は空メッセージが表示される。"""
-        response = await authenticated_client.get("/bump")
-        assert response.status_code == 200
-        assert "No bump configs" in response.text
-        assert "No bump reminders" in response.text
-
-    async def test_bump_list_with_config(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """Bump Config がある場合は一覧に表示される。"""
-        config = BumpConfig(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-        )
-        db_session.add(config)
-        await db_session.commit()
-
-        response = await authenticated_client.get("/bump")
-        assert response.status_code == 200
-        assert "123456789012345678" in response.text
-
-    async def test_bump_list_with_reminder(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """Bump Reminder がある場合は一覧に表示される。"""
-        reminder = BumpReminder(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-            service_name="DISBOARD",
-        )
-        db_session.add(reminder)
-        await db_session.commit()
-
-        response = await authenticated_client.get("/bump")
-        assert response.status_code == 200
-        assert "DISBOARD" in response.text
-
-    async def test_toggle_reminder(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """Reminder の有効/無効を切り替えられる。"""
-        reminder = BumpReminder(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-            service_name="DISBOARD",
-            is_enabled=True,
-        )
-        db_session.add(reminder)
-        await db_session.commit()
-
-        response = await authenticated_client.post(
-            f"/bump/reminder/{reminder.id}/toggle",
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-
-    async def test_delete_config(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """Config を削除できる。"""
-        config = BumpConfig(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-        )
-        db_session.add(config)
-        await db_session.commit()
-
-        response = await authenticated_client.post(
-            f"/bump/config/{config.guild_id}/delete",
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-
-    async def test_delete_reminder(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """Reminder を削除できる。"""
-        reminder = BumpReminder(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-            service_name="DISBOARD",
-        )
-        db_session.add(reminder)
-        await db_session.commit()
-
-        response = await authenticated_client.post(
-            f"/bump/reminder/{reminder.id}/delete",
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-
-
-# ===========================================================================
 # ギルド・チャンネル名表示 (一覧ページ)
 # ===========================================================================
 
@@ -567,117 +457,6 @@ class TestStickyListWithGuildChannelNames:
         await db_session.commit()
 
         response = await authenticated_client.get("/sticky")
-        assert response.status_code == 200
-        assert "text-yellow-400" in response.text
-
-
-class TestBumpListWithGuildChannelNames:
-    """Bump 一覧ページのギルド・チャンネル名表示テスト。"""
-
-    async def test_config_displays_guild_name_when_cached(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """Config でキャッシュにギルド名がある場合、サーバー名が表示される。"""
-        config = BumpConfig(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-        )
-        guild = DiscordGuild(
-            guild_id="123456789012345678",
-            guild_name="Bump Server",
-        )
-        db_session.add_all([config, guild])
-        await db_session.commit()
-
-        response = await authenticated_client.get("/bump")
-        assert response.status_code == 200
-        assert "Bump Server" in response.text
-
-    async def test_config_displays_channel_name_when_cached(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """Config でキャッシュにチャンネル名がある場合、チャンネル名が表示される。"""
-        config = BumpConfig(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-        )
-        channel = DiscordChannel(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-            channel_name="bump-channel",
-            position=0,
-        )
-        db_session.add_all([config, channel])
-        await db_session.commit()
-
-        response = await authenticated_client.get("/bump")
-        assert response.status_code == 200
-        assert "#bump-channel" in response.text
-
-    async def test_reminder_displays_guild_name_when_cached(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """Reminder でキャッシュにギルド名がある場合、サーバー名が表示される。"""
-        reminder = BumpReminder(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-            service_name="DISBOARD",
-        )
-        guild = DiscordGuild(
-            guild_id="123456789012345678",
-            guild_name="Reminder Server",
-        )
-        db_session.add_all([reminder, guild])
-        await db_session.commit()
-
-        response = await authenticated_client.get("/bump")
-        assert response.status_code == 200
-        assert "Reminder Server" in response.text
-
-    async def test_reminder_displays_channel_name_when_cached(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """Reminder でキャッシュにチャンネル名がある場合、チャンネル名が表示される。"""
-        reminder = BumpReminder(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-            service_name="DISBOARD",
-        )
-        channel = DiscordChannel(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-            channel_name="reminder-channel",
-            position=0,
-        )
-        db_session.add_all([reminder, channel])
-        await db_session.commit()
-
-        response = await authenticated_client.get("/bump")
-        assert response.status_code == 200
-        assert "#reminder-channel" in response.text
-
-    async def test_displays_yellow_id_when_not_cached(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """キャッシュにない場合、ID が黄色で表示される。"""
-        config = BumpConfig(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-        )
-        db_session.add(config)
-        await db_session.commit()
-
-        response = await authenticated_client.get("/bump")
         assert response.status_code == 200
         assert "text-yellow-400" in response.text
 
@@ -1042,39 +821,6 @@ class TestDeleteNonExistent:
         assert response.status_code == 302
         assert response.headers["location"] == "/sticky"
 
-    async def test_delete_nonexistent_bump_config(
-        self, authenticated_client: AsyncClient
-    ) -> None:
-        """存在しない BumpConfig の削除はリダイレクトで返る。"""
-        response = await authenticated_client.post(
-            "/bump/config/999999999999999999/delete",
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert response.headers["location"] == "/bump"
-
-    async def test_delete_nonexistent_bump_reminder(
-        self, authenticated_client: AsyncClient
-    ) -> None:
-        """存在しない BumpReminder の削除はリダイレクトで返る。"""
-        response = await authenticated_client.post(
-            "/bump/reminder/99999/delete",
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert response.headers["location"] == "/bump"
-
-    async def test_toggle_nonexistent_bump_reminder(
-        self, authenticated_client: AsyncClient
-    ) -> None:
-        """存在しない BumpReminder のトグルはリダイレクトで返る。"""
-        response = await authenticated_client.post(
-            "/bump/reminder/99999/toggle",
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert response.headers["location"] == "/bump"
-
 
 # ===========================================================================
 # セッションユーティリティ
@@ -1158,28 +904,6 @@ class TestUnauthenticatedPostRequests:
     async def test_sticky_delete_requires_auth(self, client: AsyncClient) -> None:
         """認証なしで Sticky 削除は /login にリダイレクトされる。"""
         response = await client.post("/sticky/123/delete", follow_redirects=False)
-        assert response.status_code == 302
-        assert response.headers["location"] == "/login"
-
-    async def test_bump_config_delete_requires_auth(self, client: AsyncClient) -> None:
-        """認証なしで BumpConfig 削除は /login にリダイレクトされる。"""
-        response = await client.post("/bump/config/123/delete", follow_redirects=False)
-        assert response.status_code == 302
-        assert response.headers["location"] == "/login"
-
-    async def test_bump_reminder_delete_requires_auth(
-        self, client: AsyncClient
-    ) -> None:
-        """認証なしで BumpReminder 削除は /login にリダイレクトされる。"""
-        response = await client.post("/bump/reminder/1/delete", follow_redirects=False)
-        assert response.status_code == 302
-        assert response.headers["location"] == "/login"
-
-    async def test_bump_reminder_toggle_requires_auth(
-        self, client: AsyncClient
-    ) -> None:
-        """認証なしで BumpReminder トグルは /login にリダイレクトされる。"""
-        response = await client.post("/bump/reminder/1/toggle", follow_redirects=False)
         assert response.status_code == 302
         assert response.headers["location"] == "/login"
 
@@ -6314,59 +6038,6 @@ class TestMaintenanceRoutes:
         assert response.status_code == 302
         assert response.headers["location"] == "/login"
 
-    async def test_maintenance_cleanup_deletes_orphaned_bump_configs(
-        self, authenticated_client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """孤立した Bump 設定がクリーンアップで削除される。"""
-        # アクティブなギルド
-        active_guild = DiscordGuild(
-            guild_id="111111111111111111",
-            guild_name="Active Guild",
-            member_count=100,
-        )
-        db_session.add(active_guild)
-
-        # アクティブなギルドの Bump 設定
-        active_bump = BumpConfig(
-            guild_id="111111111111111111",
-            channel_id="222222222222222222",
-        )
-        db_session.add(active_bump)
-
-        # 孤立した Bump 設定
-        orphaned_bump = BumpConfig(
-            guild_id="999999999999999999",
-            channel_id="888888888888888888",
-        )
-        db_session.add(orphaned_bump)
-
-        # 孤立した Bump 設定のリマインダー
-        orphaned_reminder = BumpReminder(
-            guild_id="999999999999999999",
-            channel_id="888888888888888888",
-            service_name="DISBOARD",
-        )
-        db_session.add(orphaned_reminder)
-        await db_session.commit()
-
-        # クリーンアップを実行
-        response = await authenticated_client.post(
-            "/settings/maintenance/cleanup",
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-
-        # 孤立した Bump 設定とリマインダーが削除されていることを確認
-        db_session.expire_all()
-        bump_result = await db_session.execute(select(BumpConfig))
-        bump_configs = list(bump_result.scalars().all())
-        assert len(bump_configs) == 1
-        assert bump_configs[0].guild_id == "111111111111111111"
-
-        reminder_result = await db_session.execute(select(BumpReminder))
-        reminders = list(reminder_result.scalars().all())
-        assert len(reminders) == 0
-
     async def test_maintenance_cleanup_deletes_orphaned_stickies(
         self, authenticated_client: AsyncClient, db_session: AsyncSession
     ) -> None:
@@ -6620,14 +6291,16 @@ class TestGuildChannelNameDisplayIntegration:
             channel_name="一般チャット",
             position=0,
         )
-        bump_config = BumpConfig(
-            guild_id="111111111111111111",
+        sticky = StickyMessage(
             channel_id="222222222222222222",
+            guild_id="111111111111111111",
+            title="こんにちは",
+            description="テスト",
         )
-        db_session.add_all([guild, channel, bump_config])
+        db_session.add_all([guild, channel, sticky])
         await db_session.commit()
 
-        response = await authenticated_client.get("/bump")
+        response = await authenticated_client.get("/sticky")
         assert response.status_code == 200
         assert "日本語サーバー" in response.text
         assert "#一般チャット" in response.text
@@ -8355,91 +8028,6 @@ class TestCsrfValidationFailures:
         assert response.status_code == 302
         assert "/sticky" in response.headers["location"]
 
-    async def test_bump_config_delete_csrf_failure(
-        self,
-        client: AsyncClient,
-        admin_user: AdminUser,
-        db_session: AsyncSession,
-    ) -> None:
-        """bump_config_delete の CSRF 失敗はリダイレクト。"""
-        from unittest.mock import patch
-
-        await self._login_client(client, admin_user)
-
-        bump = BumpConfig(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-        )
-        db_session.add(bump)
-        await db_session.commit()
-
-        with patch("src.web.app.validate_csrf_token", return_value=False):
-            response = await client.post(
-                f"/bump/config/{bump.guild_id}/delete",
-                data={"csrf_token": "bad"},
-                follow_redirects=False,
-            )
-        assert response.status_code == 302
-        assert "/bump" in response.headers["location"]
-
-    async def test_bump_reminder_delete_csrf_failure(
-        self,
-        client: AsyncClient,
-        admin_user: AdminUser,
-        db_session: AsyncSession,
-    ) -> None:
-        """bump_reminder_delete の CSRF 失敗はリダイレクト。"""
-        from unittest.mock import patch
-
-        await self._login_client(client, admin_user)
-
-        reminder = BumpReminder(
-            guild_id="123456789012345678",
-            channel_id="111111111111111111",
-            service_name="DISBOARD",
-        )
-        db_session.add(reminder)
-        await db_session.commit()
-        await db_session.refresh(reminder)
-
-        with patch("src.web.app.validate_csrf_token", return_value=False):
-            response = await client.post(
-                f"/bump/reminder/{reminder.id}/delete",
-                data={"csrf_token": "bad"},
-                follow_redirects=False,
-            )
-        assert response.status_code == 302
-        assert "/bump" in response.headers["location"]
-
-    async def test_bump_reminder_toggle_csrf_failure(
-        self,
-        client: AsyncClient,
-        admin_user: AdminUser,
-        db_session: AsyncSession,
-    ) -> None:
-        """bump_reminder_toggle の CSRF 失敗はリダイレクト。"""
-        from unittest.mock import patch
-
-        await self._login_client(client, admin_user)
-
-        reminder = BumpReminder(
-            guild_id="123456789012345678",
-            channel_id="111111111111111111",
-            service_name="DISBOARD",
-        )
-        db_session.add(reminder)
-        await db_session.commit()
-        await db_session.refresh(reminder)
-
-        with patch("src.web.app.validate_csrf_token", return_value=False):
-            response = await client.post(
-                f"/bump/reminder/{reminder.id}/toggle",
-                data={"csrf_token": "bad"},
-                follow_redirects=False,
-            )
-        assert response.status_code == 302
-        assert "/bump" in response.headers["location"]
-
     async def test_rolepanel_create_csrf_failure(
         self,
         client: AsyncClient,
@@ -8812,82 +8400,6 @@ class TestCooldownEnforcement:
         )
         assert response.status_code == 302
         assert "/sticky" in response.headers["location"]
-
-    async def test_bump_config_delete_cooldown(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """bump_config_delete のクールダウン。"""
-        from src.web.app import record_form_submit
-
-        bump = BumpConfig(
-            guild_id="123456789012345678",
-            channel_id="987654321098765432",
-        )
-        db_session.add(bump)
-        await db_session.commit()
-
-        record_form_submit("test@example.com", f"/bump/config/{bump.guild_id}/delete")
-        response = await authenticated_client.post(
-            f"/bump/config/{bump.guild_id}/delete",
-            data={},
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert "/bump" in response.headers["location"]
-
-    async def test_bump_reminder_delete_cooldown(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """bump_reminder_delete のクールダウン。"""
-        from src.web.app import record_form_submit
-
-        reminder = BumpReminder(
-            guild_id="123456789012345678",
-            channel_id="111111111111111111",
-            service_name="DISBOARD",
-        )
-        db_session.add(reminder)
-        await db_session.commit()
-        await db_session.refresh(reminder)
-
-        record_form_submit("test@example.com", f"/bump/reminder/{reminder.id}/delete")
-        response = await authenticated_client.post(
-            f"/bump/reminder/{reminder.id}/delete",
-            data={},
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert "/bump" in response.headers["location"]
-
-    async def test_bump_reminder_toggle_cooldown(
-        self,
-        authenticated_client: AsyncClient,
-        db_session: AsyncSession,
-    ) -> None:
-        """bump_reminder_toggle のクールダウン。"""
-        from src.web.app import record_form_submit
-
-        reminder = BumpReminder(
-            guild_id="123456789012345678",
-            channel_id="111111111111111111",
-            service_name="DISBOARD",
-        )
-        db_session.add(reminder)
-        await db_session.commit()
-        await db_session.refresh(reminder)
-
-        record_form_submit("test@example.com", f"/bump/reminder/{reminder.id}/toggle")
-        response = await authenticated_client.post(
-            f"/bump/reminder/{reminder.id}/toggle",
-            data={},
-            follow_redirects=False,
-        )
-        assert response.status_code == 302
-        assert "/bump" in response.headers["location"]
 
     async def test_rolepanel_delete_cooldown(
         self,

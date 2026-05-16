@@ -21,20 +21,6 @@ export interface StickyMessage {
   cooldown_seconds: number
 }
 
-// Bump
-export interface BumpConfig {
-  guild_id: string
-  channel_id: string
-  service_name: string
-}
-export interface BumpReminder {
-  id: number
-  guild_id: string
-  channel_id: string
-  service_name: string
-  enabled: boolean
-}
-
 // JoinRole
 export interface JoinRoleConfig {
   id: number

@@ -16,8 +16,6 @@ from src.constants import (
 )
 from src.database.models import (
     AdminUser,
-    BumpConfig,
-    BumpReminder,
     DiscordGuild,
     RolePanel,
     SiteSettings,
@@ -380,11 +378,6 @@ async def settings_maintenance(
     guild_result = await db.execute(select(DiscordGuild.guild_id))
     active_guild_ids = {row[0] for row in guild_result.fetchall()}
 
-    # Get all bump configs and count orphaned
-    bump_result = await db.execute(select(BumpConfig))
-    bump_configs = list(bump_result.scalars().all())
-    bump_orphaned = sum(1 for c in bump_configs if c.guild_id not in active_guild_ids)
-
     # Get all stickies and count orphaned
     sticky_result = await db.execute(select(StickyMessage))
     stickies = list(sticky_result.scalars().all())
@@ -397,8 +390,6 @@ async def settings_maintenance(
 
     return HTMLResponse(
         content=maintenance_page(
-            bump_total=len(bump_configs),
-            bump_orphaned=bump_orphaned,
             sticky_total=len(stickies),
             sticky_orphaned=sticky_orphaned,
             panel_total=len(panels),
@@ -457,8 +448,6 @@ async def settings_maintenance_cleanup(
     if not _app.validate_csrf_token(csrf_token):
         return HTMLResponse(
             content=maintenance_page(
-                bump_total=0,
-                bump_orphaned=0,
                 sticky_total=0,
                 sticky_orphaned=0,
                 panel_total=0,
@@ -483,23 +472,6 @@ async def settings_maintenance_cleanup(
     active_guild_ids = {row[0] for row in guild_result.fetchall()}
 
     deleted_counts: list[str] = []
-
-    # Delete orphaned bump configs and their reminders
-    bump_result = await db.execute(select(BumpConfig))
-    bump_configs = list(bump_result.scalars().all())
-    bump_deleted = 0
-    for config in bump_configs:
-        if config.guild_id not in active_guild_ids:
-            # Also delete associated reminders
-            reminder_result = await db.execute(
-                select(BumpReminder).where(BumpReminder.guild_id == config.guild_id)
-            )
-            for reminder in reminder_result.scalars().all():
-                await db.delete(reminder)
-            await db.delete(config)
-            bump_deleted += 1
-    if bump_deleted > 0:
-        deleted_counts.append(f"{bump_deleted} bump configs")
 
     # Delete orphaned stickies
     sticky_result = await db.execute(select(StickyMessage))

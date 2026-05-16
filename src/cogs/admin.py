@@ -16,11 +16,6 @@ from discord.ext import commands
 from src.bot import make_activity
 from src.constants import DEFAULT_EMBED_COLOR
 from src.database.engine import async_session
-from src.services.bump_service import (
-    delete_bump_config,
-    delete_bump_reminders_by_guild,
-    get_all_bump_configs,
-)
 from src.services.common_service import upsert_bot_activity
 from src.services.role_panel_service import (
     delete_role_panels_by_guild,
@@ -70,21 +65,7 @@ class AdminCog(commands.Cog):
         results: list[str] = []
 
         async with async_session() as session:
-            # 1. Bump 設定のクリーンアップ
-            bump_configs = await get_all_bump_configs(session)
-            for config in bump_configs:
-                if config.guild_id not in current_guild_ids:
-                    await delete_bump_config(session, config.guild_id)
-                    await delete_bump_reminders_by_guild(session, config.guild_id)
-                    results.append(f"Bump: ギルド {config.guild_id} から削除")
-                elif config.channel_id not in channel_ids_by_guild.get(
-                    config.guild_id, set()
-                ):
-                    await delete_bump_config(session, config.guild_id)
-                    await delete_bump_reminders_by_guild(session, config.guild_id)
-                    results.append(f"Bump: CH削除のため {config.guild_id} から削除")
-
-            # 2. Sticky メッセージのクリーンアップ
+            # 1. Sticky メッセージのクリーンアップ
             stickies = await get_all_sticky_messages(session)
             orphaned_sticky_guilds: set[str] = set()
 
@@ -97,7 +78,7 @@ class AdminCog(commands.Cog):
                 if count > 0:
                     results.append(f"Sticky: ギルド {guild_id} から {count} 件削除")
 
-            # 3. ロールパネルのクリーンアップ
+            # 2. ロールパネルのクリーンアップ
             role_panels = await get_all_role_panels(session)
             orphaned_panel_guilds: set[str] = set()
 
@@ -127,14 +108,10 @@ class AdminCog(commands.Cog):
         current_guild_ids = {str(guild.id) for guild in self.bot.guilds}
 
         async with async_session() as session:
-            bump_configs = await get_all_bump_configs(session)
             stickies = await get_all_sticky_messages(session)
             role_panels = await get_all_role_panels(session)
 
             # 孤立データのカウント
-            orphaned_bumps = sum(
-                1 for c in bump_configs if c.guild_id not in current_guild_ids
-            )
             orphaned_stickies = sum(
                 1 for s in stickies if s.guild_id not in current_guild_ids
             )
@@ -143,11 +120,6 @@ class AdminCog(commands.Cog):
             )
 
         embed = discord.Embed(title="DB統計情報", color=DEFAULT_EMBED_COLOR)
-        embed.add_field(
-            name="Bump設定",
-            value=f"総数: {len(bump_configs)}\n孤立: {orphaned_bumps}",
-            inline=True,
-        )
         embed.add_field(
             name="Sticky",
             value=f"総数: {len(stickies)}\n孤立: {orphaned_stickies}",
