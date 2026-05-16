@@ -392,9 +392,9 @@ class TestTicketCloseButton:
         assert button.style == discord.ButtonStyle.danger
 
     def test_button_label(self) -> None:
-        """ラベルが Close。"""
+        """ラベルがクローズ。"""
         button = TicketCloseButton(ticket_id=1)
-        assert button.label == "Close"
+        assert button.label == "クローズ"
 
 
 # =============================================================================
@@ -416,9 +416,9 @@ class TestTicketClaimButton:
         assert button.style == discord.ButtonStyle.success
 
     def test_button_label(self) -> None:
-        """ラベルが Claim。"""
+        """ラベルが担当する。"""
         button = TicketClaimButton(ticket_id=1)
-        assert button.label == "Claim"
+        assert button.label == "担当する"
 
 
 # =============================================================================

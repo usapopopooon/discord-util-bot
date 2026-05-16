@@ -777,9 +777,7 @@ class EventLogCog(commands.Cog):
         reason_text = reason or "No reason provided"
         # BAN 理由が長すぎると他フィールドが見づらくなるため短縮表示する。
         reason_text = truncate_content(reason_text, max_len=300)
-        embed.add_field(
-            name="Reason", value=reason_text, inline=False
-        )
+        embed.add_field(name="Reason", value=reason_text, inline=False)
         set_user_thumbnail(embed, user)
 
         await self._send_log(guild, "member_ban", embed)

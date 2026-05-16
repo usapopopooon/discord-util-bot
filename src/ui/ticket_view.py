@@ -374,7 +374,7 @@ class TicketCloseButton(discord.ui.Button[Any]):
 
     def __init__(self, ticket_id: int) -> None:
         super().__init__(
-            label="Close",
+            label="クローズ",
             emoji="\U0001f512",
             style=discord.ButtonStyle.danger,
             custom_id=f"ticket_ctrl:{ticket_id}:close",
@@ -462,7 +462,7 @@ class TicketClaimButton(discord.ui.Button[Any]):
 
     def __init__(self, ticket_id: int) -> None:
         super().__init__(
-            label="Claim",
+            label="担当する",
             emoji="\u2705",
             style=discord.ButtonStyle.success,
             custom_id=f"ticket_ctrl:{ticket_id}:claim",

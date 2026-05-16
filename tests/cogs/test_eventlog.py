@@ -2191,7 +2191,9 @@ class TestOnGuildChannelUpdate:
         ch.send.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_logs_overwrite_only_changes_without_empty_changes_field(self) -> None:
+    async def test_logs_overwrite_only_changes_without_empty_changes_field(
+        self,
+    ) -> None:
         """overwrite差分のみでも送信し、空の Changes フィールドは出さない。"""
         cog = _make_cog()
         guild, ch = _make_guild()
