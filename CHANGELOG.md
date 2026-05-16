@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-05-16
+
+### Changed
+- Ticket control button labels in Discord UI were localized to Japanese:
+  - `Close` → `クローズ`
+  - `Claim` → `担当する`
+- Event log output was enhanced across message/channel/voice/thread/invite/server events:
+  - Added richer deleted-message details (attachments, image preview, reply reference).
+  - Improved channel snapshot display (`<#id> (name at event time)`).
+  - Expanded voice and audit-related event details.
+
+### Fixed
+- Truncated overly long BAN reason values in event log embeds to keep other fields visible.
+- Prevented empty `Changes` field emission in channel-update logs when only overwrite diffs exist.
+- Fixed spell-lint failures in tests caused by non-dictionary sample names.
+
 ## [1.0.0] - 2026-05-09
 
 ### Changed
