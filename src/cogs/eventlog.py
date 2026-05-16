@@ -37,7 +37,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+import re
+from datetime import UTC, datetime, timedelta
 
 import discord
 from discord.ext import commands, tasks
@@ -54,6 +55,168 @@ from src.services.common_service import get_enabled_event_log_configs
 from src.utils import format_datetime
 
 logger = logging.getLogger(__name__)
+_URL_PATTERN = re.compile(r"https?://\S+")
+
+
+def _is_image_attachment(attachment: discord.Attachment) -> bool:
+    """Return True when the attachment is likely an image."""
+    content_type = (attachment.content_type or "").lower()
+    if content_type.startswith("image/"):
+        return True
+
+    filename = attachment.filename.lower()
+    return filename.endswith(
+        (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".svg")
+    )
+
+
+def _format_attachment_line(attachment: discord.Attachment) -> str:
+    """Format one attachment line for embed field."""
+    label = attachment.filename or "attachment"
+    return f"[{label}]({attachment.url})"
+
+
+def _format_permission_label(permission_name: str) -> str:
+    """Convert permission key into a human-readable label."""
+    return permission_name.replace("_", " ").title()
+
+
+def _build_channel_overwrite_lines(
+    channel: discord.abc.GuildChannel,
+) -> list[str]:
+    """Build display lines for channel permission overwrites."""
+    overwrites = getattr(channel, "overwrites", {})
+    if not isinstance(overwrites, dict) or not overwrites:
+        return []
+
+    def _sort_key(
+        item: tuple[discord.abc.Snowflake, discord.PermissionOverwrite],
+    ) -> tuple[int, str]:
+        target = item[0]
+        if isinstance(target, discord.Role):
+            return (0, getattr(target, "name", "").lower())
+        if isinstance(target, discord.Member):
+            return (1, getattr(target, "name", "").lower())
+        return (2, getattr(target, "name", "").lower())
+
+    lines: list[str] = []
+    for target, overwrite in sorted(overwrites.items(), key=_sort_key):
+        allow, deny = overwrite.pair()
+        allow_perms = [name for name, value in allow if value]
+        deny_perms = [name for name, value in deny if value]
+        if not allow_perms and not deny_perms:
+            continue
+
+        if isinstance(target, discord.Role):
+            lines.append(f"Role override for {target.name}")
+        elif isinstance(target, discord.Member):
+            lines.append(f"Member override for {target.name}")
+        else:
+            target_name = getattr(target, "name", f"ID {target.id}")
+            lines.append(f"Override for {target_name}")
+
+        for permission_name in sorted(allow_perms):
+            lines.append(f"{_format_permission_label(permission_name)}: ✅")
+        for permission_name in sorted(deny_perms):
+            lines.append(f"{_format_permission_label(permission_name)}: ❌")
+
+    return lines
+
+
+def _add_long_field(embed: discord.Embed, name: str, lines: list[str]) -> None:
+    """Add one or more embed fields while respecting field length limits."""
+    if not lines:
+        return
+
+    chunks: list[str] = []
+    current = ""
+    for line in lines:
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > 1024:
+            if current:
+                chunks.append(current)
+            current = line[:1024]
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+
+    for index, chunk in enumerate(chunks):
+        field_name = name if index == 0 else f"{name} (cont.)"
+        embed.add_field(name=field_name, value=chunk, inline=False)
+
+
+def _format_channel_snapshot(channel: object) -> str:
+    """Format channel mention with a name snapshot."""
+    channel_id = getattr(channel, "id", "?")
+    channel_name = getattr(channel, "name", "unknown")
+    return f"<#{channel_id}> ({channel_name})"
+
+
+def _extract_urls(content: str) -> set[str]:
+    """Extract URL-like substrings from message content."""
+    return set(_URL_PATTERN.findall(content))
+
+
+def _extract_user_mentions(content: str) -> set[str]:
+    """Extract user mentions from message content."""
+    return set(re.findall(r"<@!?\d+>", content))
+
+
+def _format_permission_list(diff: set[str]) -> str:
+    """Format permission names for human-readable output."""
+    if not diff:
+        return "(none)"
+    return ", ".join(_format_permission_label(name) for name in sorted(diff))
+
+
+def _build_overwrite_diff_lines(
+    before: discord.abc.GuildChannel,
+    after: discord.abc.GuildChannel,
+) -> list[str]:
+    """Build diff lines for channel permission overwrites."""
+    before_overwrites = getattr(before, "overwrites", {}) or {}
+    after_overwrites = getattr(after, "overwrites", {}) or {}
+    if not isinstance(before_overwrites, dict):
+        before_overwrites = {}
+    if not isinstance(after_overwrites, dict):
+        after_overwrites = {}
+    all_targets = set(before_overwrites.keys()) | set(after_overwrites.keys())
+    lines: list[str] = []
+
+    def _target_name(target: object) -> str:
+        if isinstance(target, discord.Role):
+            return f"Role {target.name}"
+        if isinstance(target, discord.Member):
+            return f"Member {target.name}"
+        return f"Target {getattr(target, 'id', '?')}"
+
+    for target in sorted(all_targets, key=lambda t: getattr(t, "name", "")):
+        before_ow = before_overwrites.get(target, discord.PermissionOverwrite())
+        after_ow = after_overwrites.get(target, discord.PermissionOverwrite())
+        b_allow, b_deny = before_ow.pair()
+        a_allow, a_deny = after_ow.pair()
+        b_allow_set = {n for n, v in b_allow if v}
+        b_deny_set = {n for n, v in b_deny if v}
+        a_allow_set = {n for n, v in a_allow if v}
+        a_deny_set = {n for n, v in a_deny if v}
+        if b_allow_set == a_allow_set and b_deny_set == a_deny_set:
+            continue
+
+        lines.append(_target_name(target))
+        allow_added = a_allow_set - b_allow_set
+        allow_removed = b_allow_set - a_allow_set
+        deny_added = a_deny_set - b_deny_set
+        deny_removed = b_deny_set - a_deny_set
+        if allow_added:
+            lines.append(f"  +Allow: {_format_permission_list(allow_added)}")
+        if allow_removed:
+            lines.append(f"  -Allow: {_format_permission_list(allow_removed)}")
+        if deny_added:
+            lines.append(f"  +Deny: {_format_permission_list(deny_added)}")
+        if deny_removed:
+            lines.append(f"  -Deny: {_format_permission_list(deny_removed)}")
+    return lines
 
 
 class _InviteData:
@@ -83,6 +246,10 @@ class EventLogCog(commands.Cog):
         self._cache: dict[tuple[str, str], list[str]] = {}
         # 招待キャッシュ: guild_id -> {invite_code: uses}
         self._invite_cache: dict[int, dict[str, _InviteData]] = {}
+        # ボイス在室トラッキング: user_id -> (channel_id, joined_at)
+        self._voice_sessions: dict[int, tuple[int, datetime]] = {}
+        # 直近重複抑制: (guild_id, event_type, fingerprint) -> seen_at
+        self._recent_event_fingerprints: dict[tuple[int, str, str], datetime] = {}
 
     async def cog_load(self) -> None:
         """Cog 読み込み時にキャッシュ同期タスクを開始する。"""
@@ -149,6 +316,25 @@ class EventLogCog(commands.Cog):
         self, guild: discord.Guild, event_type: str, embed: discord.Embed
     ) -> None:
         """指定イベントタイプの全チャンネルに Embed を送信する。"""
+        fingerprint = (
+            f"{embed.title}|{','.join(f'{f.name}:{f.value}' for f in embed.fields)}"
+        )
+        key = (guild.id, event_type, fingerprint)
+        now = datetime.now(UTC)
+        seen_at = self._recent_event_fingerprints.get(key)
+        if seen_at and now - seen_at < timedelta(seconds=2):
+            return
+        self._recent_event_fingerprints[key] = now
+
+        # 古いキーを軽量掃除
+        expired = [
+            k
+            for k, t in self._recent_event_fingerprints.items()
+            if now - t > timedelta(minutes=5)
+        ]
+        for k in expired:
+            self._recent_event_fingerprints.pop(k, None)
+
         channel_ids = self._get_channels(guild, event_type)
         for channel_id in channel_ids:
             channel = guild.get_channel(int(channel_id))
@@ -207,7 +393,7 @@ class EventLogCog(commands.Cog):
         add_user_field(embed, message.author, label="Author")
         embed.add_field(
             name="Channel",
-            value=f"<#{message.channel.id}>",
+            value=_format_channel_snapshot(message.channel),
             inline=True,
         )
         if deleted_by_id and deleted_by_id != message.author.id:
@@ -216,7 +402,38 @@ class EventLogCog(commands.Cog):
                 value=f"<@{deleted_by_id}>",
                 inline=True,
             )
+        if message.reference and getattr(message.reference, "message_id", None):
+            ref_id = message.reference.message_id
+            embed.add_field(
+                name="Reply To",
+                value=f"`{ref_id}`",
+                inline=True,
+            )
         embed.add_field(name="Content", value=content, inline=False)
+
+        attachments = list(message.attachments)
+        if attachments:
+            attachment_lines = [_format_attachment_line(a) for a in attachments]
+            embed.add_field(
+                name="Attachments",
+                value=truncate_content("\n".join(attachment_lines), max_len=1024),
+                inline=False,
+            )
+            metadata_lines = [
+                (f"{a.filename}: type={a.content_type or 'unknown'}, size={a.size}B")
+                for a in attachments
+            ]
+            embed.add_field(
+                name="Attachment Metadata",
+                value=truncate_content("\n".join(metadata_lines), max_len=1024),
+                inline=False,
+            )
+            first_image = next(
+                (a for a in attachments if _is_image_attachment(a)),
+                None,
+            )
+            if first_image:
+                embed.set_image(url=first_image.url)
         set_user_thumbnail(embed, message.author)
 
         await self._send_log(message.guild, "message_delete", embed)
@@ -240,11 +457,74 @@ class EventLogCog(commands.Cog):
         add_user_field(embed, after.author, label="Author")
         embed.add_field(
             name="Channel",
-            value=f"<#{after.channel.id}>",
+            value=_format_channel_snapshot(after.channel),
             inline=True,
         )
         embed.add_field(name="Before", value=before_content, inline=False)
         embed.add_field(name="After", value=after_content, inline=False)
+        added_urls = _extract_urls(after.content or "") - _extract_urls(
+            before.content or ""
+        )
+        removed_urls = _extract_urls(before.content or "") - _extract_urls(
+            after.content or ""
+        )
+        if added_urls or removed_urls:
+            url_changes = []
+            if added_urls:
+                url_changes.append(
+                    "Added: "
+                    f"{truncate_content(', '.join(sorted(added_urls)), max_len=900)}"
+                )
+            if removed_urls:
+                url_changes.append(
+                    "Removed: "
+                    f"{truncate_content(', '.join(sorted(removed_urls)), max_len=900)}"
+                )
+            embed.add_field(
+                name="URL Changes", value="\n".join(url_changes), inline=False
+            )
+
+        added_mentions = _extract_user_mentions(
+            after.content or ""
+        ) - _extract_user_mentions(before.content or "")
+        removed_mentions = _extract_user_mentions(
+            before.content or ""
+        ) - _extract_user_mentions(after.content or "")
+        if added_mentions or removed_mentions:
+            mention_changes = []
+            if added_mentions:
+                mention_changes.append(f"Added: {', '.join(sorted(added_mentions))}")
+            if removed_mentions:
+                mention_changes.append(
+                    f"Removed: {', '.join(sorted(removed_mentions))}"
+                )
+            embed.add_field(
+                name="Mention Changes",
+                value=truncate_content("\n".join(mention_changes), max_len=1024),
+                inline=False,
+            )
+
+        before_attachment_urls = {a.url for a in before.attachments}
+        after_attachment_urls = {a.url for a in after.attachments}
+        if before_attachment_urls != after_attachment_urls:
+            added_files = after_attachment_urls - before_attachment_urls
+            removed_files = before_attachment_urls - after_attachment_urls
+            file_changes = []
+            if added_files:
+                file_changes.append(
+                    "Added: "
+                    f"{truncate_content(', '.join(sorted(added_files)), max_len=900)}"
+                )
+            if removed_files:
+                file_changes.append(
+                    "Removed: "
+                    f"{truncate_content(', '.join(sorted(removed_files)), max_len=900)}"
+                )
+            embed.add_field(
+                name="Attachment Changes",
+                value="\n".join(file_changes),
+                inline=False,
+            )
         if after.jump_url:
             embed.add_field(
                 name="Jump",
@@ -274,7 +554,11 @@ class EventLogCog(commands.Cog):
             authors_str += f" (+{len(authors) - 10} more)"
 
         embed = create_event_embed("Messages Purged", "message_purge")
-        embed.add_field(name="Channel", value=f"<#{channel.id}>", inline=True)
+        embed.add_field(
+            name="Channel",
+            value=_format_channel_snapshot(channel),
+            inline=True,
+        )
         embed.add_field(name="Count", value=str(count), inline=True)
         if authors_str:
             embed.add_field(name="Authors", value=authors_str, inline=False)
@@ -490,8 +774,11 @@ class EventLogCog(commands.Cog):
                 value=f"<@{mod_id}>",
                 inline=True,
             )
+        reason_text = reason or "No reason provided"
+        # BAN 理由が長すぎると他フィールドが見づらくなるため短縮表示する。
+        reason_text = truncate_content(reason_text, max_len=300)
         embed.add_field(
-            name="Reason", value=reason or "No reason provided", inline=False
+            name="Reason", value=reason_text, inline=False
         )
         set_user_thumbnail(embed, user)
 
@@ -535,6 +822,9 @@ class EventLogCog(commands.Cog):
         # タイムアウト (timed_out_until が None → 値 に変化)
         if not before.timed_out_until and after.timed_out_until:
             await self._handle_timeout(after)
+        # タイムアウト解除
+        if before.timed_out_until and not after.timed_out_until:
+            await self._handle_timeout_removed(after)
 
         # ロール変更
         if before.roles != after.roles:
@@ -543,6 +833,10 @@ class EventLogCog(commands.Cog):
         # ニックネーム変更
         if before.nick != after.nick:
             await self._handle_nickname_change(before, after)
+
+        # 表示名やアバター変更
+        if before.display_name != after.display_name or before.avatar != after.avatar:
+            await self._handle_profile_change(before, after)
 
     async def _handle_timeout(self, member: discord.Member) -> None:
         """タイムアウトログを送信する。"""
@@ -601,6 +895,13 @@ class EventLogCog(commands.Cog):
             value="\n".join(changes),
             inline=False,
         )
+        mod_id, reason = await find_audit_entry(
+            after.guild, discord.AuditLogAction.member_update, after.id
+        )
+        if mod_id:
+            embed.add_field(name="Updated By", value=f"<@{mod_id}>", inline=True)
+        if reason:
+            embed.add_field(name="Reason", value=reason, inline=False)
         set_user_thumbnail(embed, after)
 
         await self._send_log(after.guild, "role_change", embed)
@@ -624,8 +925,58 @@ class EventLogCog(commands.Cog):
             value=after.nick or "(none)",
             inline=True,
         )
+        mod_id, reason = await find_audit_entry(
+            after.guild, discord.AuditLogAction.member_update, after.id
+        )
+        if mod_id:
+            embed.add_field(name="Updated By", value=f"<@{mod_id}>", inline=True)
+        if reason:
+            embed.add_field(name="Reason", value=reason, inline=False)
         set_user_thumbnail(embed, after)
 
+        await self._send_log(after.guild, "nickname_change", embed)
+
+    async def _handle_timeout_removed(self, member: discord.Member) -> None:
+        """タイムアウト解除ログを送信する。"""
+        if not self._get_channels(member.guild, "member_timeout"):
+            return
+        mod_id, reason = await find_audit_entry(
+            member.guild, discord.AuditLogAction.member_update, member.id
+        )
+        embed = create_event_embed("Member Timeout Removed", "member_timeout")
+        add_user_field(embed, member)
+        if mod_id:
+            embed.add_field(name="Updated By", value=f"<@{mod_id}>", inline=True)
+        embed.add_field(name="Status", value="timeout removed", inline=True)
+        if reason:
+            embed.add_field(name="Reason", value=reason, inline=False)
+        set_user_thumbnail(embed, member)
+        await self._send_log(member.guild, "member_timeout", embed)
+
+    async def _handle_profile_change(
+        self, before: discord.Member, after: discord.Member
+    ) -> None:
+        """表示名・アバター変更ログを送信する。"""
+        if not self._get_channels(after.guild, "nickname_change"):
+            return
+
+        # ニックネーム変更は専用ログで送信するため重複を避ける。
+        if before.nick != after.nick:
+            return
+
+        changes: list[str] = []
+        if before.display_name != after.display_name:
+            changes.append(
+                f"Display Name: {before.display_name} → {after.display_name}"
+            )
+        if before.avatar != after.avatar:
+            changes.append("Avatar: changed")
+        if not changes:
+            return
+        embed = create_event_embed("Member Profile Updated", "nickname_change")
+        add_user_field(embed, after)
+        embed.add_field(name="Changes", value="\n".join(changes), inline=False)
+        set_user_thumbnail(embed, after)
         await self._send_log(after.guild, "nickname_change", embed)
 
     # =====================================================================
@@ -647,6 +998,17 @@ class EventLogCog(commands.Cog):
         )
         if channel.category:
             embed.add_field(name="Category", value=channel.category.name, inline=True)
+        embed.add_field(name="Channel ID", value=str(channel.id), inline=True)
+
+        overwrite_lines = _build_channel_overwrite_lines(channel)
+        _add_long_field(embed, "Permission Overwrites", overwrite_lines)
+        mod_id, reason = await find_audit_entry(
+            channel.guild, discord.AuditLogAction.channel_create, channel.id
+        )
+        if mod_id:
+            embed.add_field(name="Created By", value=f"<@{mod_id}>", inline=True)
+        if reason:
+            embed.add_field(name="Reason", value=reason, inline=False)
 
         await self._send_log(channel.guild, "channel_create", embed)
 
@@ -665,6 +1027,13 @@ class EventLogCog(commands.Cog):
         )
         if channel.category:
             embed.add_field(name="Category", value=channel.category.name, inline=True)
+        mod_id, reason = await find_audit_entry(
+            channel.guild, discord.AuditLogAction.channel_delete, channel.id
+        )
+        if mod_id:
+            embed.add_field(name="Deleted By", value=f"<@{mod_id}>", inline=True)
+        if reason:
+            embed.add_field(name="Reason", value=reason, inline=False)
 
         await self._send_log(channel.guild, "channel_delete", embed)
 
@@ -699,15 +1068,43 @@ class EventLogCog(commands.Cog):
             a_nsfw = getattr(after, "nsfw", False)
             if b_nsfw != a_nsfw:
                 changes.append(f"**NSFW:** {b_nsfw} → {a_nsfw}")
+        if before.category != after.category:
+            changes.append(
+                f"**Category:** "
+                f"{before.category.name if before.category else '(none)'}"
+                f" → {after.category.name if after.category else '(none)'}"
+            )
+        if hasattr(before, "bitrate") and hasattr(after, "bitrate"):
+            b_bitrate = getattr(before, "bitrate", None)
+            a_bitrate = getattr(after, "bitrate", None)
+            if b_bitrate != a_bitrate:
+                changes.append(f"**Bitrate:** {b_bitrate} → {a_bitrate}")
+        if hasattr(before, "user_limit") and hasattr(after, "user_limit"):
+            b_user_limit = getattr(before, "user_limit", None)
+            a_user_limit = getattr(after, "user_limit", None)
+            if b_user_limit != a_user_limit:
+                changes.append(f"**User Limit:** {b_user_limit} → {a_user_limit}")
 
-        if not changes:
+        overwrite_changes = _build_overwrite_diff_lines(before, after)
+        if not changes and not overwrite_changes:
             return
 
         embed = create_event_embed("Channel Updated", "channel_update")
         embed.add_field(
             name="Channel", value=f"<#{after.id}> ({after.name})", inline=True
         )
-        embed.add_field(name="Changes", value="\n".join(changes), inline=False)
+        if changes:
+            embed.add_field(name="Changes", value="\n".join(changes), inline=False)
+        if overwrite_changes:
+            _add_long_field(embed, "Overwrite Changes", overwrite_changes)
+
+        mod_id, reason = await find_audit_entry(
+            after.guild, discord.AuditLogAction.channel_update, after.id
+        )
+        if mod_id:
+            embed.add_field(name="Updated By", value=f"<@{mod_id}>", inline=True)
+        if reason:
+            embed.add_field(name="Reason", value=reason, inline=False)
 
         await self._send_log(after.guild, "channel_update", embed)
 
@@ -725,6 +1122,13 @@ class EventLogCog(commands.Cog):
         embed.add_field(name="Role", value=f"{role.mention} ({role.name})", inline=True)
         if role.color.value:
             embed.add_field(name="Color", value=f"#{role.color.value:06X}", inline=True)
+        mod_id, reason = await find_audit_entry(
+            role.guild, discord.AuditLogAction.role_create, role.id
+        )
+        if mod_id:
+            embed.add_field(name="Created By", value=f"<@{mod_id}>", inline=True)
+        if reason:
+            embed.add_field(name="Reason", value=reason, inline=False)
 
         await self._send_log(role.guild, "role_create", embed)
 
@@ -739,6 +1143,13 @@ class EventLogCog(commands.Cog):
         if role.color.value:
             embed.add_field(name="Color", value=f"#{role.color.value:06X}", inline=True)
         embed.add_field(name="Members", value=str(len(role.members)), inline=True)
+        mod_id, reason = await find_audit_entry(
+            role.guild, discord.AuditLogAction.role_delete, role.id
+        )
+        if mod_id:
+            embed.add_field(name="Deleted By", value=f"<@{mod_id}>", inline=True)
+        if reason:
+            embed.add_field(name="Reason", value=reason, inline=False)
 
         await self._send_log(role.guild, "role_delete", embed)
 
@@ -774,6 +1185,13 @@ class EventLogCog(commands.Cog):
             name="Role", value=f"{after.mention} ({after.name})", inline=True
         )
         embed.add_field(name="Changes", value="\n".join(changes), inline=False)
+        mod_id, reason = await find_audit_entry(
+            after.guild, discord.AuditLogAction.role_update, after.id
+        )
+        if mod_id:
+            embed.add_field(name="Updated By", value=f"<@{mod_id}>", inline=True)
+        if reason:
+            embed.add_field(name="Reason", value=reason, inline=False)
 
         await self._send_log(after.guild, "role_update", embed)
 
@@ -797,11 +1215,20 @@ class EventLogCog(commands.Cog):
         # Join
         if before.channel is None and after.channel is not None:
             action = "Joined Voice Channel"
-            detail = f"<#{after.channel.id}>"
+            detail = _format_channel_snapshot(after.channel)
+            self._voice_sessions[member.id] = (after.channel.id, datetime.now(UTC))
+            member_count = len(getattr(after.channel, "members", []))
+            extra_detail = f"Members now: {member_count}"
         # Leave
         elif before.channel is not None and after.channel is None:
             action = "Left Voice Channel"
-            detail = f"<#{before.channel.id}>"
+            detail = _format_channel_snapshot(before.channel)
+            started = self._voice_sessions.pop(member.id, None)
+            if started and started[0] == before.channel.id:
+                stayed = datetime.now(UTC) - started[1]
+                extra_detail = f"Stayed: {int(stayed.total_seconds())}s"
+            else:
+                extra_detail = None
         # Move
         elif (
             before.channel is not None
@@ -809,14 +1236,41 @@ class EventLogCog(commands.Cog):
             and before.channel != after.channel
         ):
             action = "Moved Voice Channel"
-            detail = f"<#{before.channel.id}> → <#{after.channel.id}>"
+            detail = (
+                f"{_format_channel_snapshot(before.channel)}"
+                f" → {_format_channel_snapshot(after.channel)}"
+            )
+            self._voice_sessions[member.id] = (after.channel.id, datetime.now(UTC))
+            extra_detail = f"Members now: {len(getattr(after.channel, 'members', []))}"
         else:
-            # mute/deaf 等の状態変更はスキップ
-            return
+            state_changes: list[str] = []
+            tracked = [
+                ("Self Mute", before.self_mute, after.self_mute),
+                ("Self Deaf", before.self_deaf, after.self_deaf),
+                ("Server Mute", before.mute, after.mute),
+                ("Server Deaf", before.deaf, after.deaf),
+                ("Streaming", before.self_stream, after.self_stream),
+                ("Video", before.self_video, after.self_video),
+            ]
+            for label, b_val, a_val in tracked:
+                if b_val != a_val:
+                    state_changes.append(f"{label}: {b_val} → {a_val}")
+            if not state_changes:
+                return
+            action = "Voice State Updated"
+            current_channel = after.channel or before.channel
+            detail = (
+                _format_channel_snapshot(current_channel)
+                if current_channel is not None
+                else "(none)"
+            )
+            extra_detail = "\n".join(state_changes)
 
         embed = create_event_embed(action, "voice_state")
         add_user_field(embed, member)
         embed.add_field(name="Channel", value=detail, inline=True)
+        if extra_detail:
+            embed.add_field(name="Details", value=extra_detail, inline=False)
         set_user_thumbnail(embed, member)
 
         await self._send_log(member.guild, "voice_state", embed)
@@ -854,7 +1308,7 @@ class EventLogCog(commands.Cog):
         if invite.channel:
             embed.add_field(
                 name="Channel",
-                value=f"<#{invite.channel.id}>",
+                value=_format_channel_snapshot(invite.channel),
                 inline=True,
             )
         if invite.max_age:
@@ -869,6 +1323,11 @@ class EventLogCog(commands.Cog):
             embed.add_field(name="Expires", value="Never", inline=True)
         if invite.max_uses:
             embed.add_field(name="Max Uses", value=str(invite.max_uses), inline=True)
+        embed.add_field(
+            name="Temporary",
+            value="Yes" if invite.temporary else "No",
+            inline=True,
+        )
 
         await self._send_log(guild, "invite_create", embed)
 
@@ -892,9 +1351,14 @@ class EventLogCog(commands.Cog):
         if invite.channel:
             embed.add_field(
                 name="Channel",
-                value=f"<#{invite.channel.id}>",
+                value=_format_channel_snapshot(invite.channel),
                 inline=True,
             )
+        embed.add_field(
+            name="Temporary",
+            value="Yes" if invite.temporary else "No",
+            inline=True,
+        )
 
         await self._send_log(guild, "invite_delete", embed)
 
@@ -913,11 +1377,26 @@ class EventLogCog(commands.Cog):
         if thread.parent:
             embed.add_field(
                 name="Parent",
-                value=f"<#{thread.parent.id}>",
+                value=_format_channel_snapshot(thread.parent),
                 inline=True,
             )
         if thread.owner:
             add_user_field(embed, thread.owner, label="Created By")
+        auto_archive_minutes = getattr(thread, "auto_archive_duration", None)
+        if isinstance(auto_archive_minutes, int):
+            embed.add_field(
+                name="Auto Archive",
+                value=f"{auto_archive_minutes}m",
+                inline=True,
+            )
+
+        mod_id, reason = await find_audit_entry(
+            thread.guild, discord.AuditLogAction.thread_create, thread.id
+        )
+        if mod_id is not None:
+            embed.add_field(name="Created By", value=f"<@{mod_id}>", inline=True)
+        if reason:
+            embed.add_field(name="Reason", value=reason, inline=False)
 
         await self._send_log(thread.guild, "thread_create", embed)
 
@@ -932,9 +1411,16 @@ class EventLogCog(commands.Cog):
         if thread.parent:
             embed.add_field(
                 name="Parent",
-                value=f"<#{thread.parent.id}>",
+                value=_format_channel_snapshot(thread.parent),
                 inline=True,
             )
+        mod_id, reason = await find_audit_entry(
+            thread.guild, discord.AuditLogAction.thread_delete, thread.id
+        )
+        if mod_id is not None:
+            embed.add_field(name="Deleted By", value=f"<@{mod_id}>", inline=True)
+        if reason:
+            embed.add_field(name="Reason", value=reason, inline=False)
 
         await self._send_log(thread.guild, "thread_delete", embed)
 
@@ -957,13 +1443,30 @@ class EventLogCog(commands.Cog):
             changes.append(
                 f"**Slowmode:** {before.slowmode_delay}s → {after.slowmode_delay}s"
             )
+        before_auto_archive = getattr(before, "auto_archive_duration", None)
+        after_auto_archive = getattr(after, "auto_archive_duration", None)
+        if before_auto_archive != after_auto_archive:
+            changes.append(
+                f"**Auto Archive:** {before_auto_archive}m → {after_auto_archive}m"
+            )
 
         if not changes:
             return
 
         embed = create_event_embed("Thread Updated", "thread_update")
-        embed.add_field(name="Thread", value=f"<#{after.id}>", inline=True)
+        embed.add_field(
+            name="Thread",
+            value=_format_channel_snapshot(after),
+            inline=True,
+        )
         embed.add_field(name="Changes", value="\n".join(changes), inline=False)
+        mod_id, reason = await find_audit_entry(
+            after.guild, discord.AuditLogAction.thread_update, after.id
+        )
+        if mod_id is not None:
+            embed.add_field(name="Updated By", value=f"<@{mod_id}>", inline=True)
+        if reason:
+            embed.add_field(name="Reason", value=reason, inline=False)
 
         await self._send_log(after.guild, "thread_update", embed)
 
@@ -1006,17 +1509,68 @@ class EventLogCog(commands.Cog):
                 f"{after.default_notifications.name}"
             )
         if before.afk_channel != after.afk_channel:
-            b_afk = f"<#{before.afk_channel.id}>" if before.afk_channel else "(none)"
-            a_afk = f"<#{after.afk_channel.id}>" if after.afk_channel else "(none)"
+            b_afk = (
+                _format_channel_snapshot(before.afk_channel)
+                if before.afk_channel
+                else "(none)"
+            )
+            a_afk = (
+                _format_channel_snapshot(after.afk_channel)
+                if after.afk_channel
+                else "(none)"
+            )
             changes.append(f"**AFK Channel:** {b_afk} → {a_afk}")
         if before.system_channel != after.system_channel:
             b_sys = (
-                f"<#{before.system_channel.id}>" if before.system_channel else "(none)"
+                _format_channel_snapshot(before.system_channel)
+                if before.system_channel
+                else "(none)"
             )
             a_sys = (
-                f"<#{after.system_channel.id}>" if after.system_channel else "(none)"
+                _format_channel_snapshot(after.system_channel)
+                if after.system_channel
+                else "(none)"
             )
             changes.append(f"**System Channel:** {b_sys} → {a_sys}")
+        if before.rules_channel != after.rules_channel:
+            b_rules = (
+                _format_channel_snapshot(before.rules_channel)
+                if before.rules_channel
+                else "(none)"
+            )
+            a_rules = (
+                _format_channel_snapshot(after.rules_channel)
+                if after.rules_channel
+                else "(none)"
+            )
+            changes.append(f"**Rules Channel:** {b_rules} → {a_rules}")
+        if before.public_updates_channel != after.public_updates_channel:
+            b_updates = (
+                _format_channel_snapshot(before.public_updates_channel)
+                if before.public_updates_channel
+                else "(none)"
+            )
+            a_updates = (
+                _format_channel_snapshot(after.public_updates_channel)
+                if after.public_updates_channel
+                else "(none)"
+            )
+            changes.append(f"**Updates Channel:** {b_updates} → {a_updates}")
+        if before.explicit_content_filter != after.explicit_content_filter:
+            changes.append(
+                f"**Explicit Content Filter:** "
+                f"{before.explicit_content_filter.name} → "
+                f"{after.explicit_content_filter.name}"
+            )
+        if before.mfa_level != after.mfa_level:
+            changes.append(
+                f"**MFA Level:** {before.mfa_level.name} → {after.mfa_level.name}"
+            )
+        if before.preferred_locale != after.preferred_locale:
+            changes.append(
+                "**Preferred Locale:** "
+                f"{before.preferred_locale} → {after.preferred_locale}"
+            )
 
         if not changes:
             return

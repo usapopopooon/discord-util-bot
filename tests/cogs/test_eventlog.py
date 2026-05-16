@@ -76,8 +76,11 @@ def _make_message(
     msg.author.display_avatar.url = "https://cdn.example.com/avatar.png"
     msg.channel = MagicMock()
     msg.channel.id = 100
+    msg.channel.name = "general"
     msg.content = content
     msg.jump_url = "https://discord.com/channels/789/100/999"
+    msg.attachments = []
+    msg.reference = None
     return msg
 
 
@@ -133,7 +136,10 @@ class TestOnMessageDelete:
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
         assert embed.title == "Message Deleted"
-        assert "Hello world" in embed.fields[2].value
+        content_field = next(f for f in embed.fields if f.name == "Content")
+        assert "Hello world" in content_field.value
+        channel_field = next(f for f in embed.fields if f.name == "Channel")
+        assert "(general)" in channel_field.value
 
     @pytest.mark.asyncio
     async def test_shows_deleted_by(self) -> None:
@@ -215,6 +221,63 @@ class TestOnMessageDelete:
         # Content is the last field (index varies based on Deleted By presence)
         content_field = next(f for f in embed.fields if f.name == "Content")
         assert len(content_field.value) <= 1024
+
+    @pytest.mark.asyncio
+    async def test_shows_attachments_field(self) -> None:
+        """添付ファイルがある場合、Attachments フィールドを表示する。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        msg = _make_message()
+        msg.guild = guild
+
+        attachment = MagicMock(spec=discord.Attachment)
+        attachment.filename = "report.pdf"
+        attachment.url = "https://cdn.example.com/report.pdf"
+        attachment.content_type = "application/pdf"
+        msg.attachments = [attachment]
+
+        async def _empty_audit(*_a: object, **_kw: object):  # type: ignore[no-untyped-def]
+            return
+            yield  # noqa: RET504
+
+        guild.audit_logs = _empty_audit
+        cog._cache[("789", "message_delete")] = ["100"]
+
+        await cog.on_message_delete(msg)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+
+        field_names = [f.name for f in embed.fields]
+        assert "Attachments" in field_names
+        attachments_field = next(f for f in embed.fields if f.name == "Attachments")
+        assert "report.pdf" in attachments_field.value
+        assert "https://cdn.example.com/report.pdf" in attachments_field.value
+
+    @pytest.mark.asyncio
+    async def test_sets_embed_image_when_image_attachment_exists(self) -> None:
+        """画像添付がある場合、Embed の image にプレビュー URL を設定する。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        msg = _make_message()
+        msg.guild = guild
+
+        attachment = MagicMock(spec=discord.Attachment)
+        attachment.filename = "screenshot.png"
+        attachment.url = "https://cdn.example.com/screenshot.png"
+        attachment.content_type = "image/png"
+        msg.attachments = [attachment]
+
+        async def _empty_audit(*_a: object, **_kw: object):  # type: ignore[no-untyped-def]
+            return
+            yield  # noqa: RET504
+
+        guild.audit_logs = _empty_audit
+        cog._cache[("789", "message_delete")] = ["100"]
+
+        await cog.on_message_delete(msg)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert embed.image.url == "https://cdn.example.com/screenshot.png"
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +569,39 @@ class TestOnMemberBan:
         # モデレーターなし → fields[1] が Reason
         assert "Spam via fetch_ban" in embed.fields[1].value
 
+    @pytest.mark.asyncio
+    async def test_truncates_too_long_ban_reason(self) -> None:
+        """BAN理由が長すぎる場合は短縮表示する。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        user = MagicMock(spec=discord.User)
+        user.id = 12345
+        user.bot = False
+        user.display_avatar = MagicMock()
+        user.display_avatar.url = "https://cdn.example.com/avatar.png"
+
+        very_long_reason = "x" * 2000
+
+        entry = MagicMock()
+        entry.target = MagicMock()
+        entry.target.id = 12345
+        entry.user = MagicMock()
+        entry.user.id = 66666
+        entry.reason = very_long_reason
+        entry.created_at = datetime.now(UTC)
+
+        async def _ban_audit(*_a: object, **_kw: object):  # type: ignore[no-untyped-def]
+            yield entry
+
+        guild.audit_logs = _ban_audit
+        cog._cache[("789", "member_ban")] = ["100"]
+
+        await cog.on_member_ban(guild, user)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        reason_field = next(f for f in embed.fields if f.name == "Reason")
+        assert len(reason_field.value) <= 300
+
 
 # ---------------------------------------------------------------------------
 # TestOnMemberUnban
@@ -688,9 +784,11 @@ class TestChannelEvents:
         guild, ch = _make_guild()
         channel = MagicMock(spec=discord.TextChannel)
         channel.guild = guild
+        channel.id = 99999
         channel.name = "new-channel"
         channel.type = discord.ChannelType.text
         channel.category = None
+        channel.overwrites = {}
 
         cog._cache[("789", "channel_create")] = ["100"]
 
@@ -701,11 +799,62 @@ class TestChannelEvents:
         assert "new-channel" in embed.fields[0].value
 
     @pytest.mark.asyncio
+    async def test_channel_create_with_permission_overrides(self) -> None:
+        """権限オーバーライドが Embed に表示される。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        channel = MagicMock(spec=discord.VoiceChannel)
+        channel.guild = guild
+        channel.id = 1505170844341633165
+        channel.name = "yagi's channel"
+        channel.type = discord.ChannelType.voice
+        channel.category = MagicMock()
+        channel.category.name = "🍩専用空間"
+
+        everyone = MagicMock(spec=discord.Role)
+        everyone.name = "@everyone"
+        member_role = MagicMock(spec=discord.Role)
+        member_role.name = "🍭メンバーロール"
+        user = MagicMock(spec=discord.Member)
+        user.name = "yaginotuno"
+
+        channel.overwrites = {
+            everyone: discord.PermissionOverwrite(
+                send_messages=False,
+                connect=False,
+                read_message_history=False,
+            ),
+            member_role: discord.PermissionOverwrite(
+                connect=True,
+                send_messages=True,
+                read_message_history=True,
+            ),
+            user: discord.PermissionOverwrite(read_message_history=True),
+        }
+
+        cog._cache[("789", "channel_create")] = ["100"]
+
+        await cog.on_guild_channel_create(channel)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert embed.title == "Channel Created"
+
+        field_values = "\n".join(f.value for f in embed.fields)
+        assert "1505170844341633165" in field_values
+        assert "Role override for @everyone" in field_values
+        assert "Connect: ❌" in field_values
+        assert "Role override for 🍭メンバーロール" in field_values
+        assert "Connect: ✅" in field_values
+        assert "Member override for yaginotuno" in field_values
+        assert "Read Message History: ✅" in field_values
+
+    @pytest.mark.asyncio
     async def test_channel_delete(self) -> None:
         cog = _make_cog()
         guild, ch = _make_guild()
         channel = MagicMock(spec=discord.TextChannel)
         channel.guild = guild
+        channel.id = 99999
         channel.name = "deleted-channel"
         channel.type = discord.ChannelType.text
         channel.category = None
@@ -797,7 +946,7 @@ class TestOnVoiceStateUpdate:
 
     @pytest.mark.asyncio
     async def test_mute_ignored(self) -> None:
-        """ミュート等の状態変更はスキップされる。"""
+        """ミュート等の状態変更はログ送信される。"""
         cog = _make_cog()
         guild, ch = _make_guild()
         member = _make_member()
@@ -807,13 +956,27 @@ class TestOnVoiceStateUpdate:
         same_channel.id = 200
         before = MagicMock(spec=discord.VoiceState)
         before.channel = same_channel
+        before.self_mute = False
+        before.self_deaf = False
+        before.mute = False
+        before.deaf = False
+        before.self_stream = False
+        before.self_video = False
         after = MagicMock(spec=discord.VoiceState)
         after.channel = same_channel
+        after.self_mute = True
+        after.self_deaf = False
+        after.mute = False
+        after.deaf = False
+        after.self_stream = False
+        after.self_video = False
 
         cog._cache[("789", "voice_state")] = ["100"]
 
         await cog.on_voice_state_update(member, before, after)
-        ch.send.assert_not_called()
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        assert embed.title == "Voice State Updated"
 
 
 # ---------------------------------------------------------------------------
@@ -2008,16 +2171,70 @@ class TestOnGuildChannelUpdate:
         before.topic = "topic"
         before.slowmode_delay = 0
         before.nsfw = False
+        before.category = None
+        before.bitrate = None
+        before.user_limit = None
+        before.overwrites = {}
         before.guild = guild
         after = MagicMock(spec=discord.TextChannel)
         after.name = "same"
         after.topic = "topic"
         after.slowmode_delay = 0
         after.nsfw = False
+        after.category = None
+        after.bitrate = None
+        after.user_limit = None
+        after.overwrites = {}
         after.guild = guild
 
         await cog.on_guild_channel_update(before, after)
         ch.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_logs_overwrite_only_changes_without_empty_changes_field(self) -> None:
+        """overwrite差分のみでも送信し、空の Changes フィールドは出さない。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "channel_update")] = ["100"]
+
+        role = MagicMock(spec=discord.Role)
+        role.name = "Member"
+        role.id = 123
+
+        before = MagicMock(spec=discord.TextChannel)
+        before.id = 555
+        before.name = "same"
+        before.topic = "topic"
+        before.slowmode_delay = 0
+        before.nsfw = False
+        before.category = None
+        before.bitrate = None
+        before.user_limit = None
+        before.overwrites = {
+            role: discord.PermissionOverwrite(send_messages=False),
+        }
+        before.guild = guild
+
+        after = MagicMock(spec=discord.TextChannel)
+        after.id = 555
+        after.name = "same"
+        after.topic = "topic"
+        after.slowmode_delay = 0
+        after.nsfw = False
+        after.category = None
+        after.bitrate = None
+        after.user_limit = None
+        after.overwrites = {
+            role: discord.PermissionOverwrite(send_messages=True),
+        }
+        after.guild = guild
+
+        await cog.on_guild_channel_update(before, after)
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        field_names = [f.name for f in embed.fields]
+        assert "Overwrite Changes" in field_names
+        assert "Changes" not in field_names
 
 
 # ===========================================================================
