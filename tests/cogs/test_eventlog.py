@@ -806,7 +806,7 @@ class TestChannelEvents:
         channel = MagicMock(spec=discord.VoiceChannel)
         channel.guild = guild
         channel.id = 1505170844341633165
-        channel.name = "yagi's channel"
+        channel.name = "sample channel"
         channel.type = discord.ChannelType.voice
         channel.category = MagicMock()
         channel.category.name = "🍩専用空間"
@@ -816,7 +816,7 @@ class TestChannelEvents:
         member_role = MagicMock(spec=discord.Role)
         member_role.name = "🍭メンバーロール"
         user = MagicMock(spec=discord.Member)
-        user.name = "yaginotuno"
+        user.name = "testuser"
 
         channel.overwrites = {
             everyone: discord.PermissionOverwrite(
@@ -845,7 +845,7 @@ class TestChannelEvents:
         assert "Connect: ❌" in field_values
         assert "Role override for 🍭メンバーロール" in field_values
         assert "Connect: ✅" in field_values
-        assert "Member override for yaginotuno" in field_values
+        assert "Member override for testuser" in field_values
         assert "Read Message History: ✅" in field_values
 
     @pytest.mark.asyncio
