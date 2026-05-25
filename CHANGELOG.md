@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Added command-only VCGuard:
+  `/vcguard set`, `/vcguard unset`, and `/vcguard list`.
+- VCGuard disconnects members who enter a watched voice channel beyond its
+  configured user limit and cleans up settings when watched channels disappear.
+
 ### Docs
 - Updated README and architecture docs to match the current feature set:
   removed stale VC references, added auto-reaction, and refreshed API/module listings.

@@ -104,6 +104,7 @@
     "datname",
     "joinrole",
     "chatrole",
+    "vcguard",
     "unban",
     "Unban",
     "eventlog",

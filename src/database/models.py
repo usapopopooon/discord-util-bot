@@ -1417,6 +1417,29 @@ class AutoReactionConfig(Base):
         )
 
 
+class VCGuardConfig(Base):
+    """人数制限を超えて監視対象 VC に入ったメンバーを切断する設定。"""
+
+    __tablename__ = "vc_guard_configs"
+    __table_args__ = (
+        UniqueConstraint("guild_id", "channel_id", name="uq_vc_guard_guild_channel"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    guild_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    channel_id: Mapped[str] = mapped_column(String, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<VCGuardConfig(id={self.id}, guild_id={self.guild_id}, "
+            f"channel_id={self.channel_id}, enabled={self.enabled})>"
+        )
+
+
 class EventLogConfig(Base):
     """イベントログのルーティング設定テーブル。
 

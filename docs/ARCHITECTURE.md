@@ -59,6 +59,7 @@ src/
 │   ├── join_role.py           # 入室時ロール
 │   ├── chatrole.py            # チャットロール (累計投稿で付与)
 │   ├── auto_reaction.py       # 自動リアクション
+│   ├── vc_guard.py            # VC 人数制限ガード
 │   ├── health.py              # ヘルスチェック
 │   └── watchdog.py            # Gateway 監視
 ├── database/
@@ -168,6 +169,7 @@ frontend/
 - `JoinRoleConfig` / `JoinRoleAssignment` — 入室時ロール
 - `ChatRoleConfig` / `ChatRoleProgress` — チャットロール (累計投稿カウント + 付与状態)
 - `AutoReactionConfig` — 自動リアクション
+- `VCGuardConfig` — VC 人数制限ガード
 - `EventLogConfig` — イベントログ
 - `DiscordGuild` / `DiscordChannel` / `DiscordRole` — Discord キャッシュ
 - `SiteSettings` — サイト設定 (タイムゾーン)
