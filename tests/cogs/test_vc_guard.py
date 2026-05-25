@@ -8,7 +8,7 @@ import discord
 import pytest
 from discord.ext import commands
 
-from src.cogs.vc_guard import VCGuardCog
+from src.cogs.vc_guard import VCGuardCog, _ensure_can_manage_vcguard
 
 
 def _make_cog() -> VCGuardCog:
@@ -159,6 +159,37 @@ class TestVoiceStateUpdate:
         )
 
         member.move_to.assert_called_once()
+
+
+class TestPermissions:
+    @pytest.mark.asyncio
+    async def test_allows_administrators(self) -> None:
+        interaction = MagicMock(spec=discord.Interaction)
+        member = MagicMock(spec=discord.Member)
+        member.guild_permissions.administrator = True
+        interaction.user = member
+
+        result = await _ensure_can_manage_vcguard(interaction)
+
+        assert result is True
+        interaction.response.send_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejects_move_members_without_administrator(self) -> None:
+        interaction = MagicMock(spec=discord.Interaction)
+        member = MagicMock(spec=discord.Member)
+        member.guild_permissions.administrator = False
+        member.guild_permissions.move_members = True
+        interaction.user = member
+        interaction.response.send_message = AsyncMock()
+
+        result = await _ensure_can_manage_vcguard(interaction)
+
+        assert result is False
+        interaction.response.send_message.assert_called_once_with(
+            "このコマンドを使うには管理者権限が必要です。",
+            ephemeral=True,
+        )
 
 
 class TestChannelCleanup:

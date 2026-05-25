@@ -29,11 +29,11 @@ logger = logging.getLogger(__name__)
 async def _ensure_can_manage_vcguard(interaction: discord.Interaction) -> bool:
     """VCGuard コマンド実行権限を実行時にも確認する。"""
     user = interaction.user
-    if isinstance(user, discord.Member) and user.guild_permissions.move_members:
+    if isinstance(user, discord.Member) and user.guild_permissions.administrator:
         return True
 
     await interaction.response.send_message(
-        "このコマンドを使うには「メンバーを移動」権限が必要です。",
+        "このコマンドを使うには管理者権限が必要です。",
         ephemeral=True,
     )
     return False
@@ -45,7 +45,7 @@ class VCGuardCog(commands.Cog):
     vcguard_group = app_commands.Group(
         name="vcguard",
         description="VC 人数制限ガードの設定",
-        default_permissions=discord.Permissions(move_members=True),
+        default_permissions=discord.Permissions(administrator=True),
     )
 
     def __init__(self, bot: commands.Bot) -> None:
