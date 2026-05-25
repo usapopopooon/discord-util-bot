@@ -19,7 +19,7 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 - **Alembic** — マイグレーション
 - **PyJWT** — JWT 認証
 - **bcrypt** — パスワードハッシュ
-- **pytest** — テスト (3580 テスト)
+- **pytest** — テスト
 
 ### フロントエンド (Node.js 24)
 
@@ -28,7 +28,7 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 - **TypeScript** — 型安全
 - **Tailwind CSS v4** — スタイリング
 - **shadcn/ui** — コンポーネント (ダークテーマ)
-- **Vitest** — テスト (62 テスト)
+- **Vitest** — テスト
 
 ### CI
 
@@ -58,12 +58,15 @@ src/
 │   ├── _eventlog_helpers.py   # ログ Embed ヘルパー
 │   ├── join_role.py           # 入室時ロール
 │   ├── chatrole.py            # チャットロール (累計投稿で付与)
-│   └── health.py              # ヘルスチェック
-├── core/                      # コア機能
+│   ├── auto_reaction.py       # 自動リアクション
+│   ├── health.py              # ヘルスチェック
+│   └── watchdog.py            # Gateway 監視
 ├── database/
 │   ├── engine.py              # SQLAlchemy エンジン
 │   └── models.py              # DB モデル
 ├── services/                  # DB 操作 (9 ドメインサービス + ファサード)
+├── shared/                    # ドメイン非依存の共通ヘルパー
+├── features/                  # 機能単位移行用 facade
 ├── ui/                        # Discord UI コンポーネント
 └── web/
     ├── app.py                 # FastAPI アプリ (ファサード + re-export)
@@ -80,14 +83,16 @@ src/
         ├── api_ticket.py      # /api/v1/tickets
         ├── api_joinrole.py    # /api/v1/joinrole
         ├── api_chatrole.py    # /api/v1/chatrole
+        ├── api_auto_reaction.py # /api/v1/auto-reaction
         ├── api_eventlog.py    # /api/v1/eventlog
         ├── api_settings.py    # /api/v1/settings
+        ├── api_common.py      # /api/v1/guilds, channels, roles
         ├── api_misc.py        # /api/v1/health, activity
-        └── (旧 HTML ルート)   # 廃止予定
+        └── (旧 HTML ルート)
 
 frontend/
 ├── src/
-│   ├── app/                   # Next.js ページ (26 ページ)
+│   ├── app/                   # Next.js App Router ページ
 │   │   ├── login/
 │   │   └── dashboard/
 │   │       ├── sticky/
@@ -96,6 +101,7 @@ frontend/
 │   │       ├── tickets/       # list, detail, panels/*
 │   │       ├── joinrole/
 │   │       ├── chatrole/
+│   │       ├── auto-reaction/
 │   │       ├── eventlog/
 │   │       ├── activity/
 │   │       ├── health/
@@ -137,8 +143,10 @@ frontend/
 | `/api/v1/tickets` | チケット + パネル + カテゴリ |
 | `/api/v1/joinrole` | 入室時ロール |
 | `/api/v1/chatrole` | チャットロール (累計投稿で付与、任意で期限付き) |
+| `/api/v1/auto-reaction` | 自動リアクション |
 | `/api/v1/eventlog` | イベントログ設定 |
 | `/api/v1/settings` | ダッシュボード + 設定 + メンテナンス |
+| `/api/v1/guilds`, `/api/v1/channels`, `/api/v1/roles` | Discord キャッシュ参照 |
 | `/api/v1/health` | ヘルスチェック + モニタリング設定 |
 | `/api/v1/activity` | Bot アクティビティ |
 | `/api/v1/banlogs` | BAN ログ |
@@ -152,7 +160,6 @@ frontend/
 ## DB モデル
 
 - `AdminUser` — 管理者
-- `Lobby` / `VoiceSession` / `VoiceSessionMember` — 一時 VC
 - `StickyMessage` — Sticky
 - `RolePanel` / `RolePanelItem` — ロールパネル
 - `AutoModRule` / `AutoModConfig` / `AutoModLog` / `AutoModIntroPost` / `AutoModBanList` — AutoMod
@@ -160,6 +167,7 @@ frontend/
 - `TicketCategory` / `TicketPanel` / `TicketPanelCategory` / `Ticket` — チケット
 - `JoinRoleConfig` / `JoinRoleAssignment` — 入室時ロール
 - `ChatRoleConfig` / `ChatRoleProgress` — チャットロール (累計投稿カウント + 付与状態)
+- `AutoReactionConfig` — 自動リアクション
 - `EventLogConfig` — イベントログ
 - `DiscordGuild` / `DiscordChannel` / `DiscordRole` — Discord キャッシュ
 - `SiteSettings` — サイト設定 (タイムゾーン)

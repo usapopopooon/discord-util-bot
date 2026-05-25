@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Docs
+- Updated README and architecture docs to match the current feature set:
+  removed stale VC references, added auto-reaction, and refreshed API/module listings.
+
 ## [2.0.0] - 2026-05-16
 
 ### Changed

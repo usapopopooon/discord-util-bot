@@ -20,11 +20,11 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 
 ## 機能
 
-- **一時 VC**: ロビー参加で個人用 VC 自動作成、ボタン UI で管理
 - **Sticky メッセージ**: チャンネル最下部に常駐するメッセージ
 - **チケットシステム**: パネル + ボタンでチケット作成、スタッフ対応、トランスクリプト保存（操作ボタン: `クローズ` / `担当する`）
 - **ロールパネル**: ボタン式 / リアクション式のロール自動付与
 - **AutoMod**: 8種類のルール (ユーザー名、アカウント年齢、アバター、タイミング系、自己紹介必須) + BANリスト
+- **自動リアクション**: 指定チャンネルの投稿に設定済み絵文字を自動付与
 - **イベントログ**: 25種類のサーバーイベントを記録 (Carl-bot 風カラー)
 - **入室時ロール**: メンバー参加時に時限ロール自動付与
 - **チャットロール**: 指定チャンネルに累計 N 回投稿でロール付与 (任意で期限付き)
@@ -42,6 +42,8 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 │   ├── cogs/                     # Discord Bot 機能
 │   ├── database/                 # SQLAlchemy モデル + エンジン
 │   ├── services/                 # DB 操作 (ドメイン別サービス + ファサード)
+│   ├── shared/                   # ドメイン非依存の共通ヘルパー
+│   ├── features/                 # 機能単位移行用 facade
 │   ├── ui/                       # Discord UI コンポーネント
 │   └── web/                      # FastAPI
 │       ├── app.py                # FastAPI アプリ (ファサード)
@@ -58,11 +60,13 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 │       │   ├── api_ticket.py     # /api/v1/tickets
 │       │   ├── api_joinrole.py   # /api/v1/joinrole
 │       │   ├── api_chatrole.py   # /api/v1/chatrole
+│       │   ├── api_auto_reaction.py # /api/v1/auto-reaction
 │       │   ├── api_eventlog.py   # /api/v1/eventlog
 │       │   ├── api_settings.py   # /api/v1/settings
+│       │   ├── api_common.py     # /api/v1/guilds, channels, roles
 │       │   ├── api_misc.py       # /api/v1/health, activity
 │       │   └── (旧 HTML ルート)
-│       └── templates/            # 旧 HTML テンプレート (廃止予定)
+│       └── templates/            # 旧 HTML テンプレート
 ├── frontend/                     # Next.js フロントエンド
 │   ├── src/
 │   │   ├── app/                  # App Router ページ
@@ -70,8 +74,8 @@ Browser → Next.js (frontend) → FastAPI (api) → PostgreSQL ← Discord Bot
 │   │   └── lib/                  # API クライアント・型定義
 │   ├── Dockerfile                # 本番用
 │   └── Dockerfile.dev            # 開発用
-├── alembic/                      # DB マイグレーション (39 リビジョン)
-├── tests/                        # Python テスト (3580 テスト)
+├── alembic/                      # DB マイグレーション
+├── tests/                        # Python テスト
 ├── scripts/
 │   └── ci_check.py               # ローカル CI (12 チェック)
 ├── Dockerfile                    # Python 本番用
@@ -136,7 +140,7 @@ docker compose run --rm --profile dev frontend-test  # Frontend テスト
 | backend-lint | ruff, mypy, cspell, JSON/YAML/TOML lint |
 | backend-test | pytest + PostgreSQL + カバレッジ |
 | frontend-lint | tsc, ESLint, Prettier, cspell |
-| frontend-test | Vitest (62 テスト) |
+| frontend-test | Vitest |
 | frontend-build | Next.js ビルド (lint + test 完了後) |
 
 ### Railway デプロイ
