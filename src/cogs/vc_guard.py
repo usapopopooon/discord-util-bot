@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 import discord
@@ -218,27 +219,50 @@ class VCGuardCog(commands.Cog):
         if user_limit <= 0 or len(after.channel.members) <= user_limit:
             return
 
+        await self._kick_with_notification(
+            member,
+            after.channel,
+            "人数制限を超えているため",
+        )
+
+    async def _kick_with_notification(
+        self,
+        member: discord.Member,
+        channel: discord.VoiceChannel,
+        reason: str,
+    ) -> None:
+        """メンバーを切断し、tmp-vc-bot と同じ文面で通知する。"""
         try:
             await member.move_to(
                 None,
                 reason="VCGuard: VC の人数制限を超過したため切断",
             )
             logger.info(
-                "VCGuard disconnected member=%s from channel=%s guild=%s "
-                "members=%s limit=%s",
+                "VCGuard disconnected member=%s from channel=%s guild=%s",
                 member.id,
-                after.channel.id,
+                channel.id,
                 member.guild.id,
-                len(after.channel.members),
-                user_limit,
             )
         except discord.HTTPException:
             logger.exception(
                 "VCGuard failed to disconnect member=%s from channel=%s guild=%s",
                 member.id,
-                after.channel.id,
+                channel.id,
                 member.guild.id,
             )
+
+        try:
+            await channel.send(f"⚠️ {member.mention} は{reason}入室できません。")
+        except discord.HTTPException:
+            logger.warning(
+                "VCGuard failed to notify channel=%s guild=%s member=%s",
+                channel.id,
+                channel.guild.id,
+                member.id,
+            )
+
+        with contextlib.suppress(discord.HTTPException, discord.Forbidden):
+            await member.send(f"⚠️ **{channel.name}** は{reason}入室できませんでした。")
 
     @commands.Cog.listener()
     async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:

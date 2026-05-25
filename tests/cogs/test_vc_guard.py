@@ -21,9 +21,11 @@ def _make_member(*, is_bot: bool = False) -> MagicMock:
     member = MagicMock(spec=discord.Member)
     member.id = 123
     member.bot = is_bot
+    member.mention = "<@123>"
     member.guild = MagicMock()
     member.guild.id = 456
     member.move_to = AsyncMock()
+    member.send = AsyncMock()
     return member
 
 
@@ -38,9 +40,11 @@ def _make_voice_channel(
     channel.id = channel_id
     channel.guild = MagicMock()
     channel.guild.id = guild_id
+    channel.name = "Guarded VC"
     channel.user_limit = user_limit
     channel.members = [MagicMock() for _ in range(member_count)]
     channel.mention = f"<#{channel_id}>"
+    channel.send = AsyncMock()
     return channel
 
 
@@ -67,6 +71,13 @@ class TestVoiceStateUpdate:
         member.move_to.assert_called_once_with(
             None,
             reason="VCGuard: VC の人数制限を超過したため切断",
+        )
+        channel.send.assert_called_once()
+        channel.send.assert_called_once_with(
+            "⚠️ <@123> は人数制限を超えているため入室できません。"
+        )
+        member.send.assert_called_once_with(
+            "⚠️ **Guarded VC** は人数制限を超えているため入室できませんでした。"
         )
 
     @pytest.mark.asyncio
@@ -158,6 +169,23 @@ class TestVoiceStateUpdate:
             _make_voice_state(channel),
         )
 
+        member.move_to.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_notification_error_does_not_skip_disconnect(self) -> None:
+        cog = _make_cog()
+        cog._configs = {"456": {"789"}}
+        member = _make_member()
+        channel = _make_voice_channel(user_limit=2, member_count=3)
+        channel.send.side_effect = discord.HTTPException(MagicMock(), "error")
+
+        await cog.on_voice_state_update(
+            member,
+            _make_voice_state(None),
+            _make_voice_state(channel),
+        )
+
+        channel.send.assert_called_once()
         member.move_to.assert_called_once()
 
 
