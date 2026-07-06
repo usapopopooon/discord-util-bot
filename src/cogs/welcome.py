@@ -41,6 +41,48 @@ WELCOME_PLACEHOLDERS = (
 )
 
 
+class WelcomeMessageModal(discord.ui.Modal, title="welcome本文設定"):
+    """welcome embed の本文テンプレートを設定するモーダル。"""
+
+    content: discord.ui.TextInput[Any] = discord.ui.TextInput(
+        label="本文（改行可）",
+        style=discord.TextStyle.paragraph,
+        placeholder=f"使用可能: {WELCOME_PLACEHOLDERS}",
+        default=DEFAULT_WELCOME_MESSAGE_CONTENT,
+        max_length=MAX_WELCOME_MESSAGE_LENGTH,
+        required=True,
+    )
+
+    def __init__(self, guild_id: str, current_content: str) -> None:
+        super().__init__()
+        self.guild_id = guild_id
+        self.content.default = current_content
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        """モーダル送信時に本文テンプレートを保存する。"""
+        content = self.content.value.strip()
+        if not content:
+            await interaction.response.send_message(
+                "本文は空にできません。", ephemeral=True
+            )
+            return
+
+        async with async_session() as session:
+            config = await set_welcome_message(session, self.guild_id, content)
+
+        if config is None:
+            await interaction.response.send_message(
+                "先に `/welcome set` で送信先チャンネルを設定してください。",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_message(
+            f"welcome本文を設定しました。\n{_format_message_content(config.message_content)}",
+            ephemeral=True,
+        )
+
+
 class WelcomeSendableChannel(Protocol):
     id: int
 
@@ -107,10 +149,7 @@ class WelcomeCog(commands.Cog):
     @welcome.command(
         name="message", description="welcome画像と一緒に送る本文を設定します"
     )
-    @app_commands.describe(content=f"本文。使用可能: {WELCOME_PLACEHOLDERS}")
-    async def welcome_message(
-        self, interaction: discord.Interaction, content: str
-    ) -> None:
+    async def welcome_message(self, interaction: discord.Interaction) -> None:
         if not await self._ensure_admin(interaction):
             return
         if interaction.guild is None:
@@ -119,23 +158,8 @@ class WelcomeCog(commands.Cog):
             )
             return
 
-        content = content.strip()
-        if not content:
-            await interaction.response.send_message(
-                "本文は空にできません。", ephemeral=True
-            )
-            return
-        if len(content) > MAX_WELCOME_MESSAGE_LENGTH:
-            await interaction.response.send_message(
-                f"本文は{MAX_WELCOME_MESSAGE_LENGTH}文字以内にしてください。",
-                ephemeral=True,
-            )
-            return
-
         async with async_session() as session:
-            config = await set_welcome_message(
-                session, str(interaction.guild.id), content
-            )
+            config = await get_welcome_config(session, str(interaction.guild.id))
 
         if config is None:
             await interaction.response.send_message(
@@ -144,9 +168,8 @@ class WelcomeCog(commands.Cog):
             )
             return
 
-        await interaction.response.send_message(
-            f"welcome本文を設定しました。\n{_format_message_content(config.message_content)}",
-            ephemeral=True,
+        await interaction.response.send_modal(
+            WelcomeMessageModal(str(interaction.guild.id), config.message_content)
         )
 
     @welcome.command(
