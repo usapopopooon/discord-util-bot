@@ -117,7 +117,18 @@
     "rname",
     "rcolor",
     "assocs",
-    "kickable"
+    "kickable",
+    "dejavu",
+    "hiragino",
+    "kakuzato",
+    "LANCZOS",
+    "maru",
+    "noto",
+    "Noto",
+    "pngdata",
+    "putalpha",
+    "SFNS",
+    "textbbox"
   ],
   "ignorePaths": [
     ".venv",

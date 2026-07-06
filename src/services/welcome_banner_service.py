@@ -306,9 +306,7 @@ def _truncate_to_width(
     return f"{''.join(characters)}{ellipsis}" if characters else ellipsis
 
 
-def _measure_text_width(
-    draw: ImageDraw.ImageDraw, text: str, font: WelcomeFont
-) -> int:
+def _measure_text_width(draw: ImageDraw.ImageDraw, text: str, font: WelcomeFont) -> int:
     left, _top, right, _bottom = draw.textbbox((0, 0), text, font=font)
     return int(right - left)
 
