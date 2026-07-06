@@ -2,8 +2,8 @@ FROM python:3.12-slim AS base
 
 WORKDIR /app
 
-# Install curl for healthcheck
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+# Install curl for healthcheck and CJK fonts for welcome image rendering
+RUN apt-get update && apt-get install -y --no-install-recommends curl fonts-mplus fonts-noto-cjk && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
 COPY pyproject.toml .
@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -e .
 
 # Copy source code
 COPY src/ src/
+COPY static/ static/
 COPY alembic/ alembic/
 COPY alembic.ini .
 

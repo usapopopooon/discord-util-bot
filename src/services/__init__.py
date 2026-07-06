@@ -14,3 +14,5 @@ from src.services.role_panel_service import *  # noqa: F401,F403
 from src.services.sticky_service import *  # noqa: F401,F403
 from src.services.ticket_service import *  # noqa: F401,F403
 from src.services.vc_guard_service import *  # noqa: F401,F403
+from src.services.welcome_banner_service import *  # noqa: F401,F403
+from src.services.welcome_service import *  # noqa: F401,F403

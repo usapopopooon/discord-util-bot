@@ -1417,6 +1417,38 @@ class AutoReactionConfig(Base):
         )
 
 
+class WelcomeConfig(Base):
+    """メンバー参加時に送信する welcome 画像の設定。"""
+
+    __tablename__ = "welcome_configs"
+
+    guild_id: Mapped[str] = mapped_column(String, primary_key=True)
+    channel_id: Mapped[str] = mapped_column(String, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    message_content: Mapped[str] = mapped_column(Text, nullable=False)
+    banner_message_template: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    @validates("guild_id")
+    def _validate_guild_id(self, _key: str, value: str) -> str:
+        return _validate_discord_id(value, "guild_id")
+
+    @validates("channel_id")
+    def _validate_channel_id(self, _key: str, value: str) -> str:
+        return _validate_discord_id(value, "channel_id")
+
+    def __repr__(self) -> str:
+        return (
+            f"<WelcomeConfig(guild_id={self.guild_id}, "
+            f"channel_id={self.channel_id}, enabled={self.enabled})>"
+        )
+
+
 class VCGuardConfig(Base):
     """人数制限を超えて監視対象 VC に入ったメンバーを切断する設定。"""
 

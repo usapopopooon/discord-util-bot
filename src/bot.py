@@ -145,6 +145,7 @@ class EphemeralVCBot(commands.Bot):
             "src.cogs.join_role",
             "src.cogs.chatrole",
             "src.cogs.auto_reaction",
+            "src.cogs.welcome",
             "src.cogs.vc_guard",
             "src.cogs.eventlog",
             "src.cogs.watchdog",

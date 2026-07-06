@@ -77,6 +77,7 @@ class TestSetupHook:
         bot.load_extension.assert_any_await("src.cogs.join_role")
         bot.load_extension.assert_any_await("src.cogs.chatrole")
         bot.load_extension.assert_any_await("src.cogs.auto_reaction")
+        bot.load_extension.assert_any_await("src.cogs.welcome")
         bot.load_extension.assert_any_await("src.cogs.eventlog")
         bot.load_extension.assert_any_await("src.cogs.watchdog")
 

@@ -57,6 +57,7 @@ src/
 │   ├── eventlog.py            # イベントログ (25 種類)
 │   ├── _eventlog_helpers.py   # ログ Embed ヘルパー
 │   ├── join_role.py           # 入室時ロール
+│   ├── welcome.py             # Welcome 画像投稿
 │   ├── chatrole.py            # チャットロール (累計投稿で付与)
 │   ├── auto_reaction.py       # 自動リアクション
 │   ├── vc_guard.py            # VC 人数制限ガード
@@ -65,7 +66,7 @@ src/
 ├── database/
 │   ├── engine.py              # SQLAlchemy エンジン
 │   └── models.py              # DB モデル
-├── services/                  # DB 操作 (9 ドメインサービス + ファサード)
+├── services/                  # DB 操作 (ドメイン別サービス + ファサード)
 ├── shared/                    # ドメイン非依存の共通ヘルパー
 ├── features/                  # 機能単位移行用 facade
 ├── ui/                        # Discord UI コンポーネント
