@@ -58,9 +58,6 @@ class WelcomeBannerService:
                 avatar_top - round(avatar_size * 0.224),
             ),
         )
-        template.alpha_composite(
-            self._create_text_shadow_layer(input_data, width, height)
-        )
         template.alpha_composite(self._create_text_layer(input_data, width, height))
 
         output = BytesIO()
@@ -79,18 +76,18 @@ class WelcomeBannerService:
         layer = Image.new("RGBA", (layer_size, layer_size), (0, 0, 0, 0))
         shadow = Image.new("RGBA", (layer_size, layer_size), (0, 0, 0, 0))
         shadow_draw = ImageDraw.Draw(shadow)
-        radius = avatar_size / 2 - round(avatar_size * 0.032)
+        radius = avatar_size / 2 - round(avatar_size * 0.04)
         shadow_draw.ellipse(
             (
                 center - radius,
-                center - radius + round(avatar_size * 0.028),
+                center - radius + round(avatar_size * 0.016),
                 center + radius,
-                center + radius + round(avatar_size * 0.028),
+                center + radius + round(avatar_size * 0.016),
             ),
-            fill=(89, 66, 86, 108),
+            fill=(89, 66, 86, 54),
         )
         layer.alpha_composite(
-            shadow.filter(ImageFilter.GaussianBlur(avatar_size * 0.056))
+            shadow.filter(ImageFilter.GaussianBlur(avatar_size * 0.034))
         )
 
         frame = Image.new("RGBA", (layer_size, layer_size), (0, 0, 0, 0))
@@ -139,35 +136,6 @@ class WelcomeBannerService:
 
         return _create_fallback_avatar(input_data, inner_size)
 
-    def _create_text_shadow_layer(
-        self, input_data: WelcomeBannerInput, width: int, height: int
-    ) -> Image.Image:
-        pad = round(height * 0.096)
-        shadow_layer = Image.new(
-            "RGBA", (width + pad * 2, height + pad * 2), (0, 0, 0, 0)
-        )
-        draw = ImageDraw.Draw(shadow_layer)
-        headline, footer = self._create_fitted_text(input_data, width, height)
-        headline_y, footer_y = _text_positions(height, headline.font_size)
-
-        _draw_centered_text(
-            draw,
-            (pad + width / 2, pad + headline_y + round(height * 0.008)),
-            headline.text,
-            headline.font,
-            (75, 49, 66, 198),
-        )
-        _draw_centered_text(
-            draw,
-            (pad + width / 2, pad + footer_y + round(height * 0.008)),
-            footer.text,
-            footer.font,
-            (75, 49, 66, 168),
-        )
-
-        shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(height * 0.009))
-        return shadow_layer.crop((pad, pad, pad + width, pad + height))
-
     def _create_text_layer(
         self, input_data: WelcomeBannerInput, width: int, height: int
     ) -> Image.Image:
@@ -181,14 +149,14 @@ class WelcomeBannerService:
             (width / 2, headline_y),
             headline.text,
             headline.font,
-            (255, 250, 252, 255),
+            (150, 104, 96, 255),
         )
         _draw_centered_text(
             draw,
             (width / 2, footer_y),
             footer.text,
             footer.font,
-            (255, 247, 251, 255),
+            (150, 104, 96, 255),
         )
         return layer
 
