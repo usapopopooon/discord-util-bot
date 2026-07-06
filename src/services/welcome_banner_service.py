@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 __all__ = ["WelcomeBannerInput", "WelcomeBannerService"]
 
 WelcomeFont = ImageFont.FreeTypeFont | ImageFont.ImageFont
+WELCOME_TEXT_FILL = (96, 58, 54, 255)
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,14 +150,14 @@ class WelcomeBannerService:
             (width / 2, headline_y),
             headline.text,
             headline.font,
-            (150, 104, 96, 255),
+            WELCOME_TEXT_FILL,
         )
         _draw_centered_text(
             draw,
             (width / 2, footer_y),
             footer.text,
             footer.font,
-            (150, 104, 96, 255),
+            WELCOME_TEXT_FILL,
         )
         return layer
 
@@ -310,6 +311,8 @@ def _find_font_path() -> Path | None:
     exact_candidates = (
         Path("/System/Library/Fonts/ヒラギノ丸ゴ ProN W4.ttc"),
         Path("/System/Library/Fonts/SFNSRounded.ttf"),
+        Path("/usr/share/fonts/truetype/motoya-l-maruberi/MTLmr3m.ttf"),
+        Path("/usr/share/fonts/opentype/mplus/Mplus1-Regular.otf"),
         Path("/usr/share/fonts/truetype/mplus/mplus-1c-regular.ttf"),
         Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
         Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
@@ -328,6 +331,8 @@ def _find_font_path() -> Path | None:
     token_groups = (
         ("hiragino", "maru"),
         ("丸", "ゴ"),
+        ("motoya",),
+        ("maruberi",),
         ("rounded",),
         ("mplus",),
         ("noto", "cjk"),
