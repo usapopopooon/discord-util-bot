@@ -68,7 +68,8 @@ src/
 │   └── models.py              # DB モデル
 ├── services/                  # DB 操作 (ドメイン別サービス + ファサード)
 ├── shared/                    # ドメイン非依存の共通ヘルパー
-├── features/                  # 機能単位移行用 facade
+├── features/                  # 機能単位移行用 facade / 表示 helper
+│   └── welcome/               # Welcome 表示組み立て
 ├── ui/                        # Discord UI コンポーネント
 └── web/
     ├── app.py                 # FastAPI アプリ (ファサード + re-export)

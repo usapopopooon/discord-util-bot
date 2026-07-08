@@ -14,31 +14,35 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.database.engine import async_session
-from src.services.welcome_banner_service import (
-    WelcomeBannerInput,
-    WelcomeBannerService,
+from src.features.welcome.presentation import (
+    WELCOME_EMBED_COLOR,
+    WELCOME_PLACEHOLDERS,
+    build_welcome_banner_input,
+    build_welcome_embed,
+    build_welcome_render_inputs,
+    build_welcome_status_message,
+    format_message_content,
 )
+from src.services.welcome_banner_service import WelcomeBannerService
 from src.services.welcome_service import (
-    DEFAULT_WELCOME_BANNER_MESSAGE_TEMPLATE,
     DEFAULT_WELCOME_MESSAGE_CONTENT,
     MAX_WELCOME_BANNER_MESSAGE_LENGTH,
     MAX_WELCOME_MESSAGE_LENGTH,
-    WelcomeMessageInput,
     disable_welcome_config,
     get_welcome_config,
-    limit_welcome_message_content,
-    render_welcome_message,
     set_welcome_banner_message,
     set_welcome_channel,
     set_welcome_message,
 )
 
 logger = logging.getLogger(__name__)
-
-WELCOME_EMBED_COLOR = 0xE0A2EB
-WELCOME_PLACEHOLDERS = (
-    "{mention}, {username}, {displayName}, {guildName}, {memberCount}"
-)
+__all__ = [
+    "WELCOME_EMBED_COLOR",
+    "WELCOME_PLACEHOLDERS",
+    "WelcomeCog",
+    "WelcomeMessageModal",
+    "setup",
+]
 
 
 class WelcomeMessageModal(discord.ui.Modal, title="welcome本文設定"):
@@ -78,7 +82,8 @@ class WelcomeMessageModal(discord.ui.Modal, title="welcome本文設定"):
             return
 
         await interaction.response.send_message(
-            f"welcome本文を設定しました。\n{_format_message_content(config.message_content)}",
+            "welcome本文を設定しました。\n"
+            f"{format_message_content(config.message_content)}",
             ephemeral=True,
         )
 
@@ -217,7 +222,7 @@ class WelcomeCog(commands.Cog):
 
         await interaction.response.send_message(
             "welcome画像内メッセージを設定しました。\n"
-            f"{_format_message_content(config.banner_message_template)}",
+            f"{format_message_content(config.banner_message_template)}",
             ephemeral=True,
         )
 
@@ -251,32 +256,8 @@ class WelcomeCog(commands.Cog):
         async with async_session() as session:
             config = await get_welcome_config(session, str(interaction.guild.id))
 
-        if config is None or not config.enabled:
-            await interaction.response.send_message(
-                "\n".join(
-                    [
-                        "welcome投稿は無効です。",
-                        "デフォルト本文: "
-                        f"{_format_message_content(DEFAULT_WELCOME_MESSAGE_CONTENT)}",
-                        "デフォルト画像内メッセージ: "
-                        f"{_format_message_content(DEFAULT_WELCOME_BANNER_MESSAGE_TEMPLATE)}",
-                        f"使用可能なプレースホルダー: {WELCOME_PLACEHOLDERS}",
-                    ]
-                ),
-                ephemeral=True,
-            )
-            return
-
         await interaction.response.send_message(
-            "\n".join(
-                [
-                    f"welcome投稿は有効です。送信先: <#{config.channel_id}>",
-                    f"本文: {_format_message_content(config.message_content)}",
-                    "画像内メッセージ: "
-                    f"{_format_message_content(config.banner_message_template)}",
-                    f"使用可能なプレースホルダー: {WELCOME_PLACEHOLDERS}",
-                ]
-            ),
+            build_welcome_status_message(config),
             ephemeral=True,
         )
 
@@ -323,42 +304,32 @@ class WelcomeCog(commands.Cog):
 
         try:
             member_count = member.guild.member_count or 0
-            template_input = WelcomeMessageInput(
+            inputs = build_welcome_render_inputs(
                 username=member.name,
                 display_name=member.display_name,
                 guild_name=member.guild.name,
                 member_count=member_count,
                 mention=member.mention,
             )
-            banner_input = WelcomeMessageInput(
-                username=member.name,
-                display_name=member.display_name,
-                guild_name=member.guild.name,
-                member_count=member_count,
-                mention=f"@{member.display_name}",
-            )
             avatar_bytes = await _read_member_avatar(member)
             image_bytes = self.banner_service.create(
-                WelcomeBannerInput(
+                build_welcome_banner_input(
                     display_name=member.display_name,
                     username=member.name,
                     guild_name=member.guild.name,
-                    headline_text=render_welcome_message(
-                        config.banner_message_template, banner_input
-                    ),
                     member_count=member_count,
+                    banner_message_template=config.banner_message_template,
+                    inputs=inputs,
                     avatar_bytes=avatar_bytes,
                 )
             )
             attachment_name = f"welcome-{member.id}.png"
             file = discord.File(BytesIO(image_bytes), filename=attachment_name)
-            embed = discord.Embed(
-                description=limit_welcome_message_content(
-                    render_welcome_message(config.message_content, template_input)
-                ),
-                color=WELCOME_EMBED_COLOR,
+            embed = build_welcome_embed(
+                message_template=config.message_content,
+                inputs=inputs,
+                attachment_name=attachment_name,
             )
-            embed.set_image(url=f"attachment://{attachment_name}")
 
             await channel.send(
                 embed=embed,
@@ -444,10 +415,6 @@ async def _read_member_avatar(member: discord.Member) -> bytes | None:
             "Failed to read avatar: guild=%s user=%s", member.guild.id, member.id
         )
         return None
-
-
-def _format_message_content(content: str) -> str:
-    return f"{content[:137]}..." if len(content) > 140 else content
 
 
 async def setup(bot: commands.Bot) -> None:

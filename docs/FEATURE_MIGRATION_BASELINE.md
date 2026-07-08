@@ -31,6 +31,7 @@ Feature package facade:
 - `src/features/sticky/__init__.py`
 - `src/features/automod/__init__.py`
 - `src/features/ticket/__init__.py`
+- `src/features/welcome/__init__.py`
 
 これにより、今後 feature 単位で import 経路を段階移行できる。
 
