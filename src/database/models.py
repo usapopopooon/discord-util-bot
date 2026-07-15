@@ -725,6 +725,9 @@ class AutoModRule(Base):
         target_role_ids (str | None): 監視対象ロール ID のカンマ区切り文字列。
             role_count ルール専用。指定ロールのうち threshold_seconds 個以上を
             保持したらアクション発動。
+        excluded_channel_ids (str | None): 除外チャンネル ID のカンマ区切り文字列。
+            msg_without_intro ルール専用。ここに含まれるチャンネルへの投稿は
+            intro 未投稿チェックの対象外。
         timeout_duration_seconds (int | None): タイムアウト時間 (秒)。
             action="timeout" 時のみ使用 (最大 2419200 = 28日)。
         created_at (datetime): ルール作成日時 (UTC)。
@@ -748,6 +751,7 @@ class AutoModRule(Base):
     threshold_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     required_channel_id: Mapped[str | None] = mapped_column(String, nullable=True)
     target_role_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+    excluded_channel_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
     timeout_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False

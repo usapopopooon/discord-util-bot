@@ -56,6 +56,33 @@ MAX_TIMEOUT_MINUTES = 40320
 MAX_ROLE_COUNT = 100
 
 
+def _split_discord_ids(value: str | None) -> set[str]:
+    """カンマ区切りの Discord ID 文字列を set に変換する。"""
+    if not value:
+        return set()
+    return {item.strip() for item in value.split(",") if item.strip()}
+
+
+def _normalize_discord_ids(value: str | None) -> tuple[str | None, str | None]:
+    """カンマ区切り ID を検証し、重複を除いた CSV に整形する。"""
+    if not value or not value.strip():
+        return None, None
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in value.split(","):
+        item = raw.strip()
+        if not item:
+            continue
+        if not item.isdigit():
+            return None, item
+        if item not in seen:
+            normalized.append(item)
+            seen.add(item)
+
+    return ",".join(normalized) if normalized else None, None
+
+
 class AutoModCog(commands.Cog):
     """AutoMod 機能を提供する Cog。"""
 
@@ -217,6 +244,9 @@ class AutoModCog(commands.Cog):
             elif rule.rule_type == "msg_without_intro":
                 # 指定チャンネル自体への投稿は対象外
                 if channel_id_str == rule.required_channel_id:
+                    continue
+                # 除外チャンネルへの投稿も対象外
+                if channel_id_str in _split_discord_ids(rule.excluded_channel_ids):
                     continue
                 matched, reason = await self._check_intro_missing(rule, member)
                 if matched:
@@ -732,6 +762,10 @@ class AutoModCog(commands.Cog):
         timeout_duration_minutes="タイムアウト時間 (分、timeout のみ、最大 40320)",
         role_count="発動に必要なロール数 (role_count のみ、最大 100)",
         target_roles="監視対象のロールID (カンマ区切り、role_count のみ)",
+        required_channel_id="自己紹介投稿が必要なチャンネルID (intro 系ルールのみ)",
+        excluded_channel_ids=(
+            "対象外チャンネルID (カンマ区切り、msg_without_intro のみ)"
+        ),
     )
     @app_commands.choices(
         rule_type=[
@@ -743,6 +777,10 @@ class AutoModCog(commands.Cog):
             ),
             app_commands.Choice(name="VC Join (after join)", value="vc_join"),
             app_commands.Choice(name="Message Post (after join)", value="message_post"),
+            app_commands.Choice(name="VC Without Intro", value="vc_without_intro"),
+            app_commands.Choice(
+                name="Message Without Intro", value="msg_without_intro"
+            ),
             app_commands.Choice(
                 name="Role Count (指定ロールN個以上で発動)", value="role_count"
             ),
@@ -765,6 +803,8 @@ class AutoModCog(commands.Cog):
         timeout_duration_minutes: int | None = None,
         role_count: int | None = None,
         target_roles: str | None = None,
+        required_channel_id: str | None = None,
+        excluded_channel_ids: str | None = None,
     ) -> None:
         """AutoMod ルールを追加する。"""
         if not interaction.guild:
@@ -851,6 +891,44 @@ class AutoModCog(commands.Cog):
             # role_count を threshold_seconds フィールドに格納
             threshold_seconds = role_count
 
+        required_channel_id_str: str | None = None
+        if rule_type in ("vc_without_intro", "msg_without_intro"):
+            if not required_channel_id or not required_channel_id.strip():
+                await interaction.response.send_message(
+                    f"{rule_type} ルールには required_channel_id が必要です。",
+                    ephemeral=True,
+                )
+                return
+            required_channel_id_str, invalid_id = _normalize_discord_ids(
+                required_channel_id
+            )
+            if invalid_id or not required_channel_id_str:
+                await interaction.response.send_message(
+                    "required_channel_id は数値の Discord チャンネル ID "
+                    "である必要があります。",
+                    ephemeral=True,
+                )
+                return
+            if "," in required_channel_id_str:
+                await interaction.response.send_message(
+                    "required_channel_id は 1 つだけ指定してください。",
+                    ephemeral=True,
+                )
+                return
+
+        excluded_channel_ids_str: str | None = None
+        if rule_type == "msg_without_intro":
+            excluded_channel_ids_str, invalid_id = _normalize_discord_ids(
+                excluded_channel_ids
+            )
+            if invalid_id:
+                await interaction.response.send_message(
+                    "excluded_channel_ids の各値は数値の "
+                    "Discord チャンネル ID である必要があります。",
+                    ephemeral=True,
+                )
+                return
+
         # Timeout バリデーション
         timeout_duration_seconds: int | None = None
         if action == "timeout":
@@ -880,7 +958,9 @@ class AutoModCog(commands.Cog):
                 pattern=pattern,
                 use_wildcard=use_wildcard,
                 threshold_seconds=threshold_seconds,
+                required_channel_id=required_channel_id_str,
                 target_role_ids=target_role_ids_str,
+                excluded_channel_ids=excluded_channel_ids_str,
                 timeout_duration_seconds=timeout_duration_seconds,
             )
 
@@ -897,6 +977,10 @@ class AutoModCog(commands.Cog):
                 desc_parts.append(f"Target Roles: {target_role_ids_str}")
         elif threshold_seconds:
             desc_parts.append(f"Threshold: {threshold_seconds}s")
+        if required_channel_id_str:
+            desc_parts.append(f"Required Channel: {required_channel_id_str}")
+        if excluded_channel_ids_str:
+            desc_parts.append(f"Excluded Channels: {excluded_channel_ids_str}")
         if action == "timeout" and timeout_duration_minutes:
             desc_parts.append(f"Timeout Duration: {timeout_duration_minutes}min")
 
@@ -965,6 +1049,16 @@ class AutoModCog(commands.Cog):
                 if rule.target_role_ids:
                     ids = rule.target_role_ids.split(",")
                     desc += f" (対象: {len(ids)}ロール)"
+            elif rule.rule_type in ("vc_without_intro", "msg_without_intro"):
+                if rule.required_channel_id:
+                    desc += f"\nRequired Channel: <#{rule.required_channel_id}>"
+                if rule.rule_type == "msg_without_intro":
+                    excluded_ids = _split_discord_ids(rule.excluded_channel_ids)
+                    if excluded_ids:
+                        channel_mentions = ", ".join(
+                            f"<#{channel_id}>" for channel_id in sorted(excluded_ids)
+                        )
+                        desc += f"\nExcluded Channels: {channel_mentions}"
             embed.add_field(
                 name=f"#{rule.id} - {rule.rule_type}",
                 value=desc,

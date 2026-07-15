@@ -9915,6 +9915,7 @@ class TestAutomodRoutes:
                 "rule_type": "msg_without_intro",
                 "action": "kick",
                 "required_channel_id": "111222333",
+                "excluded_channel_ids": ["444555666", "777888999"],
             },
             follow_redirects=False,
         )
@@ -9925,6 +9926,7 @@ class TestAutomodRoutes:
         assert len(rules) == 1
         assert rules[0].rule_type == "msg_without_intro"
         assert rules[0].action == "kick"
+        assert rules[0].excluded_channel_ids == "444555666,777888999"
 
     async def test_automod_create_intro_rule_no_channel(
         self, authenticated_client: AsyncClient
@@ -9960,6 +9962,24 @@ class TestAutomodRoutes:
         assert response.status_code == 302
         assert "/automod/new" in response.headers["location"]
 
+    async def test_automod_create_msg_without_intro_non_digit_excluded_channel(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        """除外チャンネル ID が数字でない → リダイレクト。"""
+        response = await authenticated_client.post(
+            "/automod/new",
+            data={
+                "guild_id": "123456789012345678",
+                "rule_type": "msg_without_intro",
+                "action": "ban",
+                "required_channel_id": "111222333",
+                "excluded_channel_ids": ["444555666", "abc"],
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+        assert "/automod/new" in response.headers["location"]
+
     async def test_automod_edit_intro_rule(
         self, authenticated_client: AsyncClient, db_session: AsyncSession
     ) -> None:
@@ -9987,6 +10007,37 @@ class TestAutomodRoutes:
         await db_session.refresh(rule)
         assert rule.action == "kick"
         assert rule.required_channel_id == "222"
+
+    async def test_automod_edit_msg_without_intro_excluded_channels(
+        self, authenticated_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """msg_without_intro ルールの除外チャンネルを編集できる。"""
+        rule = AutoModRule(
+            guild_id="123456789012345678",
+            rule_type="msg_without_intro",
+            action="ban",
+            required_channel_id="111",
+            excluded_channel_ids="333",
+        )
+        db_session.add(rule)
+        await db_session.commit()
+        await db_session.refresh(rule)
+
+        response = await authenticated_client.post(
+            f"/automod/{rule.id}/edit",
+            data={
+                "action": "kick",
+                "required_channel_id": "222",
+                "excluded_channel_ids": ["444", "555", "444"],
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 302
+
+        await db_session.refresh(rule)
+        assert rule.action == "kick"
+        assert rule.required_channel_id == "222"
+        assert rule.excluded_channel_ids == "444,555"
 
     async def test_automod_edit_intro_rule_empty_channel(
         self, authenticated_client: AsyncClient, db_session: AsyncSession

@@ -29,6 +29,23 @@ from src.web.templates import (
 router = APIRouter()
 
 
+def _parse_discord_id_list(values: list[str] | None) -> list[str] | None:
+    """フォームの複数 ID を検証し、重複を除いた順序付きリストにする。"""
+    ids: list[str] = []
+    seen: set[str] = set()
+    for raw in values or []:
+        for part in raw.split(","):
+            value = part.strip()
+            if not value:
+                continue
+            if not value.isdigit():
+                return None
+            if value not in seen:
+                ids.append(value)
+                seen.add(value)
+    return ids
+
+
 @router.get("/automod", response_model=None)
 async def automod_list_view(
     user: dict[str, Any] | None = Depends(_app.get_current_user),
@@ -89,6 +106,7 @@ async def automod_create_post(
     role_count: Annotated[str, Form()] = "",
     target_role_ids: Annotated[list[str] | None, Form()] = None,
     required_channel_id: Annotated[str, Form()] = "",
+    excluded_channel_ids: Annotated[list[str] | None, Form()] = None,
     timeout_duration_minutes: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(_app.get_current_user),
     csrf_token: Annotated[str, Form()] = "",
@@ -186,6 +204,17 @@ async def automod_create_post(
             return RedirectResponse(url="/automod/new", status_code=302)
         required_channel_id_str = required_channel_id.strip()
 
+    excluded_channel_ids_str: str | None = None
+    if rule_type == "msg_without_intro":
+        parsed_excluded_channel_ids = _parse_discord_id_list(excluded_channel_ids)
+        if parsed_excluded_channel_ids is None:
+            return RedirectResponse(url="/automod/new", status_code=302)
+        excluded_channel_ids_str = (
+            ",".join(parsed_excluded_channel_ids)
+            if parsed_excluded_channel_ids
+            else None
+        )
+
     async with get_resource_lock(f"automod:create:{guild_id}"):
         rule = AutoModRule(
             guild_id=guild_id,
@@ -196,6 +225,7 @@ async def automod_create_post(
             threshold_seconds=threshold_seconds_int,
             required_channel_id=required_channel_id_str,
             target_role_ids=target_role_ids_str,
+            excluded_channel_ids=excluded_channel_ids_str,
             timeout_duration_seconds=timeout_duration_seconds,
         )
         db.add(rule)
@@ -247,6 +277,7 @@ async def automod_edit_post(
     role_count: Annotated[str, Form()] = "",
     target_role_ids: Annotated[list[str] | None, Form()] = None,
     required_channel_id: Annotated[str, Form()] = "",
+    excluded_channel_ids: Annotated[list[str] | None, Form()] = None,
     timeout_duration_minutes: Annotated[str, Form()] = "",
     user: dict[str, Any] | None = Depends(_app.get_current_user),
     csrf_token: Annotated[str, Form()] = "",
@@ -336,6 +367,19 @@ async def automod_edit_post(
             if not required_channel_id.strip().isdigit():
                 return RedirectResponse(url=edit_url, status_code=302)
             rule.required_channel_id = required_channel_id.strip()
+            if rule.rule_type == "msg_without_intro":
+                parsed_excluded_channel_ids = _parse_discord_id_list(
+                    excluded_channel_ids
+                )
+                if parsed_excluded_channel_ids is None:
+                    return RedirectResponse(url=edit_url, status_code=302)
+                rule.excluded_channel_ids = (
+                    ",".join(parsed_excluded_channel_ids)
+                    if parsed_excluded_channel_ids
+                    else None
+                )
+            else:
+                rule.excluded_channel_ids = None
 
         await db.commit()
         _app.record_form_submit(user_email, path)

@@ -96,7 +96,9 @@ async def create_automod_rule(
     pattern: str | None = None,
     use_wildcard: bool = False,
     threshold_seconds: int | None = None,
+    required_channel_id: str | None = None,
     target_role_ids: str | None = None,
+    excluded_channel_ids: str | None = None,
     timeout_duration_seconds: int | None = None,
 ) -> AutoModRule:
     """新しい automod ルールを作成する。"""
@@ -107,7 +109,9 @@ async def create_automod_rule(
         pattern=pattern,
         use_wildcard=use_wildcard,
         threshold_seconds=threshold_seconds,
+        required_channel_id=required_channel_id,
         target_role_ids=target_role_ids,
+        excluded_channel_ids=excluded_channel_ids,
         timeout_duration_seconds=timeout_duration_seconds,
     )
     session.add(rule)
@@ -144,6 +148,8 @@ async def update_automod_rule(
     pattern: str | None = None,
     use_wildcard: bool | None = None,
     threshold_seconds: int | None = None,
+    required_channel_id: str | None = None,
+    excluded_channel_ids: str | None = None,
     timeout_duration_seconds: int | None = None,
 ) -> AutoModRule:
     """automod ルールを更新する。None のフィールドは変更しない。"""
@@ -155,6 +161,10 @@ async def update_automod_rule(
         rule.use_wildcard = use_wildcard
     if threshold_seconds is not None:
         rule.threshold_seconds = threshold_seconds
+    if required_channel_id is not None:
+        rule.required_channel_id = required_channel_id
+    if excluded_channel_ids is not None:
+        rule.excluded_channel_ids = excluded_channel_ids
     if timeout_duration_seconds is not None:
         rule.timeout_duration_seconds = timeout_duration_seconds
     await session.commit()

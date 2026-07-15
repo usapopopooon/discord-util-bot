@@ -53,6 +53,7 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
   const [timeoutDurationMinutes, setTimeoutDurationMinutes] = useState('')
   const [requiredChannelId, setRequiredChannelId] = useState('')
   const [targetRoleIds, setTargetRoleIds] = useState<string[]>([])
+  const [excludedChannelIds, setExcludedChannelIds] = useState<string[]>([])
 
   useEffect(() => {
     async function fetchData() {
@@ -69,6 +70,7 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
         setUseWildcard(ruleRes.use_wildcard ?? false)
         setRequiredChannelId(ruleRes.required_channel_id ?? '')
         setTargetRoleIds(ruleRes.target_role_ids ?? [])
+        setExcludedChannelIds(ruleRes.excluded_channel_ids ?? [])
 
         if (ruleRes.rule_type === 'account_age' && ruleRes.threshold_seconds) {
           setThresholdValue(String(Math.round(ruleRes.threshold_seconds / 60)))
@@ -102,6 +104,7 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
   const showThreshold = ['role_acquired', 'vc_join', 'message_post'].includes(rule.rule_type)
   const showRoleCount = rule.rule_type === 'role_count'
   const showRequiredChannel = ['vc_without_intro', 'msg_without_intro'].includes(rule.rule_type)
+  const showExcludedChannels = rule.rule_type === 'msg_without_intro'
   const showTimeoutDuration = action === 'timeout'
 
   async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
@@ -110,27 +113,30 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
     setSubmitting(true)
     try {
       let thresholdSeconds: number | null = null
+      let accountAgeMinutes: number | null = null
       if (showAccountAge && thresholdValue) {
-        thresholdSeconds = parseInt(thresholdValue, 10) * 60
+        accountAgeMinutes = parseInt(thresholdValue, 10)
       } else if (showThreshold && thresholdValue) {
         thresholdSeconds = parseInt(thresholdValue, 10)
       } else if (showRoleCount && thresholdValue) {
         thresholdSeconds = parseInt(thresholdValue, 10)
       }
 
-      let timeoutSeconds: number | null = null
+      let timeoutMinutes: number | null = null
       if (showTimeoutDuration && timeoutDurationMinutes) {
-        timeoutSeconds = parseInt(timeoutDurationMinutes, 10) * 60
+        timeoutMinutes = parseInt(timeoutDurationMinutes, 10)
       }
 
       const body: Record<string, unknown> = {
         action,
         pattern: showPattern ? pattern || null : null,
         use_wildcard: showPattern ? useWildcard : false,
+        account_age_minutes: accountAgeMinutes,
         threshold_seconds: thresholdSeconds,
-        timeout_duration_seconds: timeoutSeconds,
+        timeout_duration_minutes: timeoutMinutes,
         required_channel_id: showRequiredChannel ? requiredChannelId || null : null,
         target_role_ids: showRoleCount ? targetRoleIds : [],
+        excluded_channel_ids: showExcludedChannels ? excludedChannelIds : [],
       }
 
       await fetch(`${API_BASE}/automod/rules/${id}`, {
@@ -299,6 +305,31 @@ export default function AutoModEditPage({ params }: { params: Promise<{ id: stri
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            )}
+
+            {showExcludedChannels && (
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">Excluded Channels</label>
+                <div className="max-h-48 overflow-y-auto border rounded p-2 space-y-1">
+                  {filteredChannels.length > 0 ? (
+                    filteredChannels.map((ch) => (
+                      <label key={ch.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <Checkbox
+                          checked={excludedChannelIds.includes(ch.id)}
+                          onCheckedChange={(checked) => {
+                            setExcludedChannelIds((prev) =>
+                              checked ? [...prev, ch.id] : prev.filter((cid) => cid !== ch.id)
+                            )
+                          }}
+                        />
+                        <span>#{ch.name}</span>
+                      </label>
+                    ))
+                  ) : (
+                    <p className="text-muted-foreground text-sm">チャンネルが見つかりません</p>
+                  )}
+                </div>
               </div>
             )}
 

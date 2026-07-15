@@ -1886,7 +1886,7 @@ class TestAutomodListPageIntroRules:
         rule.required_channel_id = "555"
         rule.is_enabled = True
         result = automod_list_page([rule])
-        assert "Ch: 555" in result
+        assert "Required: 555" in result
 
     def test_msg_without_intro_with_channel_name(self) -> None:
         """msg_without_intro でチャンネル名が表示される。"""

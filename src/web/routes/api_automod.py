@@ -55,6 +55,9 @@ def _serialize_rule(rule: AutoModRule) -> dict[str, Any]:
         "target_role_ids": rule.target_role_ids.split(",")
         if rule.target_role_ids
         else [],
+        "excluded_channel_ids": rule.excluded_channel_ids.split(",")
+        if rule.excluded_channel_ids
+        else [],
         "is_enabled": rule.is_enabled,
         "created_at": rule.created_at.isoformat() if rule.created_at else None,
     }
@@ -68,6 +71,34 @@ def _channels_to_json(
         gid: [{"id": cid, "name": cname} for cid, cname in clist]
         for gid, clist in channels_map.items()
     }
+
+
+def _parse_discord_id_list(
+    raw_ids: Any, field_name: str
+) -> tuple[list[str] | None, str | None]:
+    """Parse list or CSV Discord IDs and return deduplicated IDs."""
+    if raw_ids is None or raw_ids == "":
+        return [], None
+
+    if isinstance(raw_ids, str):
+        candidates = raw_ids.split(",")
+    elif isinstance(raw_ids, list):
+        candidates = [str(item) for item in raw_ids]
+    else:
+        return None, f"{field_name} must be a list or comma-separated string"
+
+    ids: list[str] = []
+    seen: set[str] = set()
+    for raw in candidates:
+        value = str(raw).strip()
+        if not value:
+            continue
+        if not value.isdigit():
+            return None, f"{field_name} must contain numeric Discord IDs"
+        if value not in seen:
+            ids.append(value)
+            seen.add(value)
+    return ids, None
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +193,16 @@ def _validate_rule_body(body: dict[str, Any]) -> tuple[dict[str, Any] | None, st
             return None, "required_channel_id must be numeric"
         required_channel_id = raw
 
+    excluded_channel_ids: str | None = None
+    if rule_type == "msg_without_intro":
+        ids, parse_error = _parse_discord_id_list(
+            body.get("excluded_channel_ids", []),
+            "excluded_channel_ids",
+        )
+        if parse_error or ids is None:
+            return None, parse_error or "excluded_channel_ids is invalid"
+        excluded_channel_ids = ",".join(ids) if ids else None
+
     return {
         "rule_type": rule_type,
         "action": action,
@@ -171,6 +212,7 @@ def _validate_rule_body(body: dict[str, Any]) -> tuple[dict[str, Any] | None, st
         "timeout_duration_seconds": timeout_duration_seconds,
         "required_channel_id": required_channel_id,
         "target_role_ids": target_role_ids,
+        "excluded_channel_ids": excluded_channel_ids,
     }, ""
 
 
@@ -274,6 +316,7 @@ async def api_automod_rules_create(
             threshold_seconds=fields["threshold_seconds"],
             required_channel_id=fields["required_channel_id"],
             target_role_ids=fields["target_role_ids"],
+            excluded_channel_ids=fields["excluded_channel_ids"],
             timeout_duration_seconds=fields["timeout_duration_seconds"],
         )
         db.add(rule)
@@ -336,6 +379,7 @@ async def api_automod_rules_update(
             rule.target_role_ids = fields["target_role_ids"]
         elif rule.rule_type in ("vc_without_intro", "msg_without_intro"):
             rule.required_channel_id = fields["required_channel_id"]
+            rule.excluded_channel_ids = fields["excluded_channel_ids"]
 
         await db.commit()
         await db.refresh(rule)

@@ -52,6 +52,7 @@ export default function AutoModNewPage() {
   const [timeoutDurationMinutes, setTimeoutDurationMinutes] = useState('')
   const [requiredChannelId, setRequiredChannelId] = useState('')
   const [targetRoleIds, setTargetRoleIds] = useState<string[]>([])
+  const [excludedChannelIds, setExcludedChannelIds] = useState<string[]>([])
 
   useEffect(() => {
     async function fetchData() {
@@ -71,6 +72,7 @@ export default function AutoModNewPage() {
   const showThreshold = ['role_acquired', 'vc_join', 'message_post'].includes(ruleType)
   const showRoleCount = ruleType === 'role_count'
   const showRequiredChannel = ['vc_without_intro', 'msg_without_intro'].includes(ruleType)
+  const showExcludedChannels = ruleType === 'msg_without_intro'
   const showTimeoutDuration = action === 'timeout'
 
   async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
@@ -79,17 +81,18 @@ export default function AutoModNewPage() {
     setSubmitting(true)
     try {
       let thresholdSeconds: number | null = null
+      let accountAgeMinutes: number | null = null
       if (showAccountAge && thresholdMinutes) {
-        thresholdSeconds = parseInt(thresholdMinutes, 10) * 60
+        accountAgeMinutes = parseInt(thresholdMinutes, 10)
       } else if (showThreshold && thresholdMinutes) {
         thresholdSeconds = parseInt(thresholdMinutes, 10)
       } else if (showRoleCount && thresholdMinutes) {
         thresholdSeconds = parseInt(thresholdMinutes, 10)
       }
 
-      let timeoutSeconds: number | null = null
+      let timeoutMinutes: number | null = null
       if (showTimeoutDuration && timeoutDurationMinutes) {
-        timeoutSeconds = parseInt(timeoutDurationMinutes, 10) * 60
+        timeoutMinutes = parseInt(timeoutDurationMinutes, 10)
       }
 
       const body: Record<string, unknown> = {
@@ -98,10 +101,12 @@ export default function AutoModNewPage() {
         action,
         pattern: showPattern ? pattern || null : null,
         use_wildcard: showPattern ? useWildcard : false,
+        account_age_minutes: accountAgeMinutes,
         threshold_seconds: thresholdSeconds,
-        timeout_duration_seconds: timeoutSeconds,
+        timeout_duration_minutes: timeoutMinutes,
         required_channel_id: showRequiredChannel ? requiredChannelId || null : null,
         target_role_ids: showRoleCount ? targetRoleIds : [],
+        excluded_channel_ids: showExcludedChannels ? excludedChannelIds : [],
       }
 
       await fetch(`${API_BASE}/automod/rules`, {
@@ -139,6 +144,7 @@ export default function AutoModNewPage() {
                 onValueChange={(v) => {
                   setSelectedGuild(v)
                   setRequiredChannelId('')
+                  setExcludedChannelIds([])
                 }}
               >
                 <SelectTrigger className="w-full">
@@ -305,6 +311,31 @@ export default function AutoModNewPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            )}
+
+            {showExcludedChannels && (
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">Excluded Channels</label>
+                <div className="max-h-48 overflow-y-auto border rounded p-2 space-y-1">
+                  {filteredChannels.length > 0 ? (
+                    filteredChannels.map((ch) => (
+                      <label key={ch.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <Checkbox
+                          checked={excludedChannelIds.includes(ch.id)}
+                          onCheckedChange={(checked) => {
+                            setExcludedChannelIds((prev) =>
+                              checked ? [...prev, ch.id] : prev.filter((id) => id !== ch.id)
+                            )
+                          }}
+                        />
+                        <span>#{ch.name}</span>
+                      </label>
+                    ))
+                  ) : (
+                    <p className="text-muted-foreground text-sm">サーバーを選択してください</p>
+                  )}
+                </div>
               </div>
             )}
 

@@ -56,8 +56,16 @@ function formatDetails(rule: AutoModRule, channels: ChannelsMap): string {
       }
       return rule.threshold_seconds ? `>= ${rule.threshold_seconds} roles` : '-'
     case 'vc_without_intro':
-    case 'msg_without_intro':
       return `Channel: ${resolveChannelName(channels, rule.guild_id, rule.required_channel_id)}`
+    case 'msg_without_intro': {
+      const required = resolveChannelName(channels, rule.guild_id, rule.required_channel_id)
+      const excluded = rule.excluded_channel_ids?.map((id) =>
+        resolveChannelName(channels, rule.guild_id, id)
+      )
+      return excluded?.length
+        ? `Channel: ${required}; Excluded: ${excluded.join(', ')}`
+        : `Channel: ${required}`
+    }
     default:
       return '-'
   }

@@ -15,6 +15,15 @@ if TYPE_CHECKING:
     )
 
 
+def _channel_label(
+    channels_map: dict[str, list[tuple[str, str]]], guild_id: str, channel_id: str
+) -> str:
+    for cid, cname in channels_map.get(guild_id, []):
+        if cid == channel_id:
+            return f"#{escape(cname)}"
+    return escape(channel_id)
+
+
 def automod_list_page(
     rules: list["AutoModRule"],
     csrf_token: str = "",
@@ -66,17 +75,17 @@ def automod_list_page(
                 details = "-"
         elif rule.rule_type in ("vc_without_intro", "msg_without_intro"):
             if rule.required_channel_id:
-                ch_name = None
-                for cid, cname in channels_map.get(rule.guild_id, []):
-                    if cid == rule.required_channel_id:
-                        ch_name = cname
-                        break
-                if ch_name:
-                    details = f"#{escape(ch_name)}"
-                else:
-                    details = f"Ch: {escape(rule.required_channel_id)}"
+                details = f"Required: {_channel_label(channels_map, rule.guild_id, rule.required_channel_id)}"
             else:
                 details = "-"
+            if rule.rule_type == "msg_without_intro" and rule.excluded_channel_ids:
+                excluded_labels = [
+                    _channel_label(channels_map, rule.guild_id, cid.strip())
+                    for cid in rule.excluded_channel_ids.split(",")
+                    if cid.strip()
+                ]
+                if excluded_labels:
+                    details += "<br>Except: " + ", ".join(excluded_labels)
         else:
             details = "-"
 
@@ -222,7 +231,7 @@ def automod_create_page(
                 <div>
                     <label class="block text-sm font-medium mb-1">Server</label>
                     <select name="guild_id" required id="guildSelect"
-                            onchange="updateRequiredChannel(); updateTargetRoles()"
+                            onchange="updateRequiredChannel(); updateTargetRoles(); updateExcludedChannels()"
                             class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-gray-100">
                         <option value="">Select server...</option>
                         {guild_options}
@@ -361,6 +370,16 @@ def automod_create_page(
                     </select>
                 </div>
 
+                <div id="excludedChannelsFields" class="hidden">
+                    <label class="block text-sm font-medium mb-1">
+                        Excluded Channels (Message without Intro only)
+                    </label>
+                    <div id="excludedChannelsContainer"
+                         class="max-h-48 overflow-y-auto bg-gray-700 border border-gray-600 rounded p-2 space-y-1">
+                        <p class="text-gray-400 text-sm">サーバーを選択してください</p>
+                    </div>
+                </div>
+
                 <button type="submit"
                         class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded transition-colors">
                     Create Rule
@@ -379,6 +398,7 @@ def automod_create_page(
         const thresholdSecondsFields = document.getElementById('thresholdSecondsFields');
         const roleCountFields = document.getElementById('roleCountFields');
         const requiredChannelFields = document.getElementById('requiredChannelFields');
+        const excludedChannelsFields = document.getElementById('excludedChannelsFields');
         const introTypes = ['vc_without_intro', 'msg_without_intro'];
 
         usernameFields.classList.toggle('hidden', ruleType !== 'username_match');
@@ -387,6 +407,7 @@ def automod_create_page(
             ruleType !== 'role_acquired' && ruleType !== 'vc_join' && ruleType !== 'message_post');
         roleCountFields.classList.toggle('hidden', ruleType !== 'role_count');
         requiredChannelFields.classList.toggle('hidden', !introTypes.includes(ruleType));
+        excludedChannelsFields.classList.toggle('hidden', ruleType !== 'msg_without_intro');
     }}
     function updateRequiredChannel() {{
         const guildId = document.getElementById('guildSelect').value;
@@ -416,6 +437,29 @@ def automod_create_page(
                 cb.className = 'rounded bg-gray-600 border-gray-500';
                 const span = document.createElement('span');
                 span.textContent = role.name;
+                label.appendChild(cb);
+                label.appendChild(span);
+                container.appendChild(label);
+            }});
+        }} else {{
+            container.innerHTML = '<p class="text-gray-400 text-sm">サーバーを選択してください</p>';
+        }}
+    }}
+    function updateExcludedChannels() {{
+        const guildId = document.getElementById('guildSelect').value;
+        const container = document.getElementById('excludedChannelsContainer');
+        container.innerHTML = '';
+        if (channelsData[guildId]) {{
+            channelsData[guildId].forEach(ch => {{
+                const label = document.createElement('label');
+                label.className = 'flex items-center gap-2 cursor-pointer text-sm';
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.name = 'excluded_channel_ids';
+                cb.value = ch.id;
+                cb.className = 'rounded bg-gray-600 border-gray-500';
+                const span = document.createElement('span');
+                span.textContent = '#' + ch.name;
                 label.appendChild(cb);
                 label.appendChild(span);
                 container.appendChild(label);
@@ -543,6 +587,36 @@ def automod_edit_page(
             ch_options += (
                 f'<option value="{escape(cid)}"{selected}>#{escape(cname)}</option>'
             )
+        excluded_channels_field = ""
+        if rule.rule_type == "msg_without_intro":
+            existing_excluded_ids = {
+                cid.strip()
+                for cid in (rule.excluded_channel_ids or "").split(",")
+                if cid.strip()
+            }
+            excluded_checkboxes = ""
+            for cid, cname in guild_channels:
+                checked = " checked" if cid in existing_excluded_ids else ""
+                excluded_checkboxes += (
+                    f'<label class="flex items-center gap-2 cursor-pointer text-sm">'
+                    f'<input type="checkbox" name="excluded_channel_ids" value="{escape(cid)}"{checked}'
+                    f' class="rounded bg-gray-600 border-gray-500">'
+                    f"<span>#{escape(cname)}</span></label>"
+                )
+            if not excluded_checkboxes:
+                excluded_checkboxes = (
+                    '<p class="text-gray-400 text-sm">チャンネルが見つかりません</p>'
+                )
+            excluded_channels_field = f"""
+                <div>
+                    <label class="block text-sm font-medium mb-1">
+                        Excluded Channels (Message without Intro only)
+                    </label>
+                    <div class="max-h-48 overflow-y-auto bg-gray-700 border border-gray-600 rounded p-2 space-y-1">
+                        {excluded_checkboxes}
+                    </div>
+                </div>
+            """
         type_fields = f"""
                 <div>
                     <label class="block text-sm font-medium mb-1">
@@ -554,6 +628,7 @@ def automod_edit_page(
                         {ch_options}
                     </select>
                 </div>
+                {excluded_channels_field}
         """
 
     # Human-readable rule type label

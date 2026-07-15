@@ -68,6 +68,7 @@ def _make_rule(
     threshold_seconds: int | None = None,
     required_channel_id: str | None = None,
     target_role_ids: str | None = None,
+    excluded_channel_ids: str | None = None,
     timeout_duration_seconds: int | None = None,
     created_at: datetime | None = None,
 ) -> MagicMock:
@@ -83,6 +84,7 @@ def _make_rule(
     rule.threshold_seconds = threshold_seconds
     rule.required_channel_id = required_channel_id
     rule.target_role_ids = target_role_ids
+    rule.excluded_channel_ids = excluded_channel_ids
     rule.timeout_duration_seconds = timeout_duration_seconds
     rule.created_at = created_at or datetime.now(UTC) - timedelta(days=1)
     return rule
@@ -2077,6 +2079,67 @@ class TestAutomodAddTimingRules:
             assert "2880min" in call_args.args[0]
 
 
+class TestAutomodAddIntroRules:
+    """automod_add intro ルール テスト。"""
+
+    @pytest.mark.asyncio
+    async def test_intro_rule_requires_channel(self) -> None:
+        cog = _make_cog()
+        interaction = _make_interaction()
+        await cog.automod_add.callback(
+            cog,
+            interaction,
+            rule_type="msg_without_intro",
+            required_channel_id=None,
+        )
+        call_args = interaction.response.send_message.call_args
+        assert "required_channel_id" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_intro_rule_rejects_invalid_excluded_channel(self) -> None:
+        cog = _make_cog()
+        interaction = _make_interaction()
+        await cog.automod_add.callback(
+            cog,
+            interaction,
+            rule_type="msg_without_intro",
+            required_channel_id="555",
+            excluded_channel_ids="999,abc",
+        )
+        call_args = interaction.response.send_message.call_args
+        assert "excluded_channel_ids" in call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_successful_msg_without_intro_with_excluded_channels(self) -> None:
+        cog = _make_cog()
+        interaction = _make_interaction()
+        mock_rule = _make_rule(
+            rule_id=30,
+            rule_type="msg_without_intro",
+            required_channel_id="555",
+            excluded_channel_ids="999,888",
+            pattern=None,
+        )
+        with patch(
+            "src.cogs.automod.create_automod_rule",
+            new_callable=AsyncMock,
+            return_value=mock_rule,
+        ) as mock_create:
+            await cog.automod_add.callback(
+                cog,
+                interaction,
+                rule_type="msg_without_intro",
+                required_channel_id="555",
+                excluded_channel_ids="999,888,999",
+            )
+            call_args = interaction.response.send_message.call_args
+            assert "#30" in call_args.args[0]
+            assert "Excluded Channels: 999,888" in call_args.args[0]
+            create_kwargs = mock_create.call_args.kwargs
+            assert create_kwargs["required_channel_id"] == "555"
+            assert create_kwargs["excluded_channel_ids"] == "999,888"
+
+
 # ---------------------------------------------------------------------------
 # TestAutomodListTimingRules: list command for timing-based rules
 # ---------------------------------------------------------------------------
@@ -2465,6 +2528,37 @@ class TestMsgWithoutIntro:
             mock_exec.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_msg_in_excluded_channel_skips_check(self) -> None:
+        """除外チャンネルへの投稿 → intro チェックも BAN もなし。"""
+        cog = _make_cog()
+        msg = self._make_message(
+            joined_at=datetime.now(UTC),
+            channel_id=999,
+        )
+        rule = _make_rule(
+            rule_type="msg_without_intro",
+            required_channel_id="555",
+            excluded_channel_ids="999,888",
+            pattern=None,
+        )
+        with (
+            patch(
+                "src.cogs.automod.get_enabled_automod_rules_by_guild",
+                new_callable=AsyncMock,
+                return_value=[rule],
+            ),
+            patch.object(
+                cog,
+                "_check_intro_missing",
+                new_callable=AsyncMock,
+            ) as mock_check,
+            patch.object(cog, "_execute_action", new_callable=AsyncMock) as mock_exec,
+        ):
+            await cog.on_message(msg)
+            mock_check.assert_not_called()
+            mock_exec.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_msg_in_required_channel_records(self) -> None:
         """指定チャンネルへの投稿 → DB記録、BAN なし。"""
         cog = _make_cog()
@@ -2787,6 +2881,35 @@ class TestAutomodListTimingRuleDisplay:
             field_values = [f.value for f in embed.fields]
             assert any("300s after join" in v for v in field_values)
             assert any("600s after join" in v for v in field_values)
+
+
+class TestAutomodListIntroRuleDisplay:
+    """automod_list で intro ルールの表示テスト。"""
+
+    @pytest.mark.asyncio
+    async def test_shows_excluded_channels(self) -> None:
+        cog = _make_cog()
+        interaction = _make_interaction()
+        rules = [
+            _make_rule(
+                rule_id=13,
+                rule_type="msg_without_intro",
+                required_channel_id="555",
+                excluded_channel_ids="999,888",
+                pattern=None,
+            )
+        ]
+        with patch(
+            "src.cogs.automod.get_automod_rules_by_guild",
+            new_callable=AsyncMock,
+            return_value=rules,
+        ):
+            await cog.automod_list.callback(cog, interaction)
+            call_kwargs = interaction.response.send_message.call_args.kwargs
+            embed = call_kwargs["embed"]
+            field_values = [f.value for f in embed.fields]
+            assert any("Required Channel: <#555>" in v for v in field_values)
+            assert any("<#999>" in v and "<#888>" in v for v in field_values)
 
 
 # ---------------------------------------------------------------------------
