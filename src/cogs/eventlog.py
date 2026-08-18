@@ -47,12 +47,13 @@ from src.cogs._eventlog_helpers import (
     add_user_field,
     create_event_embed,
     find_audit_entry,
+    format_datetime_with_relative,
+    format_permission_changes,
     set_user_thumbnail,
     truncate_content,
 )
 from src.database.engine import async_session
 from src.services.common_service import get_enabled_event_log_configs
-from src.utils import format_datetime
 
 logger = logging.getLogger(__name__)
 _URL_PATTERN = re.compile(r"https?://\S+")
@@ -170,6 +171,49 @@ def _format_permission_list(diff: set[str]) -> str:
     return ", ".join(_format_permission_label(name) for name in sorted(diff))
 
 
+def _add_audit_fields(
+    embed: discord.Embed,
+    actor_id: int | None,
+    reason: str | None,
+    *,
+    actor_label: str,
+) -> None:
+    """Add consistent actor and reason details when an audit entry exists."""
+    if actor_id:
+        embed.add_field(
+            name=actor_label,
+            value=f"<@{actor_id}>\nID: `{actor_id}`",
+            inline=True,
+        )
+    if reason:
+        embed.add_field(
+            name="Reason",
+            value=truncate_content(reason, max_len=900),
+            inline=False,
+        )
+
+
+async def _find_invite_audit_entry(
+    guild: discord.Guild,
+    invite_code: str,
+) -> tuple[int | None, str | None]:
+    """Find a recent invite deletion entry, whose target has no snowflake ID."""
+    try:
+        async for entry in guild.audit_logs(
+            limit=8,
+            action=discord.AuditLogAction.invite_delete,
+        ):
+            if (
+                getattr(entry.target, "code", None) == invite_code
+                and entry.created_at
+                and (datetime.now(UTC) - entry.created_at).total_seconds() < 10
+            ):
+                return (entry.user.id if entry.user else None, entry.reason)
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+    return None, None
+
+
 def _build_overwrite_diff_lines(
     before: discord.abc.GuildChannel,
     after: discord.abc.GuildChannel,
@@ -264,6 +308,16 @@ class EventLogCog(commands.Cog):
         """Bot 起動完了時に招待キャッシュを構築する。"""
         await self._refresh_invite_cache()
 
+    @commands.Cog.listener()
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        """Bot が新しいギルドへ参加した時点で招待を追跡する。"""
+        await self._cache_guild_invites(guild)
+
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        """退出済みギルドの招待キャッシュを破棄する。"""
+        self._invite_cache.pop(guild.id, None)
+
     async def _refresh_invite_cache(self) -> None:
         """全ギルドの招待情報をキャッシュする。"""
         for guild in self.bot.guilds:
@@ -337,8 +391,20 @@ class EventLogCog(commands.Cog):
 
         channel_ids = self._get_channels(guild, event_type)
         for channel_id in channel_ids:
-            channel = guild.get_channel(int(channel_id))
-            if channel and isinstance(channel, discord.TextChannel):
+            cached_channel = guild.get_channel(int(channel_id))
+            channel = (
+                cached_channel
+                if isinstance(cached_channel, discord.TextChannel)
+                else None
+            )
+            if channel is None:
+                try:
+                    fetched = await guild.fetch_channel(int(channel_id))
+                except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                    fetched = None
+                if isinstance(fetched, discord.TextChannel):
+                    channel = fetched
+            if channel:
                 try:
                     await channel.send(embed=embed)
                 except discord.Forbidden:
@@ -371,9 +437,10 @@ class EventLogCog(commands.Cog):
         # 自分で削除した場合は audit log にエントリが作られないため None になる
         # message_delete は extra.channel のチェックが必要なため汎用ヘルパー不可
         deleted_by_id: int | None = None
+        deletion_reason: str | None = None
         try:
             async for entry in message.guild.audit_logs(
-                limit=5, action=discord.AuditLogAction.message_delete
+                limit=8, action=discord.AuditLogAction.message_delete
             ):
                 extra_channel = getattr(entry.extra, "channel", None)
                 if (
@@ -382,9 +449,10 @@ class EventLogCog(commands.Cog):
                     and extra_channel
                     and extra_channel.id == message.channel.id
                     and entry.created_at
-                    and (datetime.now(UTC) - entry.created_at).total_seconds() < 5
+                    and (datetime.now(UTC) - entry.created_at).total_seconds() < 10
                 ):
                     deleted_by_id = entry.user.id if entry.user else None
+                    deletion_reason = entry.reason
                     break
         except (discord.Forbidden, discord.HTTPException):
             pass
@@ -396,10 +464,17 @@ class EventLogCog(commands.Cog):
             value=_format_channel_snapshot(message.channel),
             inline=True,
         )
+        embed.add_field(name="Message ID", value=f"`{message.id}`", inline=True)
+        if isinstance(message.created_at, datetime):
+            embed.add_field(
+                name="Posted At",
+                value=format_datetime_with_relative(message.created_at),
+                inline=True,
+            )
         if deleted_by_id and deleted_by_id != message.author.id:
             embed.add_field(
                 name="Deleted By",
-                value=f"<@{deleted_by_id}>",
+                value=f"<@{deleted_by_id}>\nID: `{deleted_by_id}`",
                 inline=True,
             )
         if message.reference and getattr(message.reference, "message_id", None):
@@ -410,6 +485,12 @@ class EventLogCog(commands.Cog):
                 inline=True,
             )
         embed.add_field(name="Content", value=content, inline=False)
+        if deletion_reason:
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(deletion_reason, max_len=900),
+                inline=False,
+            )
 
         attachments = list(message.attachments)
         if attachments:
@@ -445,7 +526,12 @@ class EventLogCog(commands.Cog):
         """メッセージ編集イベント。"""
         if not after.guild or after.author.bot:
             return
-        if before.content == after.content:
+        before_attachment_urls = {a.url for a in before.attachments}
+        after_attachment_urls = {a.url for a in after.attachments}
+        if (
+            before.content == after.content
+            and before_attachment_urls == after_attachment_urls
+        ):
             return
         if not self._get_channels(after.guild, "message_edit"):
             return
@@ -462,6 +548,19 @@ class EventLogCog(commands.Cog):
         )
         embed.add_field(name="Before", value=before_content, inline=False)
         embed.add_field(name="After", value=after_content, inline=False)
+        embed.add_field(name="Message ID", value=f"`{after.id}`", inline=True)
+        if isinstance(after.created_at, datetime):
+            embed.add_field(
+                name="Posted At",
+                value=format_datetime_with_relative(after.created_at),
+                inline=True,
+            )
+        if isinstance(after.edited_at, datetime):
+            embed.add_field(
+                name="Edited At",
+                value=format_datetime_with_relative(after.edited_at),
+                inline=True,
+            )
         added_urls = _extract_urls(after.content or "") - _extract_urls(
             before.content or ""
         )
@@ -504,8 +603,6 @@ class EventLogCog(commands.Cog):
                 inline=False,
             )
 
-        before_attachment_urls = {a.url for a in before.attachments}
-        after_attachment_urls = {a.url for a in after.attachments}
         if before_attachment_urls != after_attachment_urls:
             added_files = after_attachment_urls - before_attachment_urls
             removed_files = before_attachment_urls - after_attachment_urls
@@ -563,6 +660,63 @@ class EventLogCog(commands.Cog):
         if authors_str:
             embed.add_field(name="Authors", value=authors_str, inline=False)
 
+        message_ids = [f"`{message.id}`" for message in messages]
+        embed.add_field(
+            name="Message IDs",
+            value=truncate_content(", ".join(message_ids)),
+            inline=False,
+        )
+        created_at_values = [
+            message.created_at
+            for message in messages
+            if isinstance(message.created_at, datetime)
+        ]
+        if created_at_values:
+            embed.add_field(
+                name="Posted At Range",
+                value=(
+                    f"{format_datetime_with_relative(min(created_at_values))} - "
+                    f"{format_datetime_with_relative(max(created_at_values))}"
+                ),
+                inline=False,
+            )
+
+        deleted_by_id: int | None = None
+        deletion_reason: str | None = None
+        try:
+            async for entry in guild.audit_logs(
+                limit=8,
+                action=discord.AuditLogAction.message_bulk_delete,
+            ):
+                extra_channel = getattr(entry.extra, "channel", None)
+                target_id = getattr(entry.target, "id", None)
+                if (
+                    (
+                        target_id == channel.id
+                        or getattr(extra_channel, "id", None) == channel.id
+                    )
+                    and entry.created_at
+                    and (datetime.now(UTC) - entry.created_at).total_seconds() < 10
+                ):
+                    deleted_by_id = entry.user.id if entry.user else None
+                    deletion_reason = entry.reason
+                    break
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+        if deleted_by_id:
+            embed.add_field(
+                name="Deleted By",
+                value=f"<@{deleted_by_id}>\nID: `{deleted_by_id}`",
+                inline=True,
+            )
+        if deletion_reason:
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(deletion_reason, max_len=900),
+                inline=False,
+            )
+
         await self._send_log(guild, "message_purge", embed)
 
     # =====================================================================
@@ -589,7 +743,18 @@ class EventLogCog(commands.Cog):
         )
         embed.add_field(
             name="Account Created",
-            value=format_datetime(member.created_at),
+            value=format_datetime_with_relative(member.created_at),
+            inline=True,
+        )
+        if member.joined_at:
+            embed.add_field(
+                name="Joined At",
+                value=format_datetime_with_relative(member.joined_at),
+                inline=True,
+            )
+        embed.add_field(
+            name="Member Count",
+            value=str(member.guild.member_count),
             inline=True,
         )
 
@@ -618,6 +783,7 @@ class EventLogCog(commands.Cog):
         # 新しいキャッシュを構築
         new_cache: dict[str, _InviteData] = {}
         used_invite: _InviteData | None = None
+        largest_increase = 0
 
         for inv in new_invites:
             new_data = _InviteData(
@@ -630,8 +796,10 @@ class EventLogCog(commands.Cog):
 
             # uses が増えた招待を検出
             old_data = old_cache.get(inv.code)
-            if old_data and new_data.uses > old_data.uses:
+            increase = new_data.uses - old_data.uses if old_data else 0
+            if increase > largest_increase:
                 used_invite = new_data
+                largest_increase = increase
 
         # キャッシュから消えた招待 (max_uses に達して削除) をチェック
         if used_invite is None:
@@ -648,7 +816,10 @@ class EventLogCog(commands.Cog):
             try:
                 vanity = await guild.vanity_invite()
                 if vanity:
-                    return "Vanity URL"
+                    details = f"Vanity URL (`{vanity.code}`)"
+                    if isinstance(vanity.uses, int):
+                        details += f" / Uses: {vanity.uses}"
+                    return details
             except (discord.Forbidden, discord.HTTPException):
                 pass
             return None
@@ -714,12 +885,12 @@ class EventLogCog(commands.Cog):
         if mod_id:
             embed.add_field(
                 name="Kicked By",
-                value=f"<@{mod_id}>",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
                 inline=True,
             )
         embed.add_field(
             name="Reason",
-            value=reason or "No reason provided",
+            value=truncate_content(reason or "No reason provided", max_len=900),
             inline=False,
         )
         set_user_thumbnail(embed, member)
@@ -737,7 +908,7 @@ class EventLogCog(commands.Cog):
         if member.joined_at:
             embed.add_field(
                 name="Joined At",
-                value=format_datetime(member.joined_at),
+                value=format_datetime_with_relative(member.joined_at),
                 inline=True,
             )
         embed.add_field(name="Roles", value=roles_str, inline=False)
@@ -771,7 +942,7 @@ class EventLogCog(commands.Cog):
         if mod_id:
             embed.add_field(
                 name="Banned By",
-                value=f"<@{mod_id}>",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
                 inline=True,
             )
         reason_text = reason or "No reason provided"
@@ -791,15 +962,25 @@ class EventLogCog(commands.Cog):
             return
 
         # Audit log から解除した人を取得
-        mod_id, _ = await find_audit_entry(guild, discord.AuditLogAction.unban, user.id)
+        mod_id, reason = await find_audit_entry(
+            guild,
+            discord.AuditLogAction.unban,
+            user.id,
+        )
 
         embed = create_event_embed("Member Unbanned", "member_unban")
         add_user_field(embed, user)
         if mod_id:
             embed.add_field(
                 name="Unbanned By",
-                value=f"<@{mod_id}>",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
                 inline=True,
+            )
+        if reason:
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(reason, max_len=900),
+                inline=False,
             )
         set_user_thumbnail(embed, user)
 
@@ -842,7 +1023,7 @@ class EventLogCog(commands.Cog):
             return
 
         until = member.timed_out_until
-        until_str = format_datetime(until, fallback="Unknown")
+        until_str = format_datetime_with_relative(until)
 
         # Audit log からモデレーターと理由を取得
         mod_id, reason = await find_audit_entry(
@@ -854,13 +1035,13 @@ class EventLogCog(commands.Cog):
         if mod_id:
             embed.add_field(
                 name="Timed Out By",
-                value=f"<@{mod_id}>",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
                 inline=True,
             )
         embed.add_field(name="Until", value=until_str, inline=True)
         embed.add_field(
             name="Reason",
-            value=reason or "No reason provided",
+            value=truncate_content(reason or "No reason provided", max_len=900),
             inline=False,
         )
         set_user_thumbnail(embed, member)
@@ -894,12 +1075,20 @@ class EventLogCog(commands.Cog):
             inline=False,
         )
         mod_id, reason = await find_audit_entry(
-            after.guild, discord.AuditLogAction.member_update, after.id
+            after.guild, discord.AuditLogAction.member_role_update, after.id
         )
         if mod_id:
-            embed.add_field(name="Updated By", value=f"<@{mod_id}>", inline=True)
+            embed.add_field(
+                name="Updated By",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
+                inline=True,
+            )
         if reason:
-            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(reason, max_len=900),
+                inline=False,
+            )
         set_user_thumbnail(embed, after)
 
         await self._send_log(after.guild, "role_change", embed)
@@ -927,9 +1116,17 @@ class EventLogCog(commands.Cog):
             after.guild, discord.AuditLogAction.member_update, after.id
         )
         if mod_id:
-            embed.add_field(name="Updated By", value=f"<@{mod_id}>", inline=True)
+            embed.add_field(
+                name="Updated By",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
+                inline=True,
+            )
         if reason:
-            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(reason, max_len=900),
+                inline=False,
+            )
         set_user_thumbnail(embed, after)
 
         await self._send_log(after.guild, "nickname_change", embed)
@@ -944,10 +1141,18 @@ class EventLogCog(commands.Cog):
         embed = create_event_embed("Member Timeout Removed", "member_timeout")
         add_user_field(embed, member)
         if mod_id:
-            embed.add_field(name="Updated By", value=f"<@{mod_id}>", inline=True)
+            embed.add_field(
+                name="Updated By",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
+                inline=True,
+            )
         embed.add_field(name="Status", value="timeout removed", inline=True)
         if reason:
-            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(reason, max_len=900),
+                inline=False,
+            )
         set_user_thumbnail(embed, member)
         await self._send_log(member.guild, "member_timeout", embed)
 
@@ -996,7 +1201,20 @@ class EventLogCog(commands.Cog):
         )
         if channel.category:
             embed.add_field(name="Category", value=channel.category.name, inline=True)
-        embed.add_field(name="Channel ID", value=str(channel.id), inline=True)
+        embed.add_field(name="Channel ID", value=f"`{channel.id}`", inline=True)
+        if isinstance(channel.created_at, datetime):
+            embed.add_field(
+                name="Created At",
+                value=format_datetime_with_relative(channel.created_at),
+                inline=True,
+            )
+        topic = getattr(channel, "topic", None)
+        if isinstance(topic, str) and topic:
+            embed.add_field(
+                name="Topic",
+                value=truncate_content(topic),
+                inline=False,
+            )
 
         overwrite_lines = _build_channel_overwrite_lines(channel)
         _add_long_field(embed, "Permission Overwrites", overwrite_lines)
@@ -1004,9 +1222,17 @@ class EventLogCog(commands.Cog):
             channel.guild, discord.AuditLogAction.channel_create, channel.id
         )
         if mod_id:
-            embed.add_field(name="Created By", value=f"<@{mod_id}>", inline=True)
+            embed.add_field(
+                name="Created By",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
+                inline=True,
+            )
         if reason:
-            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(reason, max_len=900),
+                inline=False,
+            )
 
         await self._send_log(channel.guild, "channel_create", embed)
 
@@ -1025,13 +1251,28 @@ class EventLogCog(commands.Cog):
         )
         if channel.category:
             embed.add_field(name="Category", value=channel.category.name, inline=True)
+        embed.add_field(name="Channel ID", value=f"`{channel.id}`", inline=True)
+        if isinstance(channel.created_at, datetime):
+            embed.add_field(
+                name="Created At",
+                value=format_datetime_with_relative(channel.created_at),
+                inline=True,
+            )
         mod_id, reason = await find_audit_entry(
             channel.guild, discord.AuditLogAction.channel_delete, channel.id
         )
         if mod_id:
-            embed.add_field(name="Deleted By", value=f"<@{mod_id}>", inline=True)
+            embed.add_field(
+                name="Deleted By",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
+                inline=True,
+            )
         if reason:
-            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(reason, max_len=900),
+                inline=False,
+            )
 
         await self._send_log(channel.guild, "channel_delete", embed)
 
@@ -1100,9 +1341,17 @@ class EventLogCog(commands.Cog):
             after.guild, discord.AuditLogAction.channel_update, after.id
         )
         if mod_id:
-            embed.add_field(name="Updated By", value=f"<@{mod_id}>", inline=True)
+            embed.add_field(
+                name="Updated By",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
+                inline=True,
+            )
         if reason:
-            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(reason, max_len=900),
+                inline=False,
+            )
 
         await self._send_log(after.guild, "channel_update", embed)
 
@@ -1118,15 +1367,37 @@ class EventLogCog(commands.Cog):
 
         embed = create_event_embed("Role Created", "role_create")
         embed.add_field(name="Role", value=f"{role.mention} ({role.name})", inline=True)
+        embed.add_field(name="Role ID", value=f"`{role.id}`", inline=True)
         if role.color.value:
             embed.add_field(name="Color", value=f"#{role.color.value:06X}", inline=True)
+        if isinstance(role.created_at, datetime):
+            embed.add_field(
+                name="Created At",
+                value=format_datetime_with_relative(role.created_at),
+                inline=True,
+            )
+        if isinstance(role.permissions, discord.Permissions):
+            permission_names = {name for name, enabled in role.permissions if enabled}
+            embed.add_field(
+                name="Permissions",
+                value=truncate_content(_format_permission_list(permission_names)),
+                inline=False,
+            )
         mod_id, reason = await find_audit_entry(
             role.guild, discord.AuditLogAction.role_create, role.id
         )
         if mod_id:
-            embed.add_field(name="Created By", value=f"<@{mod_id}>", inline=True)
+            embed.add_field(
+                name="Created By",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
+                inline=True,
+            )
         if reason:
-            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(reason, max_len=900),
+                inline=False,
+            )
 
         await self._send_log(role.guild, "role_create", embed)
 
@@ -1138,16 +1409,38 @@ class EventLogCog(commands.Cog):
 
         embed = create_event_embed("Role Deleted", "role_delete")
         embed.add_field(name="Role", value=role.name, inline=True)
+        embed.add_field(name="Role ID", value=f"`{role.id}`", inline=True)
         if role.color.value:
             embed.add_field(name="Color", value=f"#{role.color.value:06X}", inline=True)
         embed.add_field(name="Members", value=str(len(role.members)), inline=True)
+        if isinstance(role.created_at, datetime):
+            embed.add_field(
+                name="Created At",
+                value=format_datetime_with_relative(role.created_at),
+                inline=True,
+            )
+        if isinstance(role.permissions, discord.Permissions):
+            permission_names = {name for name, enabled in role.permissions if enabled}
+            embed.add_field(
+                name="Permissions",
+                value=truncate_content(_format_permission_list(permission_names)),
+                inline=False,
+            )
         mod_id, reason = await find_audit_entry(
             role.guild, discord.AuditLogAction.role_delete, role.id
         )
         if mod_id:
-            embed.add_field(name="Deleted By", value=f"<@{mod_id}>", inline=True)
+            embed.add_field(
+                name="Deleted By",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
+                inline=True,
+            )
         if reason:
-            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(reason, max_len=900),
+                inline=False,
+            )
 
         await self._send_log(role.guild, "role_delete", embed)
 
@@ -1173,7 +1466,18 @@ class EventLogCog(commands.Cog):
                 f"**Mentionable:** {before.mentionable} → {after.mentionable}"
             )
         if before.permissions != after.permissions:
-            changes.append("**Permissions:** changed")
+            if isinstance(before.permissions, discord.Permissions) and isinstance(
+                after.permissions, discord.Permissions
+            ):
+                permission_lines = format_permission_changes(
+                    before.permissions,
+                    after.permissions,
+                )
+                changes.append(
+                    "**Permissions:**\n" + ("\n".join(permission_lines) or "changed")
+                )
+            else:
+                changes.append("**Permissions:** changed")
 
         if not changes:
             return
@@ -1182,14 +1486,23 @@ class EventLogCog(commands.Cog):
         embed.add_field(
             name="Role", value=f"{after.mention} ({after.name})", inline=True
         )
+        embed.add_field(name="Role ID", value=f"`{after.id}`", inline=True)
         embed.add_field(name="Changes", value="\n".join(changes), inline=False)
         mod_id, reason = await find_audit_entry(
             after.guild, discord.AuditLogAction.role_update, after.id
         )
         if mod_id:
-            embed.add_field(name="Updated By", value=f"<@{mod_id}>", inline=True)
+            embed.add_field(
+                name="Updated By",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
+                inline=True,
+            )
         if reason:
-            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(reason, max_len=900),
+                inline=False,
+            )
 
         await self._send_log(after.guild, "role_update", embed)
 
@@ -1301,6 +1614,7 @@ class EventLogCog(commands.Cog):
 
         embed = create_event_embed("Invite Created", "invite_create")
         embed.add_field(name="Code", value=f"`{invite.code}`", inline=True)
+        embed.add_field(name="URL", value=str(invite.url), inline=False)
         if invite.inviter:
             add_user_field(embed, invite.inviter, label="Created By")
         if invite.channel:
@@ -1309,18 +1623,26 @@ class EventLogCog(commands.Cog):
                 value=_format_channel_snapshot(invite.channel),
                 inline=True,
             )
-        if invite.max_age:
-            if invite.max_age >= 3600:
-                age_str = f"{invite.max_age // 3600}h"
-            elif invite.max_age >= 60:
-                age_str = f"{invite.max_age // 60}m"
-            else:
-                age_str = f"{invite.max_age}s"
-            embed.add_field(name="Expires", value=age_str, inline=True)
+        if isinstance(invite.created_at, datetime):
+            embed.add_field(
+                name="Created At",
+                value=format_datetime_with_relative(invite.created_at),
+                inline=True,
+            )
+        if isinstance(invite.expires_at, datetime):
+            embed.add_field(
+                name="Expires",
+                value=format_datetime_with_relative(invite.expires_at),
+                inline=True,
+            )
         else:
             embed.add_field(name="Expires", value="Never", inline=True)
         if invite.max_uses:
             embed.add_field(name="Max Uses", value=str(invite.max_uses), inline=True)
+        else:
+            embed.add_field(name="Max Uses", value="Unlimited", inline=True)
+        if isinstance(invite.uses, int):
+            embed.add_field(name="Current Uses", value=str(invite.uses), inline=True)
         embed.add_field(
             name="Temporary",
             value="Yes" if invite.temporary else "No",
@@ -1346,16 +1668,19 @@ class EventLogCog(commands.Cog):
 
         embed = create_event_embed("Invite Deleted", "invite_delete")
         embed.add_field(name="Code", value=f"`{invite.code}`", inline=True)
+        embed.add_field(name="URL", value=str(invite.url), inline=False)
         if invite.channel:
             embed.add_field(
                 name="Channel",
                 value=_format_channel_snapshot(invite.channel),
                 inline=True,
             )
-        embed.add_field(
-            name="Temporary",
-            value="Yes" if invite.temporary else "No",
-            inline=True,
+        mod_id, reason = await _find_invite_audit_entry(guild, invite.code)
+        _add_audit_fields(
+            embed,
+            mod_id,
+            reason,
+            actor_label="Deleted By",
         )
 
         await self._send_log(guild, "invite_delete", embed)
@@ -1372,6 +1697,7 @@ class EventLogCog(commands.Cog):
 
         embed = create_event_embed("Thread Created", "thread_create")
         embed.add_field(name="Name", value=thread.name, inline=True)
+        embed.add_field(name="Thread ID", value=f"`{thread.id}`", inline=True)
         if thread.parent:
             embed.add_field(
                 name="Parent",
@@ -1379,7 +1705,21 @@ class EventLogCog(commands.Cog):
                 inline=True,
             )
         if thread.owner:
-            add_user_field(embed, thread.owner, label="Created By")
+            add_user_field(embed, thread.owner, label="Owner")
+        if isinstance(thread.created_at, datetime):
+            embed.add_field(
+                name="Created At",
+                value=format_datetime_with_relative(thread.created_at),
+                inline=True,
+            )
+        embed.add_field(
+            name="State",
+            value=(
+                f"Archived: {'Yes' if thread.archived else 'No'} / "
+                f"Locked: {'Yes' if thread.locked else 'No'}"
+            ),
+            inline=False,
+        )
         auto_archive_minutes = getattr(thread, "auto_archive_duration", None)
         if isinstance(auto_archive_minutes, int):
             embed.add_field(
@@ -1392,9 +1732,17 @@ class EventLogCog(commands.Cog):
             thread.guild, discord.AuditLogAction.thread_create, thread.id
         )
         if mod_id is not None:
-            embed.add_field(name="Created By", value=f"<@{mod_id}>", inline=True)
+            embed.add_field(
+                name="Created By",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
+                inline=True,
+            )
         if reason:
-            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(reason, max_len=900),
+                inline=False,
+            )
 
         await self._send_log(thread.guild, "thread_create", embed)
 
@@ -1406,19 +1754,34 @@ class EventLogCog(commands.Cog):
 
         embed = create_event_embed("Thread Deleted", "thread_delete")
         embed.add_field(name="Name", value=thread.name, inline=True)
+        embed.add_field(name="Thread ID", value=f"`{thread.id}`", inline=True)
         if thread.parent:
             embed.add_field(
                 name="Parent",
                 value=_format_channel_snapshot(thread.parent),
                 inline=True,
             )
+        if isinstance(thread.created_at, datetime):
+            embed.add_field(
+                name="Created At",
+                value=format_datetime_with_relative(thread.created_at),
+                inline=True,
+            )
         mod_id, reason = await find_audit_entry(
             thread.guild, discord.AuditLogAction.thread_delete, thread.id
         )
         if mod_id is not None:
-            embed.add_field(name="Deleted By", value=f"<@{mod_id}>", inline=True)
+            embed.add_field(
+                name="Deleted By",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
+                inline=True,
+            )
         if reason:
-            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(reason, max_len=900),
+                inline=False,
+            )
 
         await self._send_log(thread.guild, "thread_delete", embed)
 
@@ -1462,9 +1825,17 @@ class EventLogCog(commands.Cog):
             after.guild, discord.AuditLogAction.thread_update, after.id
         )
         if mod_id is not None:
-            embed.add_field(name="Updated By", value=f"<@{mod_id}>", inline=True)
+            embed.add_field(
+                name="Updated By",
+                value=f"<@{mod_id}>\nID: `{mod_id}`",
+                inline=True,
+            )
         if reason:
-            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(
+                name="Reason",
+                value=truncate_content(reason, max_len=900),
+                inline=False,
+            )
 
         await self._send_log(after.guild, "thread_update", embed)
 
@@ -1574,7 +1945,20 @@ class EventLogCog(commands.Cog):
             return
 
         embed = create_event_embed("Server Updated", "server_update")
+        embed.add_field(
+            name="Server",
+            value=f"{after.name}\nID: `{after.id}`",
+            inline=True,
+        )
         embed.add_field(name="Changes", value="\n".join(changes), inline=False)
+        mod_id, reason = await find_audit_entry(
+            after,
+            discord.AuditLogAction.guild_update,
+            after.id,
+            limit=8,
+            window_seconds=10,
+        )
+        _add_audit_fields(embed, mod_id, reason, actor_label="Updated By")
 
         await self._send_log(after, "server_update", embed)
 
@@ -1596,37 +1980,66 @@ class EventLogCog(commands.Cog):
         before_set = {e.id: e for e in before}
         after_set = {e.id: e for e in after}
 
-        changes: list[str] = []
-
-        # Added
-        for eid, emoji in after_set.items():
-            if eid not in before_set:
-                changes.append(f"+ {emoji} (`:{emoji.name}:`)")
-
-        # Removed
-        for eid, emoji in before_set.items():
-            if eid not in after_set:
-                changes.append(f"× `:{emoji.name}:`")
-
-        # Renamed
-        for eid in before_set:
-            if eid in after_set and before_set[eid].name != after_set[eid].name:
-                changes.append(
-                    f"**Renamed:** `:{before_set[eid].name}:` → "
-                    f"`:{after_set[eid].name}:`"
-                )
-
-        if not changes:
-            return
-
-        embed = create_event_embed("Emojis Updated", "emoji_update")
-        embed.add_field(
-            name="Changes",
-            value=truncate_content("\n".join(changes)),
-            inline=False,
+        changed_emojis: list[
+            tuple[
+                str,
+                discord.Emoji,
+                discord.AuditLogAction,
+                str | None,
+            ]
+        ] = []
+        changed_emojis.extend(
+            ("Emoji Created", emoji, discord.AuditLogAction.emoji_create, None)
+            for eid, emoji in after_set.items()
+            if eid not in before_set
+        )
+        changed_emojis.extend(
+            ("Emoji Deleted", emoji, discord.AuditLogAction.emoji_delete, None)
+            for eid, emoji in before_set.items()
+            if eid not in after_set
+        )
+        changed_emojis.extend(
+            (
+                "Emoji Updated",
+                after_set[eid],
+                discord.AuditLogAction.emoji_update,
+                f"**Name:** {before_set[eid].name} → {after_set[eid].name}",
+            )
+            for eid in before_set
+            if eid in after_set and before_set[eid].name != after_set[eid].name
         )
 
-        await self._send_log(guild, "emoji_update", embed)
+        for title, emoji, audit_action, details in changed_emojis:
+            embed = create_event_embed(title, "emoji_update")
+            embed.add_field(
+                name="Emoji",
+                value=f"{emoji} (`:{emoji.name}:`)\nID: `{emoji.id}`",
+                inline=True,
+            )
+            embed.add_field(
+                name="Settings",
+                value=(
+                    f"Animated: {'Yes' if emoji.animated else 'No'} / "
+                    f"Managed: {'Yes' if emoji.managed else 'No'}"
+                ),
+                inline=False,
+            )
+            if details:
+                embed.add_field(name="Changes", value=details, inline=False)
+
+            mod_id, reason = await find_audit_entry(
+                guild,
+                audit_action,
+                emoji.id,
+                limit=8,
+                window_seconds=10,
+            )
+            _add_audit_fields(embed, mod_id, reason, actor_label="Updated By")
+            emoji_url = str(emoji.url)
+            if emoji_url.startswith(("https://", "http://")):
+                embed.set_thumbnail(url=emoji_url)
+
+            await self._send_log(guild, "emoji_update", embed)
 
 
 async def setup(bot: commands.Bot) -> None:

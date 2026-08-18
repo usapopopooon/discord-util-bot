@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 
 import discord
+
+_JST = timezone(timedelta(hours=9))
 
 # イベントタイプごとの Embed カラー
 _COLORS: dict[str, int] = {
@@ -38,11 +40,14 @@ _COLORS: dict[str, int] = {
 
 def create_event_embed(title: str, event_type: str) -> discord.Embed:
     """Create a timestamped embed with the event type's color."""
-    return discord.Embed(
+    now = datetime.now(UTC)
+    embed = discord.Embed(
         title=title,
         color=_COLORS[event_type],
-        timestamp=datetime.now(UTC),
+        timestamp=now,
     )
+    embed.set_footer(text=f"記録時刻: {now.astimezone(_JST):%Y-%m-%d %H:%M:%S} JST")
+    return embed
 
 
 def add_user_field(
@@ -51,8 +56,12 @@ def add_user_field(
     *,
     label: str = "User",
 ) -> None:
-    """Add a user mention field: <@id> (username)."""
-    embed.add_field(name=label, value=f"<@{user.id}> ({user.name})", inline=True)
+    """Add a user mention, name snapshot and immutable ID field."""
+    embed.add_field(
+        name=label,
+        value=f"<@{user.id}> ({user.name})\nID: `{user.id}`",
+        inline=True,
+    )
 
 
 def set_user_thumbnail(
@@ -71,13 +80,42 @@ def truncate_content(content: str, max_len: int = 1024) -> str:
     return content
 
 
+def format_datetime_with_relative(
+    dt: datetime | None, fallback: str = "Unknown"
+) -> str:
+    """Format a datetime in JST and include Discord's relative timestamp."""
+    if dt is None:
+        return fallback
+    unix = int(dt.timestamp())
+    return f"{dt.astimezone(_JST):%Y-%m-%d %H:%M:%S} JST (<t:{unix}:R>)"
+
+
+def format_permission_changes(
+    before: discord.Permissions,
+    after: discord.Permissions,
+) -> list[str]:
+    """Return concrete permission additions and removals."""
+    added = sorted(name for name, value in after if value and not getattr(before, name))
+    removed = sorted(
+        name for name, value in before if value and not getattr(after, name)
+    )
+    lines: list[str] = []
+    if added:
+        lines.append("+ " + ", ".join(name.replace("_", " ").title() for name in added))
+    if removed:
+        lines.append(
+            "- " + ", ".join(name.replace("_", " ").title() for name in removed)
+        )
+    return lines
+
+
 async def find_audit_entry(
     guild: discord.Guild,
     action: discord.AuditLogAction,
     target_id: int,
     *,
-    limit: int = 5,
-    window_seconds: float = 5,
+    limit: int = 8,
+    window_seconds: float = 10,
 ) -> tuple[int | None, str | None]:
     """Search audit log for a matching entry within the time window.
 

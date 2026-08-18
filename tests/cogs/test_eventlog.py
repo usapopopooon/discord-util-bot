@@ -77,6 +77,9 @@ def _make_message(
     msg.channel = MagicMock()
     msg.channel.id = 100
     msg.channel.name = "general"
+    msg.id = 999
+    msg.created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    msg.edited_at = None
     msg.content = content
     msg.jump_url = "https://discord.com/channels/789/100/999"
     msg.attachments = []
@@ -321,6 +324,32 @@ class TestOnMessageEdit:
         assert embed.title == "Message Edited"
         assert "Before" in embed.fields[2].value
         assert "After" in embed.fields[3].value
+
+    @pytest.mark.asyncio
+    async def test_logs_attachment_only_edit(self) -> None:
+        """本文が同じでも添付ファイルの変更は記録する。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        before = _make_message(content="Same")
+        after = _make_message(content="Same")
+        before.guild = guild
+        after.guild = guild
+
+        old_attachment = MagicMock(spec=discord.Attachment)
+        old_attachment.url = "https://cdn.example.com/old.png"
+        new_attachment = MagicMock(spec=discord.Attachment)
+        new_attachment.url = "https://cdn.example.com/new.png"
+        before.attachments = [old_attachment]
+        after.attachments = [new_attachment]
+        cog._cache[("789", "message_edit")] = ["100"]
+
+        await cog.on_message_edit(before, after)
+
+        ch.send.assert_called_once()
+        embed = ch.send.call_args.kwargs["embed"]
+        changes = next(f for f in embed.fields if f.name == "Attachment Changes")
+        assert "new.png" in changes.value
+        assert "old.png" in changes.value
 
 
 # ---------------------------------------------------------------------------
@@ -1013,6 +1042,26 @@ class TestSendLog:
         await cog._send_log(guild, "message_delete", embed)
         # No exception raised
 
+    @pytest.mark.asyncio
+    async def test_fetches_uncached_channel(self) -> None:
+        """送信先がキャッシュにない場合は Discord API から取得する。"""
+        cog = _make_cog()
+        guild, _ = _make_guild()
+        fetched = MagicMock(spec=discord.TextChannel)
+        fetched.send = AsyncMock()
+        guild.get_channel = MagicMock(return_value=None)
+        guild.fetch_channel = AsyncMock(return_value=fetched)
+        cog._cache[("789", "message_delete")] = ["100"]
+
+        await cog._send_log(
+            guild,
+            "message_delete",
+            discord.Embed(title="Test"),
+        )
+
+        guild.fetch_channel.assert_awaited_once_with(100)
+        fetched.send.assert_awaited_once()
+
 
 # ---------------------------------------------------------------------------
 # TestRefreshCache
@@ -1134,10 +1183,45 @@ class TestDetectUsedInvite:
         guild.id = 789
         guild.invites = AsyncMock(return_value=[])
         vanity = MagicMock()
+        vanity.code = "chill-cafe"
+        vanity.uses = 42
         guild.vanity_invite = AsyncMock(return_value=vanity)
 
         result = await cog._detect_used_invite(guild)
-        assert result == "Vanity URL"
+        assert result == "Vanity URL (`chill-cafe`) / Uses: 42"
+
+    @pytest.mark.asyncio
+    async def test_selects_invite_with_largest_use_increase(self) -> None:
+        """複数の差分がある場合は増加数が最大の招待を採用する。"""
+        from src.cogs.eventlog import _InviteData
+
+        cog = _make_cog()
+        cog._invite_cache[789] = {
+            "small": _InviteData("small", 1, 11111, "Small"),
+            "large": _InviteData("large", 1, 22222, "Large"),
+        }
+        small = MagicMock()
+        small.code = "small"
+        small.uses = 2
+        small.inviter = MagicMock()
+        small.inviter.id = 11111
+        small.inviter.name = "Small"
+        large = MagicMock()
+        large.code = "large"
+        large.uses = 4
+        large.inviter = MagicMock()
+        large.inviter.id = 22222
+        large.inviter.name = "Large"
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+        guild.invites = AsyncMock(return_value=[large, small])
+        guild.vanity_invite = AsyncMock(return_value=None)
+
+        result = await cog._detect_used_invite(guild)
+
+        assert result is not None
+        assert "`large`" in result
+        assert "<@22222>" in result
 
     @pytest.mark.asyncio
     async def test_expired_invite_detected(self) -> None:
@@ -1544,6 +1628,29 @@ class TestCogLifecycle:
         cog.bot.guilds = [guild]
         await cog.on_ready()
         guild.invites.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_guild_join_starts_invite_tracking(self) -> None:
+        cog = _make_cog()
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+        guild.invites = AsyncMock(return_value=[])
+
+        await cog.on_guild_join(guild)
+
+        guild.invites.assert_awaited_once()
+        assert cog._invite_cache[789] == {}
+
+    @pytest.mark.asyncio
+    async def test_guild_remove_clears_invite_tracking(self) -> None:
+        cog = _make_cog()
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = 789
+        cog._invite_cache[789] = {}
+
+        await cog.on_guild_remove(guild)
+
+        assert 789 not in cog._invite_cache
 
     @pytest.mark.asyncio
     async def test_sync_cache_task_handles_exception(self) -> None:
@@ -2064,6 +2171,40 @@ class TestRoleChangeRemovedRole:
         embed = ch.send.call_args.kwargs["embed"]
         assert "× <@&222>" in embed.fields[1].value
 
+    @pytest.mark.asyncio
+    async def test_uses_member_role_audit_log(self) -> None:
+        """ロール変更専用の監査ログ種別で実行者を照合する。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        role_a = MagicMock(spec=discord.Role)
+        role_a.mention = "<@&111>"
+        role_b = MagicMock(spec=discord.Role)
+        role_b.mention = "<@&222>"
+        before = _make_member()
+        before.guild = guild
+        before.roles = [role_a]
+        after = _make_member()
+        after.guild = guild
+        after.roles = [role_a, role_b]
+        after.nick = before.nick
+        cog._cache[("789", "role_change")] = ["100"]
+
+        with patch(
+            "src.cogs.eventlog.find_audit_entry",
+            new=AsyncMock(return_value=(99999, "Granted by admin")),
+        ) as audit_mock:
+            await cog.on_member_update(before, after)
+
+        audit_mock.assert_awaited_once_with(
+            guild,
+            discord.AuditLogAction.member_role_update,
+            after.id,
+        )
+        embed = ch.send.call_args.kwargs["embed"]
+        assert "<@99999>" in next(
+            field.value for field in embed.fields if field.name == "Updated By"
+        )
+
 
 class TestVanityURLForbidden:
     """vanity URL Forbidden のテスト。"""
@@ -2130,6 +2271,54 @@ class TestOnBulkMessageDelete:
         msg.author = MagicMock()
         msg.author.bot = False
         await cog.on_bulk_message_delete([msg])
+
+    @pytest.mark.asyncio
+    async def test_logs_message_ids_times_and_audit_actor(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "message_purge")] = ["100"]
+        channel = MagicMock()
+        channel.id = 555
+        channel.name = "general"
+        messages = []
+        for message_id, minute in ((1001, 1), (1002, 2)):
+            message = MagicMock(spec=discord.Message)
+            message.id = message_id
+            message.guild = guild
+            message.channel = channel
+            message.created_at = datetime(2026, 1, 1, 0, minute, tzinfo=UTC)
+            message.author = MagicMock()
+            message.author.bot = False
+            message.author.name = "user"
+            messages.append(message)
+
+        entry = MagicMock()
+        entry.target = channel
+        entry.extra = MagicMock()
+        entry.extra.channel = channel
+        entry.user = MagicMock()
+        entry.user.id = 88888
+        entry.reason = "Cleanup"
+        entry.created_at = datetime.now(UTC)
+
+        async def _audit(*_args: object, **_kwargs: object):  # type: ignore[no-untyped-def]
+            yield entry
+
+        guild.audit_logs = _audit
+
+        await cog.on_bulk_message_delete(messages)
+
+        embed = ch.send.call_args.kwargs["embed"]
+        assert "`1001`" in next(
+            field.value for field in embed.fields if field.name == "Message IDs"
+        )
+        assert any(field.name == "Posted At Range" for field in embed.fields)
+        assert "<@88888>" in next(
+            field.value for field in embed.fields if field.name == "Deleted By"
+        )
+        assert "Cleanup" in next(
+            field.value for field in embed.fields if field.name == "Reason"
+        )
 
 
 # ===========================================================================
@@ -2329,6 +2518,38 @@ class TestOnGuildRoleUpdate:
         await cog.on_guild_role_update(role, role)
         ch.send.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_logs_concrete_permission_changes(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "role_update")] = ["100"]
+        before = MagicMock(spec=discord.Role)
+        before.id = 123
+        before.name = "Member"
+        before.color = discord.Color.default()
+        before.hoist = False
+        before.mentionable = False
+        before.permissions = discord.Permissions(view_channel=True)
+        before.guild = guild
+        after = MagicMock(spec=discord.Role)
+        after.id = 123
+        after.name = "Member"
+        after.color = before.color
+        after.hoist = False
+        after.mentionable = False
+        after.permissions = discord.Permissions(
+            view_channel=True,
+            send_messages=True,
+        )
+        after.guild = guild
+        after.mention = "<@&123>"
+
+        await cog.on_guild_role_update(before, after)
+
+        embed = ch.send.call_args.kwargs["embed"]
+        changes = next(field.value for field in embed.fields if field.name == "Changes")
+        assert "+ Send Messages" in changes
+
 
 # ===========================================================================
 # Invite Create / Delete (with logging)
@@ -2379,6 +2600,42 @@ class TestInviteDeleteLog:
 
         await cog.on_invite_delete(invite)
         ch.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_logs_invite_delete_audit_actor(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "invite_delete")] = ["100"]
+        cog.bot.get_guild = MagicMock(return_value=guild)
+        invite = MagicMock(spec=discord.Invite)
+        invite.guild = MagicMock()
+        invite.guild.id = 789
+        invite.code = "abc123"
+        invite.url = "https://discord.gg/abc123"
+        invite.channel = None
+
+        entry = MagicMock()
+        entry.target = MagicMock()
+        entry.target.code = "abc123"
+        entry.user = MagicMock()
+        entry.user.id = 77777
+        entry.reason = "Rotated invite"
+        entry.created_at = datetime.now(UTC)
+
+        async def _audit(*_args: object, **_kwargs: object):  # type: ignore[no-untyped-def]
+            yield entry
+
+        guild.audit_logs = _audit
+
+        await cog.on_invite_delete(invite)
+
+        embed = ch.send.call_args.kwargs["embed"]
+        assert "<@77777>" in next(
+            field.value for field in embed.fields if field.name == "Deleted By"
+        )
+        assert "Rotated invite" in next(
+            field.value for field in embed.fields if field.name == "Reason"
+        )
 
 
 # ===========================================================================
@@ -2526,6 +2783,50 @@ class TestOnGuildUpdate:
         await cog.on_guild_update(g, g)
         ch.send.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_logs_audit_actor(self) -> None:
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "server_update")] = ["100"]
+        before = MagicMock(spec=discord.Guild)
+        after = MagicMock(spec=discord.Guild)
+        for item, name in ((before, "Old"), (after, "New")):
+            item.id = 789
+            item.name = name
+            item.icon = None
+            item.banner = None
+            item.description = None
+            item.verification_level = discord.VerificationLevel.low
+            item.default_notifications = discord.NotificationLevel.all_messages
+            item.afk_channel = None
+            item.system_channel = None
+            item.rules_channel = None
+            item.public_updates_channel = None
+            item.explicit_content_filter = discord.ContentFilter.disabled
+            item.mfa_level = discord.MFALevel.disabled
+            item.preferred_locale = "ja"
+        after.get_channel = guild.get_channel
+
+        entry = MagicMock()
+        entry.target = MagicMock()
+        entry.target.id = 789
+        entry.user = MagicMock()
+        entry.user.id = 66666
+        entry.reason = "Rename"
+        entry.created_at = datetime.now(UTC)
+
+        async def _audit(*_args: object, **_kwargs: object):  # type: ignore[no-untyped-def]
+            yield entry
+
+        after.audit_logs = _audit
+
+        await cog.on_guild_update(before, after)
+
+        embed = ch.send.call_args.kwargs["embed"]
+        assert "<@66666>" in next(
+            field.value for field in embed.fields if field.name == "Updated By"
+        )
+
 
 # ===========================================================================
 # Emoji Update
@@ -2546,7 +2847,11 @@ class TestOnGuildEmojisUpdate:
         await cog.on_guild_emojis_update(guild, (), (emoji,))
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert "Updated" in embed.title
+        assert embed.title == "Emoji Created"
+        assert "`1`" in next(
+            field.value for field in embed.fields if field.name == "Emoji"
+        )
+        assert embed.footer.text.startswith("記録時刻:")
 
     @pytest.mark.asyncio
     async def test_logs_emoji_removed(self) -> None:
