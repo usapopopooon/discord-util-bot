@@ -138,11 +138,23 @@ class TestOnMessageDelete:
         await cog.on_message_delete(msg)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Message Deleted"
-        content_field = next(f for f in embed.fields if f.name == "Content")
+        assert embed.title == "メッセージ削除"
+        content_field = next(f for f in embed.fields if f.name == "本文")
         assert "Hello world" in content_field.value
-        channel_field = next(f for f in embed.fields if f.name == "Channel")
-        assert "(general)" in channel_field.value
+        channel_field = next(f for f in embed.fields if f.name == "チャンネル")
+        assert "<#100>" in channel_field.value
+        assert [field.name for field in embed.fields] == [
+            "投稿者",
+            "チャンネル",
+            "メッセージID",
+            "投稿日時",
+            "本文",
+            "削除した人",
+            "理由",
+        ]
+        assert content_field.value.startswith("```text\n")
+        assert embed.footer.text is not None
+        assert "-" not in embed.footer.text.split(" ", maxsplit=2)[1]
 
     @pytest.mark.asyncio
     async def test_shows_deleted_by(self) -> None:
@@ -173,15 +185,15 @@ class TestOnMessageDelete:
         await cog.on_message_delete(msg)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Message Deleted"
+        assert embed.title == "メッセージ削除"
         field_names = [f.name for f in embed.fields]
-        assert "Deleted By" in field_names
-        deleted_field = next(f for f in embed.fields if f.name == "Deleted By")
+        assert "削除した人" in field_names
+        deleted_field = next(f for f in embed.fields if f.name == "削除した人")
         assert "<@55555>" in deleted_field.value
 
     @pytest.mark.asyncio
     async def test_no_deleted_by_for_self_delete(self) -> None:
-        """自分で削除した場合は Deleted By を表示しない。"""
+        """自分で削除した場合は削除者を不明として表示する。"""
         cog = _make_cog()
         guild, ch = _make_guild()
         msg = _make_message()
@@ -200,7 +212,9 @@ class TestOnMessageDelete:
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
         field_names = [f.name for f in embed.fields]
-        assert "Deleted By" not in field_names
+        assert "削除した人" in field_names
+        actor = next(f for f in embed.fields if f.name == "削除した人")
+        assert actor.value == "不明 (Audit Log 取得不可)"
 
     @pytest.mark.asyncio
     async def test_truncates_long_content(self) -> None:
@@ -222,7 +236,7 @@ class TestOnMessageDelete:
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
         # Content is the last field (index varies based on Deleted By presence)
-        content_field = next(f for f in embed.fields if f.name == "Content")
+        content_field = next(f for f in embed.fields if f.name == "本文")
         assert len(content_field.value) <= 1024
 
     @pytest.mark.asyncio
@@ -251,8 +265,8 @@ class TestOnMessageDelete:
         embed = ch.send.call_args.kwargs["embed"]
 
         field_names = [f.name for f in embed.fields]
-        assert "Attachments" in field_names
-        attachments_field = next(f for f in embed.fields if f.name == "Attachments")
+        assert "添付ファイル" in field_names
+        attachments_field = next(f for f in embed.fields if f.name == "添付ファイル")
         assert "report.pdf" in attachments_field.value
         assert "https://cdn.example.com/report.pdf" in attachments_field.value
 
@@ -321,9 +335,11 @@ class TestOnMessageEdit:
         await cog.on_message_edit(before, after)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Message Edited"
-        assert "Before" in embed.fields[2].value
-        assert "After" in embed.fields[3].value
+        assert embed.title == "メッセージ編集"
+        before_field = next(f for f in embed.fields if f.name == "編集前")
+        after_field = next(f for f in embed.fields if f.name == "編集後")
+        assert "Before" in before_field.value
+        assert "After" in after_field.value
 
     @pytest.mark.asyncio
     async def test_logs_attachment_only_edit(self) -> None:
@@ -347,7 +363,7 @@ class TestOnMessageEdit:
 
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        changes = next(f for f in embed.fields if f.name == "Attachment Changes")
+        changes = next(f for f in embed.fields if f.name == "添付ファイル変更")
         assert "new.png" in changes.value
         assert "old.png" in changes.value
 
@@ -380,7 +396,7 @@ class TestOnMemberJoinLog:
         await cog.on_member_join(member)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Joined"
+        assert embed.title == "メンバー参加"
 
     @pytest.mark.asyncio
     async def test_shows_invite_info(self) -> None:
@@ -412,14 +428,20 @@ class TestOnMemberJoinLog:
         await cog.on_member_join(member)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Joined"
-        # Invited By フィールドが存在する
+        assert embed.title == "メンバー参加"
+        # kakuzato-bot と同じ招待情報フィールドが存在する
         field_names = [f.name for f in embed.fields]
-        assert "Invited By" in field_names
-        invite_field = next(f for f in embed.fields if f.name == "Invited By")
-        assert "<@99999>" in invite_field.value
-        assert "abc123" in invite_field.value
-        assert "Total: 2" in invite_field.value
+        assert "招待コード" in field_names
+        assert "招待作成者" in field_names
+        assert "作成者の招待使用回数" in field_names
+        assert "abc123" in next(f.value for f in embed.fields if f.name == "招待コード")
+        assert "<@99999>" in next(
+            f.value for f in embed.fields if f.name == "招待作成者"
+        )
+        assert (
+            next(f.value for f in embed.fields if f.name == "作成者の招待使用回数")
+            == "2"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -456,7 +478,7 @@ class TestOnMemberRemove:
         await cog.on_member_remove(member)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Left"
+        assert embed.title == "メンバー退出"
 
     @pytest.mark.asyncio
     async def test_sends_kick_embed(self) -> None:
@@ -485,7 +507,7 @@ class TestOnMemberRemove:
         await cog.on_member_remove(member)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Kicked"
+        assert embed.title == "メンバーKick"
         assert "<@99999>" in embed.fields[1].value
         assert "Spamming" in embed.fields[2].value
 
@@ -506,7 +528,7 @@ class TestOnMemberRemove:
         await cog.on_member_remove(member)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Left"
+        assert embed.title == "メンバー退出"
 
     @pytest.mark.asyncio
     async def test_no_config_skips(self) -> None:
@@ -563,7 +585,7 @@ class TestOnMemberBan:
         await cog.on_member_ban(guild, user)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Banned"
+        assert embed.title == "メンバーBAN"
         assert "<@77777>" in embed.fields[1].value  # Banned By
         assert "Spam" in embed.fields[2].value  # Reason
 
@@ -594,9 +616,9 @@ class TestOnMemberBan:
         await cog.on_member_ban(guild, user)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Banned"
-        # モデレーターなし → fields[1] が Reason
-        assert "Spam via fetch_ban" in embed.fields[1].value
+        assert embed.title == "メンバーBAN"
+        reason_field = next(f for f in embed.fields if f.name == "理由")
+        assert "Spam via fetch_ban" in reason_field.value
 
     @pytest.mark.asyncio
     async def test_truncates_too_long_ban_reason(self) -> None:
@@ -628,8 +650,8 @@ class TestOnMemberBan:
         await cog.on_member_ban(guild, user)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        reason_field = next(f for f in embed.fields if f.name == "Reason")
-        assert len(reason_field.value) <= 300
+        reason_field = next(f for f in embed.fields if f.name == "理由")
+        assert len(reason_field.value) <= 1024
 
 
 # ---------------------------------------------------------------------------
@@ -677,7 +699,7 @@ class TestOnMemberUnban:
         await cog.on_member_unban(guild, user)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Unbanned"
+        assert embed.title == "BAN解除"
         assert "<@66666>" in embed.fields[1].value  # Unbanned By
 
 
@@ -723,7 +745,7 @@ class TestOnMemberUpdate:
         await cog.on_member_update(before, after)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Roles Updated"
+        assert embed.title == "メンバーロール変更"
         assert "+ <@&222>" in embed.fields[1].value
 
     @pytest.mark.asyncio
@@ -746,7 +768,7 @@ class TestOnMemberUpdate:
         await cog.on_member_update(before, after)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Nickname Changed"
+        assert embed.title == "ニックネーム変更"
         assert "OldNick" in embed.fields[1].value
         assert "NewNick" in embed.fields[2].value
 
@@ -794,8 +816,8 @@ class TestOnMemberTimeout:
         await cog.on_member_update(before, after)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Timed Out"
-        assert "<@88888>" in embed.fields[1].value
+        assert embed.title == "メンバータイムアウト"
+        assert "<@88888>" in embed.fields[2].value
         assert "Calm down" in embed.fields[3].value
 
 
@@ -824,12 +846,12 @@ class TestChannelEvents:
         await cog.on_guild_channel_create(channel)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Channel Created"
-        assert "new-channel" in embed.fields[0].value
+        assert embed.title == "チャンネル作成"
+        assert "<#99999>" in embed.fields[0].value
 
     @pytest.mark.asyncio
     async def test_channel_create_with_permission_overrides(self) -> None:
-        """権限オーバーライドが Embed に表示される。"""
+        """作成ログは kakuzato-bot と同じ基本フィールドだけを表示する。"""
         cog = _make_cog()
         guild, ch = _make_guild()
         channel = MagicMock(spec=discord.VoiceChannel)
@@ -866,16 +888,11 @@ class TestChannelEvents:
         await cog.on_guild_channel_create(channel)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Channel Created"
+        assert embed.title == "チャンネル作成"
 
         field_values = "\n".join(f.value for f in embed.fields)
         assert "1505170844341633165" in field_values
-        assert "Role override for @everyone" in field_values
-        assert "Connect: ❌" in field_values
-        assert "Role override for 🍭メンバーロール" in field_values
-        assert "Connect: ✅" in field_values
-        assert "Member override for testuser" in field_values
-        assert "Read Message History: ✅" in field_values
+        assert "権限上書き" not in field_values
 
     @pytest.mark.asyncio
     async def test_channel_delete(self) -> None:
@@ -893,7 +910,7 @@ class TestChannelEvents:
         await cog.on_guild_channel_delete(channel)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Channel Deleted"
+        assert embed.title == "チャンネル削除"
 
 
 # ---------------------------------------------------------------------------
@@ -930,7 +947,7 @@ class TestOnVoiceStateUpdate:
         await cog.on_voice_state_update(member, before, after)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Joined Voice Channel"
+        assert embed.title == "ボイス参加"
 
     @pytest.mark.asyncio
     async def test_leave(self) -> None:
@@ -950,7 +967,7 @@ class TestOnVoiceStateUpdate:
         await cog.on_voice_state_update(member, before, after)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Left Voice Channel"
+        assert embed.title == "ボイス退出"
 
     @pytest.mark.asyncio
     async def test_move(self) -> None:
@@ -971,11 +988,11 @@ class TestOnVoiceStateUpdate:
         await cog.on_voice_state_update(member, before, after)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Moved Voice Channel"
+        assert embed.title == "ボイス移動"
 
     @pytest.mark.asyncio
     async def test_mute_ignored(self) -> None:
-        """ミュート等の状態変更はログ送信される。"""
+        """ミュート等の状態変更は kakuzato-bot と同様に無視する。"""
         cog = _make_cog()
         guild, ch = _make_guild()
         member = _make_member()
@@ -1003,9 +1020,7 @@ class TestOnVoiceStateUpdate:
         cog._cache[("789", "voice_state")] = ["100"]
 
         await cog.on_voice_state_update(member, before, after)
-        ch.send.assert_called_once()
-        embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Voice State Updated"
+        ch.send.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1015,6 +1030,19 @@ class TestOnVoiceStateUpdate:
 
 class TestSendLog:
     """_send_log の共通テスト。"""
+
+    @pytest.mark.asyncio
+    async def test_sends_repeated_identical_events(self) -> None:
+        """見た目が同じ正当なイベントを短時間でも欠落させない。"""
+        cog = _make_cog()
+        guild, ch = _make_guild()
+        cog._cache[("789", "voice_state")] = ["100"]
+        embed = discord.Embed(title="ボイス参加")
+
+        await cog._send_log(guild, "voice_state", embed)
+        await cog._send_log(guild, "voice_state", embed)
+
+        assert ch.send.await_count == 2
 
     @pytest.mark.asyncio
     async def test_handles_forbidden(self) -> None:
@@ -1188,7 +1216,10 @@ class TestDetectUsedInvite:
         guild.vanity_invite = AsyncMock(return_value=vanity)
 
         result = await cog._detect_used_invite(guild)
-        assert result == "Vanity URL (`chill-cafe`) / Uses: 42"
+        assert result is not None
+        assert result.kind == "vanity"
+        assert result.code == "chill-cafe"
+        assert result.uses == 42
 
     @pytest.mark.asyncio
     async def test_selects_invite_with_largest_use_increase(self) -> None:
@@ -1220,8 +1251,8 @@ class TestDetectUsedInvite:
         result = await cog._detect_used_invite(guild)
 
         assert result is not None
-        assert "`large`" in result
-        assert "<@22222>" in result
+        assert result.code == "large"
+        assert result.inviter_id == 22222
 
     @pytest.mark.asyncio
     async def test_expired_invite_detected(self) -> None:
@@ -1241,9 +1272,9 @@ class TestDetectUsedInvite:
 
         result = await cog._detect_used_invite(guild)
         assert result is not None
-        assert "<@22222>" in result
-        assert "expired" in result
-        assert "Total: 4" in result
+        assert result.inviter_id == 22222
+        assert result.code == "expired"
+        assert result.inviter_total_uses == 4
 
     @pytest.mark.asyncio
     async def test_invites_forbidden(self) -> None:
@@ -1278,8 +1309,8 @@ class TestDetectUsedInvite:
 
         result = await cog._detect_used_invite(guild)
         assert result is not None
-        assert "inv003" in result
-        assert "<@" not in result
+        assert result.code == "inv003"
+        assert result.inviter_id is None
 
     @pytest.mark.asyncio
     async def test_total_uses_sums_all_invites(self) -> None:
@@ -1312,8 +1343,8 @@ class TestDetectUsedInvite:
 
         result = await cog._detect_used_invite(guild)
         assert result is not None
-        assert "<@11111>" in result
-        assert "Total: 9" in result
+        assert result.inviter_id == 11111
+        assert result.inviter_total_uses == 9
 
 
 # ---------------------------------------------------------------------------
@@ -1350,7 +1381,9 @@ class TestAuditLogFallback:
         await cog.on_member_ban(guild, user)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert "Reason from fetch_ban" in embed.fields[1].value
+        assert "Reason from fetch_ban" in next(
+            field.value for field in embed.fields if field.name == "理由"
+        )
 
     @pytest.mark.asyncio
     async def test_message_delete_audit_forbidden(self) -> None:
@@ -1371,10 +1404,13 @@ class TestAuditLogFallback:
         await cog.on_message_delete(msg)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Message Deleted"
-        # Deleted By なし (Forbidden なので)
+        assert embed.title == "メッセージ削除"
+        # Audit Log を取得できないことを明示する
         field_names = [f.name for f in embed.fields]
-        assert "Deleted By" not in field_names
+        assert "削除した人" in field_names
+        assert "不明" in next(
+            field.value for field in embed.fields if field.name == "削除した人"
+        )
 
     @pytest.mark.asyncio
     async def test_kick_audit_forbidden_falls_back_to_leave(self) -> None:
@@ -1396,7 +1432,7 @@ class TestAuditLogFallback:
         await cog.on_member_remove(member)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Left"
+        assert embed.title == "メンバー退出"
 
     @pytest.mark.asyncio
     async def test_unban_audit_forbidden(self) -> None:
@@ -1420,9 +1456,9 @@ class TestAuditLogFallback:
         await cog.on_member_unban(guild, user)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Unbanned"
+        assert embed.title == "BAN解除"
         field_names = [f.name for f in embed.fields]
-        assert "Unbanned By" not in field_names
+        assert "実行者" in field_names
 
     @pytest.mark.asyncio
     async def test_timeout_audit_forbidden(self) -> None:
@@ -1451,9 +1487,9 @@ class TestAuditLogFallback:
         await cog.on_member_update(before, after)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Timed Out"
+        assert embed.title == "メンバータイムアウト"
         field_names = [f.name for f in embed.fields]
-        assert "Timed Out By" not in field_names
+        assert "実行者" in field_names
 
     @pytest.mark.asyncio
     async def test_fetch_ban_not_found(self) -> None:
@@ -1478,9 +1514,9 @@ class TestAuditLogFallback:
         await cog.on_member_ban(guild, user)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Banned"
-        reason_field = next(f for f in embed.fields if f.name == "Reason")
-        assert reason_field.value == "No reason provided"
+        assert embed.title == "メンバーBAN"
+        reason_field = next(f for f in embed.fields if f.name == "理由")
+        assert "なし / 取得不可" in reason_field.value
 
 
 # ---------------------------------------------------------------------------
@@ -1718,7 +1754,8 @@ class TestMessageEditEdgeCases:
         await cog.on_message_edit(before, after)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.fields[2].value == "(empty)"
+        before_field = next(f for f in embed.fields if f.name == "編集前")
+        assert "(本文なし / 取得不可)" in before_field.value
 
     @pytest.mark.asyncio
     async def test_long_content_truncated(self) -> None:
@@ -1735,8 +1772,10 @@ class TestMessageEditEdgeCases:
         await cog.on_message_edit(before, after)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert len(embed.fields[2].value) <= 1024
-        assert len(embed.fields[3].value) <= 1024
+        before_field = next(f for f in embed.fields if f.name == "編集前")
+        after_field = next(f for f in embed.fields if f.name == "編集後")
+        assert len(before_field.value) <= 1024
+        assert len(after_field.value) <= 1024
 
     @pytest.mark.asyncio
     async def test_no_jump_url(self) -> None:
@@ -1755,7 +1794,7 @@ class TestMessageEditEdgeCases:
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
         field_names = [f.name for f in embed.fields]
-        assert "Jump" not in field_names
+        assert "ジャンプ" not in field_names
 
     @pytest.mark.asyncio
     async def test_no_display_avatar(self) -> None:
@@ -1832,7 +1871,7 @@ class TestLeaveLogEdgeCases:
         await cog.on_member_remove(member)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        roles_field = next(f for f in embed.fields if f.name == "Roles")
+        roles_field = next(f for f in embed.fields if f.name == "保持していたロール")
         assert len(roles_field.value) <= 1024
 
     @pytest.mark.asyncio
@@ -1880,11 +1919,9 @@ class TestChannelWithCategory:
         await cog.on_guild_channel_create(channel)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Channel Created"
+        assert embed.title == "チャンネル作成"
         field_names = [f.name for f in embed.fields]
-        assert "Category" in field_names
-        cat_field = next(f for f in embed.fields if f.name == "Category")
-        assert cat_field.value == "General"
+        assert "カテゴリ" not in field_names
 
     @pytest.mark.asyncio
     async def test_channel_delete_with_category(self) -> None:
@@ -1902,9 +1939,9 @@ class TestChannelWithCategory:
         await cog.on_guild_channel_delete(channel)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Channel Deleted"
+        assert embed.title == "チャンネル削除"
         field_names = [f.name for f in embed.fields]
-        assert "Category" in field_names
+        assert "カテゴリ" not in field_names
 
     @pytest.mark.asyncio
     async def test_channel_delete_no_config(self) -> None:
@@ -1965,7 +2002,7 @@ class TestDisplayAvatarBranches:
         await cog.on_member_remove(member)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Member Kicked"
+        assert embed.title == "メンバーKick"
 
     @pytest.mark.asyncio
     async def test_ban_no_avatar(self) -> None:
@@ -2169,7 +2206,7 @@ class TestRoleChangeRemovedRole:
         await cog.on_member_update(before, after)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert "× <@&222>" in embed.fields[1].value
+        assert "- <@&222>" in embed.fields[1].value
 
     @pytest.mark.asyncio
     async def test_uses_member_role_audit_log(self) -> None:
@@ -2202,7 +2239,7 @@ class TestRoleChangeRemovedRole:
         )
         embed = ch.send.call_args.kwargs["embed"]
         assert "<@99999>" in next(
-            field.value for field in embed.fields if field.name == "Updated By"
+            field.value for field in embed.fields if field.name == "実行者"
         )
 
 
@@ -2254,7 +2291,7 @@ class TestOnBulkMessageDelete:
         await cog.on_bulk_message_delete([msg1, msg2])
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert "Purged" in embed.title
+        assert embed.title == "メッセージ一括削除"
 
     @pytest.mark.asyncio
     async def test_skips_empty(self) -> None:
@@ -2310,14 +2347,14 @@ class TestOnBulkMessageDelete:
 
         embed = ch.send.call_args.kwargs["embed"]
         assert "`1001`" in next(
-            field.value for field in embed.fields if field.name == "Message IDs"
+            field.value for field in embed.fields if field.name == "メッセージID"
         )
-        assert any(field.name == "Posted At Range" for field in embed.fields)
+        assert any(field.name == "投稿日時範囲" for field in embed.fields)
         assert "<@88888>" in next(
-            field.value for field in embed.fields if field.name == "Deleted By"
+            field.value for field in embed.fields if field.name == "削除した人"
         )
         assert "Cleanup" in next(
-            field.value for field in embed.fields if field.name == "Reason"
+            field.value for field in embed.fields if field.name == "理由"
         )
 
 
@@ -2347,7 +2384,7 @@ class TestOnGuildChannelUpdate:
         await cog.on_guild_channel_update(before, after)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert "Updated" in embed.title
+        assert embed.title == "チャンネル更新"
 
     @pytest.mark.asyncio
     async def test_skips_no_changes(self) -> None:
@@ -2383,7 +2420,7 @@ class TestOnGuildChannelUpdate:
     async def test_logs_overwrite_only_changes_without_empty_changes_field(
         self,
     ) -> None:
-        """overwrite差分のみでも送信し、空の Changes フィールドは出さない。"""
+        """overwrite差分を変更内容と変更後スナップショットに表示する。"""
         cog = _make_cog()
         guild, ch = _make_guild()
         cog._cache[("789", "channel_update")] = ["100"]
@@ -2424,8 +2461,8 @@ class TestOnGuildChannelUpdate:
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
         field_names = [f.name for f in embed.fields]
-        assert "Overwrite Changes" in field_names
-        assert "Changes" not in field_names
+        assert "権限上書き (変更後)" in field_names
+        assert "変更内容" in field_names
 
 
 # ===========================================================================
@@ -2450,7 +2487,7 @@ class TestOnGuildRoleCreate:
         await cog.on_guild_role_create(role)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert "Created" in embed.title
+        assert embed.title == "ロール作成"
 
 
 class TestOnGuildRoleDelete:
@@ -2547,8 +2584,10 @@ class TestOnGuildRoleUpdate:
         await cog.on_guild_role_update(before, after)
 
         embed = ch.send.call_args.kwargs["embed"]
-        changes = next(field.value for field in embed.fields if field.name == "Changes")
-        assert "+ Send Messages" in changes
+        changes = next(
+            field.value for field in embed.fields if field.name == "変更内容"
+        )
+        assert "+ メッセージを送信" in changes
 
 
 # ===========================================================================
@@ -2580,7 +2619,7 @@ class TestInviteCreateLog:
         await cog.on_invite_create(invite)
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert "Created" in embed.title
+        assert embed.title == "招待作成"
 
 
 class TestInviteDeleteLog:
@@ -2631,10 +2670,10 @@ class TestInviteDeleteLog:
 
         embed = ch.send.call_args.kwargs["embed"]
         assert "<@77777>" in next(
-            field.value for field in embed.fields if field.name == "Deleted By"
+            field.value for field in embed.fields if field.name == "実行者"
         )
         assert "Rotated invite" in next(
-            field.value for field in embed.fields if field.name == "Reason"
+            field.value for field in embed.fields if field.name == "理由"
         )
 
 
@@ -2824,7 +2863,7 @@ class TestOnGuildUpdate:
 
         embed = ch.send.call_args.kwargs["embed"]
         assert "<@66666>" in next(
-            field.value for field in embed.fields if field.name == "Updated By"
+            field.value for field in embed.fields if field.name == "実行者"
         )
 
 
@@ -2847,9 +2886,9 @@ class TestOnGuildEmojisUpdate:
         await cog.on_guild_emojis_update(guild, (), (emoji,))
         ch.send.assert_called_once()
         embed = ch.send.call_args.kwargs["embed"]
-        assert embed.title == "Emoji Created"
+        assert embed.title == "絵文字作成"
         assert "`1`" in next(
-            field.value for field in embed.fields if field.name == "Emoji"
+            field.value for field in embed.fields if field.name == "絵文字"
         )
         assert embed.footer.text.startswith("記録時刻:")
 

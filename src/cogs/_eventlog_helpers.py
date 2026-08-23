@@ -46,7 +46,7 @@ def create_event_embed(title: str, event_type: str) -> discord.Embed:
         color=_COLORS[event_type],
         timestamp=now,
     )
-    embed.set_footer(text=f"記録時刻: {now.astimezone(_JST):%Y-%m-%d %H:%M:%S} JST")
+    embed.set_footer(text=f"記録時刻: {now.astimezone(_JST):%Y/%m/%d %H:%M:%S} JST")
     return embed
 
 
@@ -80,14 +80,12 @@ def truncate_content(content: str, max_len: int = 1024) -> str:
     return content
 
 
-def format_datetime_with_relative(
-    dt: datetime | None, fallback: str = "Unknown"
-) -> str:
+def format_datetime_with_relative(dt: datetime | None, fallback: str = "不明") -> str:
     """Format a datetime in JST and include Discord's relative timestamp."""
     if dt is None:
         return fallback
     unix = int(dt.timestamp())
-    return f"{dt.astimezone(_JST):%Y-%m-%d %H:%M:%S} JST (<t:{unix}:R>)"
+    return f"{dt.astimezone(_JST):%Y/%m/%d %H:%M:%S} JST (<t:{unix}:R>)"
 
 
 def format_permission_changes(
